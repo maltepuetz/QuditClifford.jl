@@ -1,0 +1,7 @@
+name = "QuditClifford"
+uuid = "fd55b3c1-6bf5-4acb-ac66-43b8ce88861c"
+authors = ["Malte Pütz"]
+version = "1.0.0-DEV"
+
+[compat]
+julia = "1.11.6"
