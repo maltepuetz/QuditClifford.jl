@@ -31,7 +31,7 @@ struct StabilizerTableau{T<:InverseMod}
         if size(tableau, 2) != n || size(tableau, 1) != 2 * n + storephase
             throw(ArgumentError("Tableau dimensions do not match the number of qudits and phase storage."))
         end
-        new{T}(d, n, tableau, storephase, zeros(Int64, n, n), zeros(Int64, 2*n), inversemod)
+        new{T}(d, n, tableau, storephase, zeros(Int64, n, n), zeros(Int64, 2 * n), inversemod)
     end
     function StabilizerTableau(
         d::Int64,
@@ -39,7 +39,7 @@ struct StabilizerTableau{T<:InverseMod}
         tableau::Array{Int64,2},
         storephase::Bool,
     )
-        return StabilizerTableau(d, n, tableau, storephase, InverseMod(d))
+        return StabilizerTableau(d, n, tableau, storephase, PrecomputedInvMod(d))
     end
     function StabilizerTableau(d::Int64, n::Int64, tableau::Array{Int64,2})
         return StabilizerTableau(d, n, tableau, size(tableau, 1) == 2 * n + 1)
@@ -66,7 +66,7 @@ function Base.show(io::IO, stabtab::StabilizerTableau)
     println(io, "    Tableau:")
 
 
-    N = log10(maximum(stabtab.tableau)) |> floor |> Int
+    N = ndigits(maximum(abs, stabtab.tableau)) - 1
     extraspace = 0
     isodd(N) && isodd(stabtab.n) && (extraspace += 1)  # ensure that the tableau is nicely aligned
     print(io, "    ")
