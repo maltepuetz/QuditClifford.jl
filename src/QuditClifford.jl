@@ -4,6 +4,8 @@ export StabilizerTableau, entanglement_entropy, measure!, Operator
 
 import Random, Primes
 import Random.rand!
+import LoopVectorization
+import LoopVectorization.@turbo
 
 using AllocCheck
 
