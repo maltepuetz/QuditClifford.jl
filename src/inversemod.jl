@@ -15,6 +15,5 @@ struct PrecomputedInvMod{T <: AbstractVector} <: InverseMod
     end
 end
 
-
-(jitInvMod::JustInTimeInvMod)(x::Int, d::Int) = invmod(x, d)
-(preInvMod::PrecomputedInvMod)(x::Int, d::Int) = preInvMod.lookuptable[x]
+@inline (jit::JustInTimeInvMod)(x::Int, d::Int) = Base.invmod(x, d)
+@inline (pre::PrecomputedInvMod)(x::Int, d::Int) = (@inbounds pre.lookuptable[x])

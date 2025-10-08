@@ -9,10 +9,8 @@ end
 ### check if all generators commute (explicitly)
 function is_commuting(stabtab::StabilizerTableau)
     for j in axes(stabtab.tableau, 2)
-        gen_j = Generator(stabtab, j)
         for i in j+1:size(stabtab.tableau, 2)
-            gen_i = Generator(stabtab, i)
-            if mod(commutation(gen_j, gen_i), stabtab.d) != 0
+            if mod(commutation_colcol(stabtab.tableau, j, i), stabtab.d) != 0
                 @info "Generators $j and $i do not commute."
                 return false
             end

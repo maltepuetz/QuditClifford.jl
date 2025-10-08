@@ -1,6 +1,7 @@
-
-
-function entanglement_entropy(stabtab::StabilizerTableau, subsystem::T) where T<:AbstractVector
+function entanglement_entropy(
+    stabtab::StabilizerTableau,
+    subsystem::T
+) where T<:AbstractVector
 
     if length(subsystem) > stabtab.n ÷ 2
         throw(
@@ -11,16 +12,15 @@ function entanglement_entropy(stabtab::StabilizerTableau, subsystem::T) where T<
     end
 
     N_A = length(subsystem)
-    # copy the subsystem tableau to the workspace
-    @inbounds @simd for j in axes(stabtab.tableau, 2)
-        for (i, qudit) in enumerate(subsystem)
-            stabtab.workspace[i, j] = stabtab.tableau[qudit, j]
-        end
-        for (i, qudit) in enumerate(subsystem)
-            stabtab.workspace[i+N_A, j] = stabtab.tableau[qudit+stabtab.n, j]
-        end
-    end
+    tab = stabtab.tableau
+    ws = stabtab.workspace
+    n = stabtab.n
 
+    @turbo for j in axes(tab, 2), i in eachindex(subsystem)
+        qudit = subsystem[i]
+        ws[i, j] = tab[qudit, j]
+        ws[i+N_A, j] = tab[qudit+n, j]
+    end
 
     ### compute the rank of the matrix stabtab.workspace[1:2*N_A, 1:stabtab.n]
     # implement Gauss-Jordan algorithm
@@ -32,7 +32,6 @@ function entanglement_entropy(stabtab::StabilizerTableau, subsystem::T) where T<
     )
 
     S_A = rank_A - N_A
-
     return S_A
 end
 
@@ -53,25 +52,26 @@ function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMa
             continue
         end
 
-        # swap into column c
         if j != c
-            @inbounds @simd for i in axes(A, 1)
-                A[i, c], A[i, j] = A[i, j], A[i, c]
+            @turbo for i in axes(A, 1)
+                t = A[i, c]
+                A[i, c] = A[i, j]
+                A[i, j] = t
             end
         end
 
         # scale pivot column so A[r,c] = 1
         α = inversemod(A[r, c], d)
-        @inbounds @simd for i in axes(A, 1)
+        @turbo for i in axes(A, 1)
             A[i, c] = mod(A[i, c] * α, d)
         end
 
         # eliminate row r in every other column
-        @inbounds for jj in axes(A, 2)
+        for jj in axes(A, 2)
             jj == c && continue
             β = A[r, jj]
             β == 0 && continue
-            for i in axes(A, 1)
+            @inbounds @simd for i in axes(A, 1)
                 A[i, jj] = mod(A[i, jj] - mod(β * A[i, c], d), d)
             end
         end

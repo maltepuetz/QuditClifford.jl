@@ -7,14 +7,10 @@ import Random.rand!
 import LoopVectorization
 import LoopVectorization.@turbo
 
-using AllocCheck
-
 
 # include the sub files
 include("inversemod.jl")
 include("stabilizer_tableau.jl")
-include("operator.jl")
-include("generator.jl")
 include("projective_measurement.jl")
 include("entanglement_entropy.jl")
 include("check_purity.jl")
