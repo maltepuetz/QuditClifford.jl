@@ -1,20 +1,21 @@
 function entanglement_entropy(
     stabtab::StabilizerTableau,
-    subsystem::T
+    subsystem::T;
+    supress_warnings::Bool=false,
 ) where T<:AbstractVector
 
-    if length(subsystem) > stabtab.n ÷ 2
-        throw(
-            ArgumentError(
-                "Subsystem size must be less than or equal to half the number of qudits."
-            )
-        )
-    end
+
 
     N_A = length(subsystem)
     tab = stabtab.tableau
     ws = stabtab.workspace
     n = stabtab.n
+
+    if length(subsystem) > stabtab.n ÷ 2
+        supress_warnings || @warn "Subsystem size is greater than half the number of qudits.
+            Allocating temporary workspace."
+        ws = zeros(eltype(ws), 2 * N_A, stabtab.n)
+    end
 
     @turbo for j in axes(tab, 2), i in eachindex(subsystem)
         qudit = subsystem[i]
@@ -26,7 +27,7 @@ function entanglement_entropy(
     # implement Gauss-Jordan algorithm
 
     rank_A = rank_fp_cols!(
-        view(stabtab.workspace, 1:2*N_A, 1:stabtab.n),
+        view(ws, 1:2*N_A, 1:n),
         stabtab.d,
         stabtab.inversemod
     )
