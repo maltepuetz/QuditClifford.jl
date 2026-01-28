@@ -1,3 +1,7 @@
+###########################################
+# Commutation / symplectic inner products #
+###########################################
+
 @inline function commutation(s::AbstractVector{<:Integer}, v::AbstractVector{<:Integer})
     N = length(s) ÷ 2
     comm = 0
@@ -66,7 +70,107 @@ end
 end
 
 
-function measure!(stabtab::StabilizerTableau, op::Vector{Int})
+"""
+Multiply a tableau column by (generator_workspace)^a on the RIGHT, with correct phase updates.
+
+This is exactly what you want in measurement updates:
+    g_i <- g_i * (g0)^a
+where g0 is the generator you stored in generator_workspace.
+
+- XZ rows are updated linearly mod d.
+- If storephase=false: done.
+- If storephase=true:
+    odd prime d:
+        (ω^k X^x Z^z)(ω^k' X^x' Z^z') = ω^(k+k' + x'·z) X^(x+x') Z^(z+z')
+    d=2:
+        use phase mod 4 as i^k and cross-term contributes 2*(x'·z) mod 4.
+"""
+function mul_col_by_workspace_power!(
+    stabtab::StabilizerTableau,
+    col::Int,
+    a::Int,
+)
+    tab = stabtab.tableau
+    genws = stabtab.generator_workspace
+    n = stabtab.n
+    d = stabtab.d
+
+    a == 0 && return nothing
+
+    nrows_block = 2n
+
+    # If we store phase, compute cross term using the OLD target Z (before XZ update)
+    if stabtab.storephase
+        phase_row = 2n + 1
+        d_phase = phase_modulus(d)
+
+        if d == 2
+            # a ∈ {0,1} and a != 0 here ⇒ a == 1
+            # cross = x_ws · z_col_old   (mod 2)
+            cross = dot_xz_ws_vs_col(genws, tab, n, col, d)  # uses old tab Z entries
+            tab[phase_row, col] = mod(tab[phase_row, col] + genws[phase_row] + 2 * cross, d_phase)
+        else
+            inv2 = stabtab.inversemod(2, d)
+
+            # Phase of (ws)^a:
+            # k_power = a*k_ws + C(a,2)*(x_ws · z_ws)  (mod d)
+            xdotz_ws = dot_xz_ws(genws, n, d)
+            k_power = mod(a * genws[phase_row] + binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d_phase)
+
+            # cross = a*(x_ws · z_col_old) (mod d)
+            cross_base = dot_xz_ws_vs_col(genws, tab, n, col, d)  # x_ws · z_col_old
+            cross = mod(a * cross_base, d)
+
+            tab[phase_row, col] = mod(tab[phase_row, col] + k_power + cross, d_phase)
+        end
+    end
+
+    # Now update XZ: col <- col + a*ws  (mod d)
+    @inbounds @simd for i in 1:nrows_block
+        tab[i, col] = mod(tab[i, col] + mod(a * genws[i], d), d)
+    end
+
+    return nothing
+end
+
+"""
+Set a tableau column equal to an operator vector `op` that contains XZ (and optionally phase).
+- XZ entries are reduced mod d.
+- If storephase=true:
+    - phase entry is reduced mod phase_modulus(d) (mod d for odd primes, mod 4 for d=2)
+- If storephase=false:
+    - ignores any phase entry (if provided).
+"""
+function set_operator!(
+    stabtab::StabilizerTableau,
+    col::Int,
+    op::AbstractVector{<:Integer},
+)
+    tab = stabtab.tableau
+    n = stabtab.n
+    d = stabtab.d
+
+    @assert length(op) == (stabtab.storephase ? (2n + 1) : (2n))
+
+    # XZ
+    @turbo for i in 1:(2n)
+        tab[i, col] = mod(op[i], d)
+    end
+
+    # phase
+    if stabtab.storephase
+        d_phase = phase_modulus(d)
+        tab[2n+1, col] = mod(op[2n+1], d_phase)
+    end
+
+    return nothing
+end
+
+############################################
+# Projective measurement (PHASE-AWARE)     #
+############################################
+
+function measure!(stabtab::StabilizerTableau, op)
     n = stabtab.n
     d = stabtab.d
 
@@ -77,10 +181,7 @@ function measure!(stabtab::StabilizerTableau, op::Vector{Int})
     # we multiply all other generators that do not commute with the generator that we
     # replaced to the power of a, where a is the a = mod(-commutator * invmod(comm0, d), d)
 
-    # @info "Measuring operator: ", op
-
     comm0 = 0  # the commutation with the first non-commuting generator
-    indexxxx = 0
     for i in 1:n
 
         # get the commutator of generator i with the operator
@@ -102,94 +203,75 @@ function measure!(stabtab::StabilizerTableau, op::Vector{Int})
             @turbo for j in eachindex(stabtab.generator_workspace)
                 stabtab.generator_workspace[j] = stabtab.tableau[j, i]
             end
-            @turbo for j in axes(stabtab.tableau, 1)
-                stabtab.tableau[j, i] = op[j]
-            end
-            comm0 = commutator
-            indexxxx = i
-        else
-            # multiply generator i by the (generator that we replaced)^(a)
-            # where a = mod(-commutator * invmod(comm0, d), d)
-            # this ensures that the new generator commutes with the operator
-            @turbo for j in axes(stabtab.tableau, 1)
-                stabtab.tableau[j, i] = mod(
-                    stabtab.tableau[j, i] +
-                    mod(
-                        -commutator * stabtab.inversemod(comm0, d),
-                        d
-                    ) *
-                    stabtab.generator_workspace[j],
-                    d
-                )
-            end
-        end
-    end
-    # if comm0 == 0
-    #     @info "    Operator commutes with all stabilizers."
-    # else
-    #     @info "    Operator does not commute with all stabilizers. Replaced generator $indexxxx."
-    # end
 
-    nothing
-end
+            # replace generator i by op (phase-aware if storephase=true)
+            set_operator!(stabtab, i, op)
 
-# measure a Pauli on a single qudit
-function measure!(stabtab::StabilizerTableau, op::FewQuditOperator)
-    n = stabtab.n
-    d = stabtab.d
-
-    ### case 1: operator commutes with all stabilizer generators
-    # in that case the measurement outcome is deterministic and the state remains unchanged
-    ### case 2: operator does not commute with all stabilizer generators
-    # in that case we replace the first generator that anticommutes with the operator and
-    # we multiply all other generators that do not commute with the generator that we
-    # replaced to the power of a, where a is the a = mod(-commutator * invmod(comm0, d), d)
-
-    comm0 = 0  # the commutation with the first non-commuting generator
-    for i in 1:n
-
-        # get the commutator of generator i with the operator
-        commutator = mod(
-            commutation_col(stabtab.tableau, i, op),
-            d
-        )
-
-        ### case a: if they commute we continue
-        commutator == 0 && continue
-
-        ### case b:
-        # if the current generator is the first one that does not commute, we replace it
-        # by the operator. Else we multiply the generator with the generator that we
-        # replaced to some power. The power is chosen, such that the new generator commutes
-        # with the operator.
-        if comm0 == 0
-            # store generator i in workspace and then replace it by the operator
-            @turbo for j in eachindex(stabtab.generator_workspace)
-                stabtab.generator_workspace[j] = stabtab.tableau[j, i]
-            end
-            set_operator!(stabtab.tableau, i, op, n)
-            # @turbo for j in axes(stabtab.tableau, 1)
-            #     stabtab.tableau[j, i] = 0
-            # end
-            # stabtab.tableau[op.qudit, i] = op.x
-            # stabtab.tableau[op.qudit+n, i] = op.z
             comm0 = commutator
         else
             # multiply generator i by the (generator that we replaced)^(a)
             # where a = mod(-commutator * invmod(comm0, d), d)
             # this ensures that the new generator commutes with the operator
-            @turbo for j in axes(stabtab.tableau, 1)
-                stabtab.tableau[j, i] = mod(
-                    stabtab.tableau[j, i] +
-                    mod(
-                        -commutator * stabtab.inversemod(comm0, d),
-                        d
-                    ) *
-                    stabtab.generator_workspace[j],
-                    d
-                )
-            end
+            a = mod(-commutator * stabtab.inversemod(comm0, d), d)
+            mul_col_by_workspace_power!(stabtab, i, a)
         end
     end
+
     nothing
 end
+
+# # measure a Pauli on a few qudits
+# function measure!(stabtab::StabilizerTableau, op::FewQuditOperator)
+#     n = stabtab.n
+#     d = stabtab.d
+
+#     ### case 1: operator commutes with all stabilizer generators
+#     # in that case the measurement outcome is deterministic and the state remains unchanged
+#     ### case 2: operator does not commute with all stabilizer generators
+#     # in that case we replace the first generator that anticommutes with the operator and
+#     # we multiply all other generators that do not commute with the generator that we
+#     # replaced to the power of a, where a is the a = mod(-commutator * invmod(comm0, d), d)
+
+#     comm0 = 0  # the commutation with the first non-commuting generator
+#     for i in 1:n
+
+#         # get the commutator of generator i with the operator
+#         commutator = mod(
+#             commutation_col(stabtab.tableau, i, op),
+#             d
+#         )
+
+#         ### case a: if they commute we continue
+#         commutator == 0 && continue
+
+#         ### case b:
+#         # if the current generator is the first one that does not commute, we replace it
+#         # by the operator. Else we multiply the generator with the generator that we
+#         # replaced to some power. The power is chosen, such that the new generator commutes
+#         # with the operator.
+#         if comm0 == 0
+#             # store generator i in workspace and then replace it by the operator
+#             @turbo for j in eachindex(stabtab.generator_workspace)
+#                 stabtab.generator_workspace[j] = stabtab.tableau[j, i]
+#             end
+
+#             # replace generator i by op
+#             # NOTE: Your existing set_operator! likely writes only XZ.
+#             # If you want to include phase for operator measurements, you should extend it.
+#             set_operator!(stabtab, i, op)
+
+#             comm0 = commutator
+#         else
+#             # multiply generator i by the (generator that we replaced)^(a)
+#             # where a = mod(-commutator * invmod(comm0, d), d)
+#             # this ensures that the new generator commutes with the operator
+#             a = mod(-commutator * stabtab.inversemod(comm0, d), d)
+
+#             # IMPORTANT:
+#             # This path uses generator_workspace as the "replaced generator", so we need the
+#             # phase-aware update (not a naive linear update).
+#             mul_col_by_workspace_power!(stabtab, i, a)
+#         end
+#     end
+#     nothing
+# end

@@ -115,5 +115,11 @@ function canonicalize!(stabtab::StabilizerTableau)
         c += 1
     end
 
+    # compute xdotz_cache after canonicalization
+    xdotz_cache = stabtab.xdotz_cache
+    @inbounds for j in eachindex(xdotz_cache)
+        xdotz_cache[j] = dot_xz_col(tab, n, j, d)
+    end
+
     return nothing
 end

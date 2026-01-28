@@ -16,6 +16,15 @@ struct StabilizerTableau{T<:InverseMod}
     generator_workspace::Vector{Int64}  # workspace for intermediate calculations
     inversemod::T
 
+    ### workspace for canonicalize!
+    pivcol_of_row::Vector{Int64}        # pivot column for each row
+    xdotz_cache::Vector{Int64}          # size n (stores x·z values for each generator)
+
+    ### workspace for expectation value calculations
+    res_workspace::Vector{Int64}        # size 2n
+    c_workspace::Vector{Int64}          # size n
+    zacc_workspace::Vector{Int64}       # size n
+
 
     function StabilizerTableau(
         d::Int64,
@@ -31,7 +40,20 @@ struct StabilizerTableau{T<:InverseMod}
         if size(tableau, 2) != n || size(tableau, 1) != 2 * n + storephase
             throw(ArgumentError("Tableau dimensions do not match the number of qudits and phase storage."))
         end
-        new{T}(d, n, tableau, storephase, zeros(Int64, n, n), zeros(Int64, 2 * n), inversemod)
+        new{T}(
+            d,
+            n,
+            tableau,
+            storephase,
+            zeros(Int64, n, n),
+            zeros(Int64, size(tableau, 1)),
+            inversemod,
+            zeros(Int64, 2 * n),
+            zeros(Int64, n),
+            zeros(Int64, 2 * n),
+            zeros(Int64, n),
+            zeros(Int64, n),
+        )
     end
     function StabilizerTableau(
         d::Int64,

@@ -17,5 +17,6 @@ include("operator.jl")
 include("projective_measurement.jl")
 include("entanglement_entropy.jl")
 include("check_purity.jl")
+include("expectation_value.jl")
 
 end
