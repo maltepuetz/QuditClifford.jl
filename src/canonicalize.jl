@@ -8,6 +8,7 @@ pivcol_of_row[r] = pivot column index for row r, or 0 if no pivot.
 function canonicalize!(stabtab::StabilizerTableau)
     tab = stabtab.tableau
     n = stabtab.n
+    m = stabtab.m
     d = stabtab.d
     inv = stabtab.inversemod
     pivcol_of_row = stabtab.pivcol_of_row
@@ -15,10 +16,10 @@ function canonicalize!(stabtab::StabilizerTableau)
         pivcol_of_row[i] = 0
     end
 
-    hasphase = stabtab.storephase
+    storephase = stabtab.storephase
     nrows_block = 2n
 
-    if hasphase
+    if storephase
         @assert size(tab, 1) == 2n + 1
         phase_row = 2n + 1
         d_phase = phase_modulus(d)
@@ -29,22 +30,23 @@ function canonicalize!(stabtab::StabilizerTableau)
         d_phase = 0
         inv2 = 0
     end
-    @assert size(tab, 2) == n
+    @assert size(tab, 2) == n  # capacity is n; only 1:m are active
+    (0 <= m <= n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n"))
 
     r = 1
     c = 1
-    while r <= nrows_block && c <= n
-        # find pivot in row r among columns c..n
+    while r <= nrows_block && c <= m
+        # find pivot in row r among columns c..m
         j = c
-        while j <= n && tab[r, j] == 0
+        while j <= m && tab[r, j] == 0
             j += 1
         end
-        if j > n
+        if j > m
             r += 1
             continue
         end
 
-        # swap columns j <-> c (swap full stored rows)
+        # swap columns j <-> c
         if j != c
             @turbo for i in axes(tab, 1)
                 t = tab[i, c]
@@ -58,12 +60,11 @@ function canonicalize!(stabtab::StabilizerTableau)
         α = inv(tab[r, c], d)
 
         # Compute x·z for pivot column when needed
-        xdotz = hasphase ? dot_xz_col(tab, n, c, d) : 0
+        xdotz = storephase ? dot_xz_col(tab, n, c, d) : 0
 
-        if hasphase
+        if storephase
             k_old = tab[phase_row, c]
-            if d == 2
-                # α=1 always, and we store phase mod 4 as i^k, so scaling does nothing
+            if d == 2 # α=1 always, and we store phase mod 4 as i^k, so scaling does nothing
                 tab[phase_row, c] = mod(k_old, d_phase)
             else
                 tab[phase_row, c] = mod(α * k_old + binom2_mod_oddprime(α, d, inv2) * xdotz, d_phase)
@@ -74,18 +75,18 @@ function canonicalize!(stabtab::StabilizerTableau)
             tab[i, c] = mod(tab[i, c] * α, d)
         end
 
-        if hasphase && d != 2
+        if storephase && d != 2
             # update x·z for scaled generator: (αx)·(αz) = α^2 (x·z)
             xdotz = mod(mod(α * α, d) * xdotz, d)
         end
 
-        # eliminate pivot row r from all other columns
-        for jj in 1:n
+        # eliminate pivot row r from all other (active) columns
+        for jj in 1:m
             jj == c && continue
             β = tab[r, jj]
             β == 0 && continue
 
-            if hasphase
+            if storephase
                 texp = mod(-β, d)
 
                 kc = tab[phase_row, c]  # phase exponent of pivot generator (mod d_phase)
@@ -115,11 +116,15 @@ function canonicalize!(stabtab::StabilizerTableau)
         c += 1
     end
 
-    # compute xdotz_cache after canonicalization
+    # compute xdotz_cache after canonicalization (valid entries 1:m)
     xdotz_cache = stabtab.xdotz_cache
-    @inbounds for j in eachindex(xdotz_cache)
+    @inbounds for j in 1:m
         xdotz_cache[j] = dot_xz_col(tab, n, j, d)
     end
+    @inbounds for j in (m+1):n
+        xdotz_cache[j] = 0
+    end
 
+    stabtab.iscanonical = true
     return nothing
 end

@@ -33,7 +33,7 @@ Phase convention:
 
 Uses preallocated fields:
 - res_workspace (length 2n)
-- c_workspace   (length n)
+- c_workspace   (length n)   (valid entries 1:m)
 - zacc_workspace (length n)
 
 Returns ComplexF64.
@@ -44,13 +44,20 @@ function expectation_value!(stabtab::StabilizerTableau, op::Vector{Int})
     kP = (length(op) == 2n + 1) ? op[2n+1] : 0
     return expectation_value!(stabtab, view(op, 1:2n), kP)
 end
+
 function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
     tab = stabtab.tableau
     n = stabtab.n
+    m = stabtab.m
     d = stabtab.d
-    piv = stabtab.pivcol_of_row
 
     @assert length(op_xz) == 2n
+
+    # make sure the tableau is in canonical form (required for membership test)
+    stabtab.iscanonical || canonicalize!(stabtab)
+
+    piv = stabtab.pivcol_of_row
+
     @assert length(piv) >= 2n
     @assert length(stabtab.res_workspace) == 2n
     @assert length(stabtab.c_workspace) == n
@@ -93,7 +100,7 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
             return 0.0 + 0.0im
         end
     end
-    
+
     # If we don't store phase, we can only say "in span" ⇒ nonzero expectation,
     # but cannot determine the phase. Return 1 by convention.
     stabtab.storephase || return 1.0 + 0.0im
@@ -114,7 +121,7 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
 
     if d == 2
         # qubits: coefficients are mod 2, and phase is mod 4 as i^k
-        @inbounds for j in eachindex(cvec)
+        @inbounds for j in 1:m
             aj = cvec[j]
             aj == 0 && continue
 
@@ -143,7 +150,7 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
         inv2 = stabtab.inversemod(2, d)
         xdotz_cache = stabtab.xdotz_cache
 
-        @inbounds for j in eachindex(cvec)
+        @inbounds for j in 1:m
             aj = mod(cvec[j], d)
             aj == 0 && continue
 

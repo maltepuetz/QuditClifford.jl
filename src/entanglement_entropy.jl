@@ -1,21 +1,16 @@
 function entanglement_entropy(
     stabtab::StabilizerTableau,
-    subsystem::T;
-    supress_warnings::Bool=false,
+    subsystem::T
 ) where T<:AbstractVector
 
-
+    # Entanglement entropy formula implemented here is for PURE stabilizer states.
+    # For mixed stabilizer density operators (m < n) this does not return the von Neumann entropy.
+    (stabtab.m == stabtab.n) || throw(ArgumentError("entanglement_entropy is only implemented for pure stabilizer states (m==n)."))
 
     N_A = length(subsystem)
     tab = stabtab.tableau
     ws = stabtab.workspace
     n = stabtab.n
-
-    if length(subsystem) > stabtab.n ÷ 2
-        supress_warnings || @warn "Subsystem size is greater than half the number of qudits.
-            Allocating temporary workspace."
-        ws = zeros(eltype(ws), 2 * N_A, stabtab.n)
-    end
 
     @turbo for j in axes(tab, 2), i in eachindex(subsystem)
         qudit = subsystem[i]

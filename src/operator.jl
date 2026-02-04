@@ -44,60 +44,198 @@ NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}) where D = NP
     set_operator!(stabtab, i::Int, op::DoublePauli)
     set_operator!(stabtab, i::Int, op::TriplePauli)
     set_operator!(stabtab, i::Int, op::NPauli{D}) where D
-Set the i-th operator in the stabtab.tableau to the given FewQuditOperator `op`.
+    set_operator!(stabtab, i::Int, op::AbstractVector{<:Integer})
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::SinglePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::DoublePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::TriplePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::NPauli{D}) where D
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::AbstractVector{<:Integer})
+Set the i-th operator in the stabtab.tableau to the given operator `op`, or set
+the vector dst to the given operator `op`.
 """
 function set_operator! end
+
+######################################
+# copy into arbitrary AbstractVector #
+######################################
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::SinglePauli)
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    @assert (len == 2n || len == 2n + 1)
+
+    @turbo for j in eachindex(dst)
+        dst[j] = 0
+    end
+
+    dst[op.qudit1] = mod(op.x1, d)
+    dst[op.qudit2] = mod(op.x2, d)
+    dst[op.qudit1+n] = mod(op.z1, d)
+    dst[op.qudit2+n] = mod(op.z2, d)
+    if stabtab.storephase && (len == 2n + 1)
+        dst[2n+1] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::DoublePauli)
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    @assert (len == 2n || len == 2n + 1)
+
+    @turbo for j in eachindex(dst)
+        dst[j] = 0
+    end
+
+    dst[op.qudit1] = mod(op.x1, d)
+    dst[op.qudit2] = mod(op.x2, d)
+    dst[op.qudit1+n] = mod(op.z1, d)
+    dst[op.qudit2+n] = mod(op.z2, d)
+    if stabtab.storephase && (len == 2n + 1)
+        dst[2n+1] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::TriplePauli)
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    @assert (len == 2n || len == 2n + 1)
+    
+    @turbo for j in eachindex(dst)
+        dst[j] = 0
+    end
+    
+    dst[op.qudit1] = mod(op.x1, d)
+    dst[op.qudit2] = mod(op.x2, d)
+    dst[op.qudit3] = mod(op.x3, d)
+    dst[op.qudit1+n] = mod(op.z1, d)
+    dst[op.qudit2+n] = mod(op.z2, d)
+    dst[op.qudit3+n] = mod(op.z3, d)
+    if stabtab.storephase && (len == 2n + 1)
+        dst[2n+1] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::NPauli{D}) where D
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    @assert (len == 2n || len == 2n + 1)
+    
+    @turbo for j in eachindex(dst)
+        dst[j] = 0
+    end
+    
+    @turbo for k in 1:D
+        dst[op.qudits[k]] = mod(op.xs[k], d)
+    end
+    @turbo for k in 1:D
+        dst[op.qudits[k]+n] = mod(op.zs[k], d)
+    end
+    if stabtab.storephase && (len == 2n + 1)
+        dst[2n+1] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::AbstractVector{<:Integer})
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    len_op = length(op)
+    @assert (len == 2n || len == 2n + 1)
+    @assert (len_op == 2n || len_op == 2n + 1)
+    
+    @turbo for j in 1:2n
+        dst[j] = mod(op[j], d)
+    end
+    if len == len_op == 2n + 1
+        dst[2n+1] = mod(op[2n+1], phase_modulus(d))
+    elseif len == 2n + 1
+        dst[2n+1] = 0
+    end
+    nothing
+end
+
+#######################################
+# copy into StabilizerTableau.tableau #
+#######################################
 @inline function set_operator!(stabtab, i::Int, op::SinglePauli)
     n = stabtab.n
+    d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
         stabtab.tableau[j, i] = 0
     end
-    stabtab.tableau[op.qudit, i] = op.x
-    stabtab.tableau[op.qudit+n, i] = op.z
-    !stabtab.storephase && return
-    stabtab.tableau[2n+1, i] = op.phase
+    stabtab.tableau[op.qudit, i] = mod(op.x, d)
+    stabtab.tableau[op.qudit+n, i] = mod(op.z, d)
+    if stabtab.storephase
+        stabtab.tableau[2n+1, i] = mod(op.phase, phase_modulus(d))
+    end
     nothing
 end
 @inline function set_operator!(stabtab, i::Int, op::DoublePauli)
     n = stabtab.n
+    d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
         stabtab.tableau[j, i] = 0
     end
-    stabtab.tableau[op.qudit1, i] = op.x1
-    stabtab.tableau[op.qudit2, i] = op.x2
-    stabtab.tableau[op.qudit1+n, i] = op.z1
-    stabtab.tableau[op.qudit2+n, i] = op.z2
-    !stabtab.storephase && return
-    stabtab.tableau[2n+1, i] = op.phase
+    stabtab.tableau[op.qudit1, i] = mod(op.x1, d)
+    stabtab.tableau[op.qudit2, i] = mod(op.x2, d)
+    stabtab.tableau[op.qudit1+n, i] = mod(op.z1, d)
+    stabtab.tableau[op.qudit2+n, i] = mod(op.z2, d)
+    if stabtab.storephase
+        stabtab.tableau[2n+1, i] = mod(op.phase, phase_modulus(d))
+    end
     nothing
 end
 @inline function set_operator!(stabtab, i::Int, op::TriplePauli)
     n = stabtab.n
+    d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
         stabtab.tableau[j, i] = 0
     end
-    stabtab.tableau[op.qudit1, i] = op.x1
-    stabtab.tableau[op.qudit2, i] = op.x2
-    stabtab.tableau[op.qudit3, i] = op.x3
-    stabtab.tableau[op.qudit1+n, i] = op.z1
-    stabtab.tableau[op.qudit2+n, i] = op.z2
-    stabtab.tableau[op.qudit3+n, i] = op.z3
-    !stabtab.storephase && return
-    stabtab.tableau[2n+1, i] = op.phase
+    stabtab.tableau[op.qudit1, i] = mod(op.x1, d)
+    stabtab.tableau[op.qudit2, i] = mod(op.x2, d)
+    stabtab.tableau[op.qudit3, i] = mod(op.x3, d)
+    stabtab.tableau[op.qudit1+n, i] = mod(op.z1, d)
+    stabtab.tableau[op.qudit2+n, i] = mod(op.z2, d)
+    stabtab.tableau[op.qudit3+n, i] = mod(op.z3, d)
+    if stabtab.storephase
+        stabtab.tableau[2n+1, i] = mod(op.phase, phase_modulus(d))
+    end
     nothing
 end
 @inline function set_operator!(stabtab, i::Int, op::NPauli{D}) where D
     n = stabtab.n
+    d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
         stabtab.tableau[j, i] = 0
     end
     @turbo for k in 1:D
-        stabtab.tableau[op.qudits[k], i] = op.xs[k]
+        stabtab.tableau[op.qudits[k], i] = mod(op.xs[k], d)
     end
     @turbo for k in 1:D
-        stabtab.tableau[op.qudits[k]+n, i] = op.zs[k]
+        stabtab.tableau[op.qudits[k]+n, i] = mod(op.zs[k], d)
     end
-    !stabtab.storephase && return
-    stabtab.tableau[2n+1, i] = op.phase
+    if stabtab.storephase
+        stabtab.tableau[2n+1, i] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(stabtab, i::Int, op::AbstractVector{<:Integer})
+    n = stabtab.n
+    d = stabtab.d
+    len_op = length(op)
+    @assert length(op) == 2n || length(op) == 2n + 1
+
+    tab = stabtab.tableau
+    @turbo for j in 1:2n
+        tab[j, i] = mod(op[j], d)
+    end
+    if stabtab.storephase && (len_op == 2n + 1)
+        tab[2n+1, i] = mod(op[2n+1], phase_modulus(d))
+    elseif stabtab.storephase
+        tab[2n+1, i] = 0
+    end
     nothing
 end
