@@ -258,7 +258,7 @@ end
     return true
 end
 
-# internal: compute phase exponent of Q = ∏ g_j^{c[j]} (same logic as expectation_value!)
+# internal: compute phase exponent of Q = ∏ g_j^{c[j]} (same logic as expect!)
 # requires canonicalized xdotz_cache to be valid.
 @inline function phase_exponent_from_coeffs!(stabtab::StabilizerTableau)
     tab = stabtab.tableau

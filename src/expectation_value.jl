@@ -1,51 +1,39 @@
-############################################
-# Allocation-free expectation value (RCEF) #
-# Uses xdotz_cache for odd prime d         #
-############################################
-
-# ! ############################################## ! #
-# ! ############################################## ! #
-# ! ############################################## ! #
-# TODO GO THROUGH THIS CAREFULLY AND TEST THOROUGHLY #
-# ! ############################################## ! #
-# ! ############################################## ! #
-# ! ############################################## ! #
-
-
 """
-    expectation_value!(stabtab::StabilizerTableau, op::Vector{Int})
-    expectation_value!(stabtab::StabilizerTableau, op_xz::AbstractVector{Int}, kP::Int)
+    expect_int!(stabtab::StabilizerTableau, op::Vector{Int})
+    expect_int!(stabtab::StabilizerTableau, op_xz::AbstractVector{Int}, kP::Int)
 
-Allocation-free ⟨P⟩ for a Pauli operator P represented as a vector.
+Return the phase exponent of ⟨P⟩ for a Pauli operator P represented as a vector.
 
 Operator format:
 - If length(op) == 2n:    op[1:n]=x, op[n+1:2n]=z, and kP=0
 - If length(op) == 2n+1:  op[1:n]=x, op[n+1:2n]=z, op[2n+1]=kP
+
+Return value:
+- If ⟨P⟩ = 0, returns -1.
+- Otherwise returns k such that:
+    * odd prime d: ⟨P⟩ = ω^k with k mod d
+    * d=2:         ⟨P⟩ = i^k with k mod 4
+
+If `storephase=false`, returns 0 for in-span operators by convention.
 
 Assumes `canonicalize!(stabtab)` was called so that:
 - stabtab.tableau is in column-RCEF on rows 1:2n
 - stabtab.pivcol_of_row[r] is the pivot column index for pivot row r (or 0)
 - stabtab.xdotz_cache[j] == (x_j · z_j) mod d for each generator column j
 
-Phase convention:
-- odd prime d: phase exponent k is mod d and corresponds to ω^k
-- d=2: phase exponent k is mod 4 and corresponds to i^k
-
 Uses preallocated fields:
 - res_workspace (length 2n)
 - c_workspace   (length n)   (valid entries 1:m)
 - zacc_workspace (length n)
-
-Returns ComplexF64.
 """
-function expectation_value!(stabtab::StabilizerTableau, op::Vector{Int})
+function expect_int!(stabtab::StabilizerTableau, op::Vector{Int})
     n = stabtab.n
     @assert length(op) == 2n || length(op) == 2n + 1
     kP = (length(op) == 2n + 1) ? op[2n+1] : 0
-    return expectation_value!(stabtab, view(op, 1:2n), kP)
+    return expect_int!(stabtab, view(op, 1:2n), kP)
 end
 
-function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
+function expect_int!(stabtab::StabilizerTableau, op_xz, kP::Int)
     tab = stabtab.tableau
     n = stabtab.n
     m = stabtab.m
@@ -94,16 +82,16 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
         end
     end
 
-    # If residual is nonzero, operator not in stabilizer span ⇒ expectation 0.
+    # If residual is nonzero, operator not in stabilizer span ⇒ expectation 0, return -1.
     @inbounds for i in 1:2n
         if res[i] != 0
-            return 0.0 + 0.0im
+            return -1
         end
     end
 
     # If we don't store phase, we can only say "in span" ⇒ nonzero expectation,
-    # but cannot determine the phase. Return 1 by convention.
-    stabtab.storephase || return 1.0 + 0.0im
+    # but cannot determine the phase. Return 0 by convention (⟨P⟩ = 1).
+    stabtab.storephase || return 0
 
     # ------------------------------------------------------------
     # Step 2: Compute phase exponent of Q = ∏_j g_j^{c[j]} with cross-terms
@@ -143,7 +131,7 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
 
         # ⟨P⟩ = i^(kP - kacc)
         δ = mod(mod(kP, d_phase) - kacc, d_phase)
-        return cis((π / 2) * Float64(δ))
+        return δ
 
     else
         # odd prime d: phase is ω^k mod d
@@ -172,6 +160,34 @@ function expectation_value!(stabtab::StabilizerTableau, op_xz, kP::Int)
 
         # ⟨P⟩ = ω^(kP - kacc)
         δ = mod(mod(kP, d_phase) - kacc, d_phase)
-        return cis(2π * (Float64(δ) / Float64(d)))
+        return δ
+    end
+end
+
+"""
+    expect!(stabtab::StabilizerTableau, op::Vector{Int})
+    expect!(stabtab::StabilizerTableau, op_xz::AbstractVector{Int}, kP::Int)
+
+Allocation-free ⟨P⟩ for a Pauli operator P represented as a vector.
+Returns ComplexF64.
+"""
+function expect!(stabtab::StabilizerTableau, op::Vector{Int})
+    n = stabtab.n
+    @assert length(op) == 2n || length(op) == 2n + 1
+    kP = (length(op) == 2n + 1) ? op[2n+1] : 0
+    return expect!(stabtab, view(op, 1:2n), kP)
+end
+
+function expect!(stabtab::StabilizerTableau, op_xz, kP::Int)
+    k = expect_int!(stabtab, op_xz, kP)
+    k < 0 && return 0.0 + 0.0im
+
+    d = stabtab.d
+    d_phase = phase_modulus(d)
+
+    if d == 2
+        return cis((π / 2) * Float64(mod(k, d_phase)))
+    else
+        return cis(2π * (Float64(mod(k, d_phase)) / Float64(d)))
     end
 end
