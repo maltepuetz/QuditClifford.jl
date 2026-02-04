@@ -40,16 +40,16 @@ end
 NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}) where D = NPauli{D}(qudits, xs, zs, 0)
 
 """
-    set_operator!(stabtab, i::Int, op::SinglePauli)
-    set_operator!(stabtab, i::Int, op::DoublePauli)
-    set_operator!(stabtab, i::Int, op::TriplePauli)
-    set_operator!(stabtab, i::Int, op::NPauli{D}) where D
-    set_operator!(stabtab, i::Int, op::AbstractVector{<:Integer})
-    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::SinglePauli)
-    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::DoublePauli)
-    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::TriplePauli)
-    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::NPauli{D}) where D
-    set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::AbstractVector{<:Integer})
+    set_operator!(stabtab::StabilizerTableau, i::Int, op::SinglePauli)
+    set_operator!(stabtab::StabilizerTableau, i::Int, op::DoublePauli)
+    set_operator!(stabtab::StabilizerTableau, i::Int, op::TriplePauli)
+    set_operator!(stabtab::StabilizerTableau, i::Int, op::NPauli{D}) where D
+    set_operator!(stabtab::StabilizerTableau, i::Int, op::AbstractVector{<:Integer})
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::SinglePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::DoublePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::TriplePauli)
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::NPauli{D}) where D
+    set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::AbstractVector{<:Integer})
 Set the i-th operator in the stabtab.tableau to the given operator `op`, or set
 the vector dst to the given operator `op`.
 """
@@ -58,7 +58,24 @@ function set_operator! end
 ######################################
 # copy into arbitrary AbstractVector #
 ######################################
-@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::SinglePauli)
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::SinglePauli)
+    n = stabtab.n
+    d = stabtab.d
+    len = length(dst)
+    @assert (len == 2n || len == 2n + 1)
+
+    @turbo for j in eachindex(dst)
+        dst[j] = 0
+    end
+
+    dst[op.qudit] = mod(op.x, d)
+    dst[op.qudit+n] = mod(op.z, d)
+    if stabtab.storephase && (len == 2n + 1)
+        dst[2n+1] = mod(op.phase, phase_modulus(d))
+    end
+    nothing
+end
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::DoublePauli)
     n = stabtab.n
     d = stabtab.d
     len = length(dst)
@@ -77,26 +94,7 @@ function set_operator! end
     end
     nothing
 end
-@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::DoublePauli)
-    n = stabtab.n
-    d = stabtab.d
-    len = length(dst)
-    @assert (len == 2n || len == 2n + 1)
-
-    @turbo for j in eachindex(dst)
-        dst[j] = 0
-    end
-
-    dst[op.qudit1] = mod(op.x1, d)
-    dst[op.qudit2] = mod(op.x2, d)
-    dst[op.qudit1+n] = mod(op.z1, d)
-    dst[op.qudit2+n] = mod(op.z2, d)
-    if stabtab.storephase && (len == 2n + 1)
-        dst[2n+1] = mod(op.phase, phase_modulus(d))
-    end
-    nothing
-end
-@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::TriplePauli)
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::TriplePauli)
     n = stabtab.n
     d = stabtab.d
     len = length(dst)
@@ -117,7 +115,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::NPauli{D}) where D
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::NPauli{D}) where D
     n = stabtab.n
     d = stabtab.d
     len = length(dst)
@@ -138,7 +136,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab, op::AbstractVector{<:Integer})
+@inline function set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::AbstractVector{<:Integer})
     n = stabtab.n
     d = stabtab.d
     len = length(dst)
@@ -160,7 +158,7 @@ end
 #######################################
 # copy into StabilizerTableau.tableau #
 #######################################
-@inline function set_operator!(stabtab, i::Int, op::SinglePauli)
+@inline function set_operator!(stabtab::StabilizerTableau, i::Int, op::SinglePauli)
     n = stabtab.n
     d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
@@ -173,7 +171,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(stabtab, i::Int, op::DoublePauli)
+@inline function set_operator!(stabtab::StabilizerTableau, i::Int, op::DoublePauli)
     n = stabtab.n
     d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
@@ -188,7 +186,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(stabtab, i::Int, op::TriplePauli)
+@inline function set_operator!(stabtab::StabilizerTableau, i::Int, op::TriplePauli)
     n = stabtab.n
     d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
@@ -205,7 +203,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(stabtab, i::Int, op::NPauli{D}) where D
+@inline function set_operator!(stabtab::StabilizerTableau, i::Int, op::NPauli{D}) where D
     n = stabtab.n
     d = stabtab.d
     @turbo for j in axes(stabtab.tableau, 1)
@@ -222,7 +220,7 @@ end
     end
     nothing
 end
-@inline function set_operator!(stabtab, i::Int, op::AbstractVector{<:Integer})
+@inline function set_operator!(stabtab::StabilizerTableau, i::Int, op::AbstractVector{<:Integer})
     n = stabtab.n
     d = stabtab.d
     len_op = length(op)
