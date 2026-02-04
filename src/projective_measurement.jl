@@ -126,26 +126,6 @@ Returns nothing. Does not allocate.
     return nothing
 end
 
-"""
-Return the phase exponent kP of `op` reduced mod phase_modulus(d), if it exists.
-If phase is not available (e.g. vector of length 2n), returns 0.
-
-This is only used when `stabtab.storephase == true`.
-"""
-@inline function op_phase_exponent(stabtab::StabilizerTableau, op)::Int64
-    stabtab.storephase || return 0
-    d_phase = phase_modulus(stabtab.d)
-    n = stabtab.n
-
-    if op isa AbstractVector{<:Integer}
-        return (length(op) == 2n + 1) ? mod(op[2n+1], d_phase) : 0
-    end
-
-    # Pauli structs: assume they have a `phase` field (your code does)
-    return mod(op.phase, d_phase)
-end
-
-
 #########################################################
 # Column update primitive used in noncommuting branch   #
 #########################################################
@@ -230,7 +210,7 @@ end
     piv = stabtab.pivcol_of_row
 
     res = stabtab.res_workspace
-    set_operator!(res, stabtab, op) # TODO: write this method for all op types
+    set_operator!(res, stabtab, op)
 
     cvec = stabtab.c_workspace
     @turbo for j in eachindex(cvec)

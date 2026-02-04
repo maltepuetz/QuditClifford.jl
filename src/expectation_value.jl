@@ -1,12 +1,11 @@
 """
-    expect_int!(stabtab::StabilizerTableau, op::Vector{Int})
-    expect_int!(stabtab::StabilizerTableau, op_xz::AbstractVector{Int}, kP::Int)
+    expect_int!(stabtab::StabilizerTableau, op)
 
-Return the phase exponent of ⟨P⟩ for a Pauli operator P represented as a vector.
+Return the phase exponent of ⟨P⟩ for a Pauli operator `op`.
 
 Operator format:
-- If length(op) == 2n:    op[1:n]=x, op[n+1:2n]=z, and kP=0
-- If length(op) == 2n+1:  op[1:n]=x, op[n+1:2n]=z, op[2n+1]=kP
+- AbstractVector{<:Integer} of length 2n or 2n+1
+- SinglePauli / DoublePauli / TriplePauli / NPauli
 
 Return value:
 - If ⟨P⟩ = 0, returns -1.
@@ -26,20 +25,16 @@ Uses preallocated fields:
 - c_workspace   (length n)   (valid entries 1:m)
 - zacc_workspace (length n)
 """
-function expect_int!(stabtab::StabilizerTableau, op::Vector{Int})
-    n = stabtab.n
-    @assert length(op) == 2n || length(op) == 2n + 1
-    kP = (length(op) == 2n + 1) ? op[2n+1] : 0
-    return expect_int!(stabtab, view(op, 1:2n), kP)
-end
-
-function expect_int!(stabtab::StabilizerTableau, op_xz, kP::Int)
+function expect_int!(stabtab::StabilizerTableau, op)
     tab = stabtab.tableau
     n = stabtab.n
     m = stabtab.m
     d = stabtab.d
+    kP = op_phase_exponent(stabtab, op)
 
-    @assert length(op_xz) == 2n
+    # Fill res_workspace with the operator's XZ part (mod d).
+    res = stabtab.res_workspace
+    set_operator!(res, stabtab, op)
 
     # make sure the tableau is in canonical form (required for membership test)
     stabtab.iscanonical || canonicalize!(stabtab)
@@ -55,11 +50,6 @@ function expect_int!(stabtab::StabilizerTableau, op_xz, kP::Int)
     # ------------------------------------------------------------
     # Step 1: Membership test + coefficient readout in canonical basis
     # ------------------------------------------------------------
-    res = stabtab.res_workspace
-    @inbounds @simd for i in eachindex(res)
-        res[i] = mod(op_xz[i], d)
-    end
-
     cvec = stabtab.c_workspace
     @turbo for j in eachindex(cvec)
         cvec[j] = 0
@@ -165,21 +155,17 @@ function expect_int!(stabtab::StabilizerTableau, op_xz, kP::Int)
 end
 
 """
-    expect!(stabtab::StabilizerTableau, op::Vector{Int})
-    expect!(stabtab::StabilizerTableau, op_xz::AbstractVector{Int}, kP::Int)
+    expect!(stabtab::StabilizerTableau, op)
 
-Allocation-free ⟨P⟩ for a Pauli operator P represented as a vector.
+Allocation-free ⟨P⟩ for a Pauli operator `op`.
 Returns ComplexF64.
 """
-function expect!(stabtab::StabilizerTableau, op::Vector{Int})
-    n = stabtab.n
-    @assert length(op) == 2n || length(op) == 2n + 1
-    kP = (length(op) == 2n + 1) ? op[2n+1] : 0
-    return expect!(stabtab, view(op, 1:2n), kP)
+function expect!(stabtab::StabilizerTableau, op)
+    k = expect_int!(stabtab, op)
+    return _expect_from_exponent(stabtab, k)
 end
 
-function expect!(stabtab::StabilizerTableau, op_xz, kP::Int)
-    k = expect_int!(stabtab, op_xz, kP)
+@inline function _expect_from_exponent(stabtab::StabilizerTableau, k::Int)
     k < 0 && return 0.0 + 0.0im
 
     d = stabtab.d
