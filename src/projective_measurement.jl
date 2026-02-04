@@ -83,7 +83,7 @@ Supported op types:
 
 Returns nothing. Does not allocate.
 """
-@inline function fill_xz!(dst::AbstractVector{Int64}, stabtab::StabilizerTableau, op)
+@inline function fill_xz!(dst::AbstractVector{Int}, stabtab::StabilizerTableau, op)
     n = stabtab.n
     d = stabtab.d
     @assert length(dst) >= 2n

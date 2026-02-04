@@ -1,7 +1,7 @@
 """
-    StabilizerTableau(d::Int, n::Int, m::Int, tableau::Matrix{Int64}, storephase::Bool)
-    StabilizerTableau(d::Int, n::Int, tableau::Matrix{Int64}; m::Int=n, storephase::Bool=size(tableau,1)==2n+1)
-    StabilizerTableau(d::Int, tableau::Matrix{Int64})
+    StabilizerTableau(d::Int, n::Int, m::Int, tableau::AbstractMatrix{<:Integer}, storephase::Bool)
+    StabilizerTableau(d::Int, n::Int, tableau::AbstractMatrix{<:Integer}; m::Int=n, storephase::Bool=size(tableau,1)==2n+1)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer})
 
 A stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -22,32 +22,32 @@ If `storephase=true`, the last row stores the phase exponent `k`:
 * d=2:           i^k with k mod 4
 """
 mutable struct StabilizerTableau{T<:InverseMod}
-    d::Int64                           # qudit dimension
-    n::Int64                           # number of qudits
-    m::Int64                           # number of active generator columns (0 ≤ m ≤ n)
-    tableau::Matrix{Int64}             # tableau has dimensions (2n + storephase) × n
+    d::Int                             # qudit dimension
+    n::Int                             # number of qudits
+    m::Int                             # number of active generator columns (0 ≤ m ≤ n)
+    tableau::Matrix{Int}               # tableau has dimensions (2n + storephase) × n
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
     inversemod::T                      # inverse mod function for dimension d
 
     # workspaces
-    workspace::Matrix{Int64}           # 2n×n (used by entanglement_entropy)
-    generator_workspace::Vector{Int64} # length 2n + storephase
+    workspace::Matrix{Int}             # 2n×n (used by entanglement_entropy)
+    generator_workspace::Vector{Int}   # length 2n + storephase
 
     # workspace for canonicalize!
-    pivcol_of_row::Vector{Int64}       # length 2n (pivot column for each row if canonical)
-    xdotz_cache::Vector{Int64}         # length n (stores x·z values for each generator)
+    pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
+    xdotz_cache::Vector{Int}           # length n (stores x·z values for each generator)
 
     # workspace for expectation value calculations
-    res_workspace::Vector{Int64}       # length 2n
-    c_workspace::Vector{Int64}         # length n
-    zacc_workspace::Vector{Int64}      # length n
+    res_workspace::Vector{Int}         # length 2n
+    c_workspace::Vector{Int}           # length n
+    zacc_workspace::Vector{Int}        # length n
 
     function StabilizerTableau(
-        d::Int64,
-        n::Int64,
-        m::Int64,
-        tableau_in::Matrix{Int64},
+        d::Int,
+        n::Int,
+        m::Int,
+        tableau_in::AbstractMatrix{<:Integer},
         storephase::Bool,
         inversemod::T,
     ) where {T<:InverseMod}
@@ -59,11 +59,12 @@ mutable struct StabilizerTableau{T<:InverseMod}
         size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
 
         # We keep capacity n columns, but accept either n columns or m columns and pad.
-        tab = if size(tableau_in, 2) == n
-            tableau_in
-        elseif size(tableau_in, 2) == m
-            tmp = zeros(Int64, nrows, n)
-            tmp[:, 1:m] .= tableau_in
+        tab_in = (tableau_in isa Matrix{Int}) ? tableau_in : Matrix{Int}(tableau_in)
+        tab = if size(tab_in, 2) == n
+            tab_in
+        elseif size(tab_in, 2) == m
+            tmp = zeros(Int, nrows, n)
+            tmp[:, 1:m] .= tab_in
             tmp
         else
             throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
@@ -98,41 +99,41 @@ mutable struct StabilizerTableau{T<:InverseMod}
             storephase,
             false,
             inversemod,
-            zeros(Int64, 2n, n),
-            zeros(Int64, nrows),
-            zeros(Int64, 2n),
-            zeros(Int64, n),
-            zeros(Int64, 2n),
-            zeros(Int64, n),
-            zeros(Int64, n),
+            zeros(Int, 2n, n),
+            zeros(Int, nrows),
+            zeros(Int, 2n),
+            zeros(Int, n),
+            zeros(Int, 2n),
+            zeros(Int, n),
+            zeros(Int, n),
         )
     end
 
     function StabilizerTableau(
-        d::Int64,
-        n::Int64,
-        tableau::Matrix{Int64};
-        m::Int64=n,
+        d::Int,
+        n::Int,
+        tableau::AbstractMatrix{<:Integer};
+        m::Int=n,
         storephase::Bool=(size(tableau, 1) == 2n + 1),
         inversemod::T=PrecomputedInvMod(d),
     ) where {T<:InverseMod}
         return StabilizerTableau(d, n, m, tableau, storephase, inversemod)
     end
 
-    function StabilizerTableau(d::Int64, tableau::Matrix{Int64})
+    function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer})
         # Interpret as a "full capacity" tableau: n = number of columns, m defaults to n.
         n = size(tableau, 1) ÷ 2
         m = size(tableau, 2)
         return StabilizerTableau(d, n, tableau; m=m)
     end
 
-    function StabilizerTableau(d::Int64, n::Int64;
+    function StabilizerTableau(d::Int, n::Int;
         storephase::Bool=true,
         inversemod::T=PrecomputedInvMod(d)
     ) where {T<:InverseMod}
         # create maximally mixed stabilizer tableau on n qudits
         nrows = 2n + (storephase ? 1 : 0)
-        tab = zeros(Int64, nrows, n)
+        tab = zeros(Int, nrows, n)
         return StabilizerTableau(d, n, 0, tab, storephase, inversemod)
     end
 

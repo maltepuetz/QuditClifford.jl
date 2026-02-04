@@ -244,7 +244,7 @@ If phase is not available (e.g. vector of length 2n), returns 0.
 
 This is only used when `stabtab.storephase == true`.
 """
-@inline function op_phase_exponent(stabtab::StabilizerTableau, op)::Int64
+@inline function op_phase_exponent(stabtab::StabilizerTableau, op)::Int
     stabtab.storephase || return 0
     d_phase = phase_modulus(stabtab.d)
     n = stabtab.n

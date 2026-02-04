@@ -12,17 +12,17 @@
 
 # Helper: dot product x_i ⋅ z_j for a given column i and j, mod d.
 # useful when updating phases while multiplying stabilizer generators
-@inline function dot_xz_col(tab::AbstractMatrix{Int64}, n::Int, i::Int, j::Int, d::Int)
+@inline function dot_xz_col(tab::AbstractMatrix{Int}, n::Int, i::Int, j::Int, d::Int)
     s = 0
     @turbo for q in 1:n
         s += tab[q, i] * tab[n+q, j]
     end
     return mod(s, d)
 end
-@inline dot_xz_col(tab::AbstractMatrix{Int64}, n::Int, j::Int, d::Int) = dot_xz_col(tab, n, j, j, d)
+@inline dot_xz_col(tab::AbstractMatrix{Int}, n::Int, j::Int, d::Int) = dot_xz_col(tab, n, j, j, d)
 
 # dot(x_src, z_tgt) where x_src from generator_workspace and z_tgt from tableau column
-@inline function dot_xz_ws_vs_col(genws::Vector{Int64}, tab::AbstractMatrix{Int64}, n::Int, tgt::Int, d::Int)
+@inline function dot_xz_ws_vs_col(genws::Vector{Int}, tab::AbstractMatrix{Int}, n::Int, tgt::Int, d::Int)
     s = 0
     @turbo for q in 1:n
         s += genws[q] * tab[n+q, tgt]
@@ -31,7 +31,7 @@ end
 end
 
 # dot(x_ws, z_ws) for a generator stored in workspace
-@inline function dot_xz_ws(genws::Vector{Int64}, n::Int, d::Int)
+@inline function dot_xz_ws(genws::Vector{Int}, n::Int, d::Int)
     s = 0
     @turbo for q in 1:n
         s += genws[q] * genws[n+q]
@@ -40,7 +40,7 @@ end
 end
 
 # dot(x_col(j), zacc) mod d
-@inline function dot_xz_col_vs_zacc(tab::AbstractMatrix{Int64}, n::Int, j::Int, zacc::Vector{Int64}, d::Int)
+@inline function dot_xz_col_vs_zacc(tab::AbstractMatrix{Int}, n::Int, j::Int, zacc::Vector{Int}, d::Int)
     s = 0
     @turbo for q in 1:n
         s += tab[q, j] * zacc[q]
