@@ -28,6 +28,49 @@ using Test
         @test entanglement_entropy(stab_mixed, [1, 2]) == 1
     end
 
+    @testset "Qubits (d=2) --- larger mixed systems" begin
+        # Qubits (d=2), start from maximally mixed and measure commuting operators.
+        stab = StabilizerTableau(2, 5; storephase=true) # m=0
+
+        # Maximally mixed: S(A) = |A|
+        @test entanglement_entropy(stab, [1]) == 1
+        @test entanglement_entropy(stab, [2, 4]) == 2
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 5
+
+        # Measure Z₁
+        measure!(stab, SinglePauli(1, 0, 1))
+        @test entanglement_entropy(stab, [1]) == 0
+        @test entanglement_entropy(stab, [2]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 1
+        @test entanglement_entropy(stab, [3, 4, 5]) == 3
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 4
+
+        # Measure X₂
+        measure!(stab, SinglePauli(2, 1, 0))
+        @test entanglement_entropy(stab, [1]) == 0
+        @test entanglement_entropy(stab, [2]) == 0
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 0
+        @test entanglement_entropy(stab, [2, 3]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 3
+
+        # Measure X₄X₅
+        measure!(stab, DoublePauli(4, 1, 0, 5, 1, 0))
+        @test entanglement_entropy(stab, [4, 5]) == 1
+        @test entanglement_entropy(stab, [4]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 0
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 2
+
+        # Measure Z₄Z₅ (now qudits 4&5 become pure Bell pair)
+        measure!(stab, DoublePauli(4, 0, 1, 5, 0, 1))
+        @test entanglement_entropy(stab, [4, 5]) == 0
+        @test entanglement_entropy(stab, [4]) == 1
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [3, 4, 5]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 1
+    end
+
     @testset "Qudits (d=3)" begin
         # Product state |00⟩ with generators Z₁ and Z₂.
         tab_prod = zeros(Int, 5, 2)
@@ -52,5 +95,48 @@ using Test
         @test entanglement_entropy(stab_mixed, [1]) == 0
         @test entanglement_entropy(stab_mixed, [2]) == 1
         @test entanglement_entropy(stab_mixed, [1, 2]) == 1
+    end
+    
+    @testset "Qudits (d=3) --- larger mixed systems" begin
+        # Qudits (d=3), start from maximally mixed and measure commuting operators.
+        stab = StabilizerTableau(3, 5; storephase=true) # m=0
+
+        # Maximally mixed: S(A) = |A|
+        @test entanglement_entropy(stab, [1]) == 1
+        @test entanglement_entropy(stab, [2, 4]) == 2
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 5
+
+        # Measure Z₁
+        measure!(stab, SinglePauli(1, 0, 1))
+        @test entanglement_entropy(stab, [1]) == 0
+        @test entanglement_entropy(stab, [2]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 1
+        @test entanglement_entropy(stab, [3, 4, 5]) == 3
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 4
+
+        # Measure X₂
+        measure!(stab, SinglePauli(2, 1, 0))
+        @test entanglement_entropy(stab, [1]) == 0
+        @test entanglement_entropy(stab, [2]) == 0
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 0
+        @test entanglement_entropy(stab, [2, 3]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 3
+
+        # Measure X₄X₅
+        measure!(stab, DoublePauli(4, 1, 0, 5, 1, 0))
+        @test entanglement_entropy(stab, [4, 5]) == 1
+        @test entanglement_entropy(stab, [4]) == 1
+        @test entanglement_entropy(stab, [1, 2]) == 0
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 2
+
+        # Measure Z₄Z₅^{-1} (commutes with X₄X₅ for d=3)
+        measure!(stab, DoublePauli(4, 0, 1, 5, 0, 2))
+        @test entanglement_entropy(stab, [4, 5]) == 0
+        @test entanglement_entropy(stab, [4]) == 1
+        @test entanglement_entropy(stab, [3]) == 1
+        @test entanglement_entropy(stab, [3, 4, 5]) == 1
+        @test entanglement_entropy(stab, [1, 2, 3, 4, 5]) == 1
     end
 end

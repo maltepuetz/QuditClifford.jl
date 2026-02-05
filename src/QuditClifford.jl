@@ -1,6 +1,7 @@
 module QuditClifford
 
-export StabilizerTableau, entanglement_entropy, measure!, Operator, canonicalize!, expect!, expect_int!
+export StabilizerTableau, entanglement_entropy, measure!, Operator, FewQuditOperator,
+    SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!
 
 import Random, Primes
 import Random.rand!
