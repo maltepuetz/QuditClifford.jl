@@ -19,11 +19,13 @@ using Test
         stab_bell = StabilizerTableau(2, 2, tab_bell; m=2, storephase=true)
         @test entanglement_entropy(stab_bell, [1]) == 1
 
-        # Mixed state (m < n) should throw for entanglement_entropy.
+        # Mixed state (m < n).
         tab_mixed = zeros(Int, 5, 2)
         tab_mixed[3, 1] = 1  # Z₁ only
         stab_mixed = StabilizerTableau(2, 2, tab_mixed; m=1, storephase=true)
-        @test_throws ArgumentError entanglement_entropy(stab_mixed, [1])
+        @test entanglement_entropy(stab_mixed, [1]) == 0
+        @test entanglement_entropy(stab_mixed, [2]) == 1
+        @test entanglement_entropy(stab_mixed, [1, 2]) == 1
     end
 
     @testset "Qudits (d=3)" begin
@@ -43,10 +45,12 @@ using Test
         stab_bell = StabilizerTableau(3, 2, tab_bell; m=2, storephase=true)
         @test entanglement_entropy(stab_bell, [1]) == 1
 
-        # Mixed state (m < n) should throw for entanglement_entropy.
+        # Mixed state (m < n).
         tab_mixed = zeros(Int, 5, 2)
         tab_mixed[3, 1] = 1  # Z₁ only
         stab_mixed = StabilizerTableau(3, 2, tab_mixed; m=1, storephase=true)
-        @test_throws ArgumentError entanglement_entropy(stab_mixed, [1])
+        @test entanglement_entropy(stab_mixed, [1]) == 0
+        @test entanglement_entropy(stab_mixed, [2]) == 1
+        @test entanglement_entropy(stab_mixed, [1, 2]) == 1
     end
 end
