@@ -305,9 +305,13 @@ end
 ############################################
 
 """
-Projective measurement of a Pauli operator.
+    measure!(stabtab::StabilizerTableau, op;
+        outcome::Int=rand(0:stabtab.d-1) # outcome used if non-deterministic
+    )
 
-Mixed-state stabilizer semantics (stabilizer density operators / codespace projectors):
+Projective measurement of a Pauli operator. If the measurement is non-deterministic, you
+can optionally specify the `outcome` to be used for the post-measurement state update
+(otherwise it is sampled uniformly at random).
 
 ### case 1: operator does NOT commute with all stabilizer generators
 - the measurement outcome is uniformly random
@@ -325,14 +329,13 @@ Returns the outcome as an integer:
 - odd prime d: t ∈ 0:(d-1) meaning eigenvalue ω^t of the Pauli observable
 - d=2: b ∈ {0,1,2,3} meaning eigenvalue (i)^b of the Pauli observable
 """
-function measure!(stabtab::StabilizerTableau, op)
+function measure!(stabtab::StabilizerTableau, op;
+    outcome::Int=rand(0:stabtab.d-1) # outcome used if non-deterministic
+)
     d = stabtab.d
     n = stabtab.n
     m = stabtab.m
 
-    # sample a random outcome (only used if non-deterministic)
-    outcome = rand(0:d-1)
-    
     # get phase of the operator (if available)
     kop = op_phase_exponent(stabtab, op)
 
