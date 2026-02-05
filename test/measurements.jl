@@ -13,7 +13,7 @@ using Random
         outcomes = Int[]
         for _ in 1:10
             tab = reshape(Int[0, 1, 0], 3, 1)
-            stab = StabilizerTableau(2, 1, tab; m=1, storephase=true)
+            stab = StabilizerTableau(2, tab; m=1, storephase=true)
 
             out = measure!(stab, Int[1, 0]) # measure X
             @test out in 0:1
@@ -27,7 +27,7 @@ using Random
 
         # Commuting measurement in span (Z) should be deterministic and leave the state.
         tab_det = reshape(Int[0, 1, 0], 3, 1)
-        stab_det = StabilizerTableau(2, 1, tab_det; m=1, storephase=true)
+        stab_det = StabilizerTableau(2, tab_det; m=1, storephase=true)
         out_det = measure!(stab_det, Int[0, 1]) # measure Z
         @test out_det == 0
         @test stab_det.tableau[1, 1] == 0
@@ -38,7 +38,7 @@ using Random
         outcomes2 = Int[]
         for _ in 1:10
             tab2 = zeros(Int, 3, 1)
-            stab2 = StabilizerTableau(2, 1, tab2; m=0, storephase=true)
+            stab2 = StabilizerTableau(2, tab2; m=0, storephase=true)
 
             out2 = measure!(stab2, Int[0, 1]) # measure Z
             @test out2 in 0:1
@@ -61,7 +61,7 @@ using Random
         outcomes = Int[]
         for _ in 1:20
             tab = reshape(Int[0, 1, 0], 3, 1)
-            stab = StabilizerTableau(3, 1, tab; m=1, storephase=true)
+            stab = StabilizerTableau(3, tab; m=1, storephase=true)
 
             out = measure!(stab, Int[1, 0]) # measure X
             @test out in 0:2
@@ -75,7 +75,7 @@ using Random
 
         # Commuting measurement in span (Z) should be deterministic and leave the state.
         tab_det = reshape(Int[0, 1, 0], 3, 1)
-        stab_det = StabilizerTableau(3, 1, tab_det; m=1, storephase=true)
+        stab_det = StabilizerTableau(3, tab_det; m=1, storephase=true)
         out_det = measure!(stab_det, Int[0, 1]) # measure Z
         @test out_det == 0
         @test stab_det.tableau[1, 1] == 0
@@ -86,7 +86,7 @@ using Random
         outcomes2 = Int[]
         for _ in 1:20
             tab2 = zeros(Int, 3, 1)
-            stab2 = StabilizerTableau(3, 1, tab2; m=0, storephase=true)
+            stab2 = StabilizerTableau(3, tab2; m=0, storephase=true)
 
             out2 = measure!(stab2, Int[0, 1]) # measure Z
             @test out2 in 0:2

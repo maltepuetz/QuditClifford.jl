@@ -4,6 +4,7 @@ struct JustInTimeInvMod <: InverseMod end
 struct PrecomputedInvMod{T <: AbstractVector} <: InverseMod
     lookuptable::T
     function PrecomputedInvMod(d::T) where T <: Integer
+        !Primes.isprime(Int(d)) && throw(ArgumentError("Qudit dimension d must be a prime number."))
         lookuptable = ones(T, Int(d) - 1)
         for x in 2:Int(d)-1
             lookuptable[x] = invmod(x, Int(d))

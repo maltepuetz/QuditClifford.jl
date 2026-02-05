@@ -5,7 +5,7 @@ using Test
     @testset "Qubits (d=2)" begin
         # Qubit |0⟩ stabilized by Z.
         tab = reshape(Int[0, 1, 0], 3, 1)
-        stab = StabilizerTableau(2, 1, tab; m=1, storephase=true)
+        stab = StabilizerTableau(2, tab; m=1, storephase=true)
 
         # Identity always has expectation 1.
         @test QuditClifford.expect!(stab, Int[0, 0]) ≈ 1.0 + 0.0im
@@ -25,7 +25,7 @@ using Test
 
         # If phases are not stored, in-span operators still return 1 by convention.
         tab_nophase = reshape(Int[0, 1], 2, 1)
-        stab_nophase = StabilizerTableau(2, 1, tab_nophase; m=1, storephase=false)
+        stab_nophase = StabilizerTableau(2, tab_nophase; m=1, storephase=false)
         @test QuditClifford.expect!(stab_nophase, Int[0, 1]) ≈ 1.0 + 0.0im
         @test QuditClifford.expect_int!(stab_nophase, Int[0, 1]) == 0
 
@@ -43,7 +43,7 @@ using Test
     @testset "Qudits (d=3)" begin
         # Qutrit |0⟩ stabilized by Z.
         tab = reshape(Int[0, 1, 0], 3, 1)
-        stab = StabilizerTableau(3, 1, tab; m=1, storephase=true)
+        stab = StabilizerTableau(3, tab; m=1, storephase=true)
 
         # Identity always has expectation 1.
         @test QuditClifford.expect!(stab, Int[0, 0]) ≈ 1.0 + 0.0im
@@ -64,7 +64,7 @@ using Test
 
         # If phases are not stored, in-span operators still return 1 by convention.
         tab_nophase = reshape(Int[0, 1], 2, 1)
-        stab_nophase = StabilizerTableau(3, 1, tab_nophase; m=1, storephase=false)
+        stab_nophase = StabilizerTableau(3, tab_nophase; m=1, storephase=false)
         @test QuditClifford.expect!(stab_nophase, Int[0, 1]) ≈ 1.0 + 0.0im
         @test QuditClifford.expect_int!(stab_nophase, Int[0, 1]) == 0
 

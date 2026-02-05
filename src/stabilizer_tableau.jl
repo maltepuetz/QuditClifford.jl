@@ -1,7 +1,9 @@
 """
-    StabilizerTableau(d::Int, n::Int, m::Int, tableau::AbstractMatrix{<:Integer}, storephase::Bool)
-    StabilizerTableau(d::Int, n::Int, tableau::AbstractMatrix{<:Integer}; m::Int=n, storephase::Bool=size(tableau,1)==2n+1)
-    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer})
+    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true)
+    StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing)
+    reset!(stabtab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
+    reset!(stabtab::StabilizerTableau, state::Symbol; basis=:Z)
 
 A stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -20,6 +22,23 @@ If `storephase=true`, the last row stores the phase exponent `k`:
 
 * odd prime `d`:  ω^k with k mod d
 * d=2:           i^k with k mod 4
+
+Preset states
+-------------
+`state` can be:
+
+* `:mixed` (maximally mixed; m=0)
+* `:product` (pure product state; `basis` is `:X`, `:Y`, `:Z`, or a vector of length `n`)
+* `:ghz` (generalized GHZ on `n` qudits)
+
+Aliases: `state=:X/:Y/:Z` are equivalent to `state=:product` with that basis.
+
+For qubits (`d=2`), `basis=:Y` requires `storephase=true`.
+
+`reset!` reinitializes an existing tableau in-place using the same presets.
+
+Tableau constructors accept shapes `(2n + storephase) × m` or `m × (2n + storephase)`,
+with optional capacity `n` columns/rows (so `m` may be provided to select active generators).
 """
 mutable struct StabilizerTableau{T<:InverseMod}
     d::Int                             # qudit dimension
@@ -42,101 +61,342 @@ mutable struct StabilizerTableau{T<:InverseMod}
     res_workspace::Vector{Int}         # length 2n
     c_workspace::Vector{Int}           # length n
     zacc_workspace::Vector{Int}        # length n
+end
 
-    function StabilizerTableau(
-        d::Int,
-        n::Int,
-        m::Int,
-        tableau_in::AbstractMatrix{<:Integer},
-        storephase::Bool,
-        inversemod::T,
-    ) where {T<:InverseMod}
+function StabilizerTableau(d::Int, n::Int;
+    state::Symbol=:mixed,
+    basis=:Z,
+    storephase::Bool=true,
+    inversemod::T=PrecomputedInvMod(d)
+) where {T<:InverseMod}
+    state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
+    tab, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
+    return _build_stabilizer_tableau(d, n, m, tab, storephase, inversemod)
+end
+StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = StabilizerTableau(d, n; state=state, kwargs...)
 
-        !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
-        (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
+    m::Union{Int,Nothing}=nothing,
+    storephase::Union{Bool,Nothing}=nothing,
+    inversemod::T=PrecomputedInvMod(d)
+) where {T<:InverseMod}
+    m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    tab_in = (tableau isa Matrix{Int}) ? tableau : Matrix{Int}(tableau)
+    layout = _infer_tableau_layout(size(tab_in, 1), size(tab_in, 2), m, storephase)
+    layout === nothing && throw(ArgumentError(
+        "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
+    ))
 
-        nrows = 2n + (storephase ? 1 : 0)
-        size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
+    if layout.transpose
+        tab_in = permutedims(tab_in)
+    end
 
-        # We keep capacity n columns, but accept either n columns or m columns and pad.
-        tab_in = (tableau_in isa Matrix{Int}) ? tableau_in : Matrix{Int}(tableau_in)
-        tab = if size(tab_in, 2) == n
-            tab_in
-        elseif size(tab_in, 2) == m
-            tmp = zeros(Int, nrows, n)
-            tmp[:, 1:m] .= tab_in
-            tmp
-        else
-            throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
+    return _build_stabilizer_tableau(d, layout.n, layout.m, tab_in, layout.storephase, inversemod)
+end
+
+function _build_stabilizer_tableau(
+    d::Int,
+    n::Int,
+    m::Int,
+    tableau_in::AbstractMatrix{<:Integer},
+    storephase::Bool,
+    inversemod::T,
+) where {T<:InverseMod}
+    !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
+    (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+
+    nrows = 2n + (storephase ? 1 : 0)
+    size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
+
+    # We keep capacity n columns, but accept either n columns or m columns and pad.
+    tab_in = (tableau_in isa Matrix{Int}) ? tableau_in : Matrix{Int}(tableau_in)
+    tab = if size(tab_in, 2) == n
+        tab_in
+    elseif size(tab_in, 2) == m
+        tmp = zeros(Int, nrows, n)
+        tmp[:, 1:m] .= tab_in
+        tmp
+    else
+        throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
+    end
+
+    # Reduce entries mod d / mod phase modulus
+    @turbo for j in 1:n
+        for i in 1:(2n)
+            tab[i, j] = mod(tab[i, j], d)
         end
-
-        # Reduce entries mod d / mod phase modulus
+    end
+    if storephase
+        d_phase = phase_modulus(d)
+        prow = 2n + 1
         @turbo for j in 1:n
-            for i in 1:(2n)
-                tab[i, j] = mod(tab[i, j], d)
+            tab[prow, j] = mod(tab[prow, j], d_phase)
+        end
+    end
+
+    # Ensure unused columns are zeroed.
+    if m < n
+        @turbo for j in (m+1):n, i in axes(tab, 1)
+            tab[i, j] = 0
+        end
+    end
+
+    return StabilizerTableau{T}(
+        d,
+        n,
+        m,
+        tab,
+        storephase,
+        false,
+        inversemod,
+        zeros(Int, 2n, n),
+        zeros(Int, nrows),
+        zeros(Int, 2n),
+        zeros(Int, n),
+        zeros(Int, 2n),
+        zeros(Int, n),
+        zeros(Int, n),
+    )
+end
+
+@inline function _layout_from_dims(dim_nrows::Int, dim_cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
+    storephase_dim = isodd(dim_nrows)
+    n = storephase_dim ? (dim_nrows - 1) ÷ 2 : dim_nrows ÷ 2
+
+    if storephase !== nothing && storephase != storephase_dim
+        return nothing
+    end
+
+    if m === nothing
+        if dim_cols == n
+            return (n=n, m=n, storephase=storephase_dim)
+        elseif dim_cols < n
+            return (n=n, m=dim_cols, storephase=storephase_dim)
+        else
+            return nothing
+        end
+    else
+        (0 ≤ m ≤ n) || return nothing
+        if dim_cols == n || dim_cols == m
+            return (n=n, m=m, storephase=storephase_dim)
+        end
+    end
+    return nothing
+end
+
+@inline function _infer_tableau_layout(rows::Int, cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
+    cand = _layout_from_dims(rows, cols, m, storephase)
+    cand !== nothing && return (transpose=false, n=cand.n, m=cand.m, storephase=cand.storephase)
+
+    cand = _layout_from_dims(cols, rows, m, storephase)
+    cand !== nothing && return (transpose=true, n=cand.n, m=cand.m, storephase=cand.storephase)
+
+    return nothing
+end
+
+function reset!(stabtab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
+    state_norm, basis_spec = _normalize_state_and_basis(state, basis, stabtab.n)
+    m = _preset_tableau!(stabtab.tableau, stabtab.d, stabtab.n, state_norm, basis_spec, stabtab.storephase)
+    stabtab.m = m
+    stabtab.iscanonical = false
+    return stabtab
+end
+
+function reset!(stabtab::StabilizerTableau, state::Symbol; basis=:Z)
+    return reset!(stabtab; state=state, basis=basis)
+end
+
+@inline function _canonical_basis_symbol(basis::Symbol)::Symbol
+    if basis === :X || basis === :x
+        return :X
+    elseif basis === :Y || basis === :y
+        return :Y
+    elseif basis === :Z || basis === :z
+        return :Z
+    end
+    throw(ArgumentError("Unknown basis symbol: $basis. Use :X, :Y, or :Z."))
+end
+
+@inline function _basis_is_default(basis)::Bool
+    if basis === :Z
+        return true
+    elseif basis isa Symbol
+        return _canonical_basis_symbol(basis) === :Z
+    end
+    return false
+end
+
+@inline function _normalize_state_and_basis(state::Symbol, basis, n::Int)
+    if state === :X || state === :x || state === :Y || state === :y || state === :Z || state === :z
+        basis_sym = _canonical_basis_symbol(state)
+        if basis isa Symbol
+            basis_can = _canonical_basis_symbol(basis)
+            if !(basis_can === :Z || basis_can === basis_sym)
+                throw(ArgumentError("state=$state implies basis=$basis_sym; omit basis or set it to $basis_sym."))
+            end
+        elseif basis !== :Z
+            throw(ArgumentError("state=$state implies basis=$basis_sym; omit basis or set it to $basis_sym."))
+        end
+        return :product, basis_sym
+    end
+
+    if state === :mixed || state === :maxmixed || state === :maximally_mixed || state === :totally_mixed
+        if !_basis_is_default(basis)
+            throw(ArgumentError("basis is only used for state=:product."))
+        end
+        return :mixed, nothing
+    elseif state === :product || state === :prod || state === :product_state
+        return :product, basis
+    elseif state === :ghz
+        if !_basis_is_default(basis)
+            throw(ArgumentError("basis is only used for state=:product."))
+        end
+        return :ghz, nothing
+    end
+
+    throw(ArgumentError("Unknown state: $state. Use :mixed, :product, or :ghz."))
+end
+
+function _preset_tableau(d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
+    nrows = 2n + (storephase ? 1 : 0)
+    tab = zeros(Int, nrows, n)
+
+    m = _preset_tableau!(tab, d, n, state, basis_spec, storephase)
+    return tab, m
+end
+
+function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
+    fill!(tab, 0)
+
+    if state === :mixed
+        return 0
+    elseif state === :product
+        _fill_product_state!(tab, d, n, basis_spec, storephase)
+        _reduce_tableau_mod!(tab, d, n, storephase)
+        return n
+    elseif state === :ghz
+        _fill_ghz_state!(tab, d, n)
+        _reduce_tableau_mod!(tab, d, n, storephase)
+        return n
+    end
+
+    throw(ArgumentError("Unknown preset state: $state."))
+end
+
+function _reduce_tableau_mod!(tab::Matrix{Int}, d::Int, n::Int, storephase::Bool)
+    @turbo for j in 1:n
+        for i in 1:(2n)
+            tab[i, j] = mod(tab[i, j], d)
+        end
+    end
+    if storephase
+        d_phase = phase_modulus(d)
+        prow = 2n + 1
+        @turbo for j in 1:n
+            tab[prow, j] = mod(tab[prow, j], d_phase)
+        end
+    end
+    return nothing
+end
+
+function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis::Symbol, storephase::Bool)
+    b = _canonical_basis_symbol(basis)
+    if d == 2 && !storephase && b === :Y
+        throw(ArgumentError("basis :Y for qubits requires storephase=true."))
+    end
+
+    @inbounds for j in 1:n
+        if b === :X
+            tab[j, j] = 1
+        elseif b === :Z
+            tab[n + j, j] = 1
+        elseif b === :Y
+            tab[j, j] = 1
+            tab[n + j, j] = 1
+            if storephase && d == 2
+                tab[2n + 1, j] = 1
             end
         end
-        if storephase
-            d_phase = phase_modulus(d)
-            prow = 2n + 1
-            @turbo for j in 1:n
-                tab[prow, j] = mod(tab[prow, j], d_phase)
+    end
+    return nothing
+end
+
+function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_vec::AbstractVector{<:Symbol}, storephase::Bool)
+    length(basis_vec) == n || throw(ArgumentError("basis must have length n=$n."))
+    if d == 2 && !storephase
+        @inbounds for b in basis_vec
+            if _canonical_basis_symbol(b) === :Y
+                throw(ArgumentError("basis :Y for qubits requires storephase=true."))
             end
         end
+    end
 
-        # Ensure unused columns are zeroed.
-        if m < n
-            @turbo for j in (m+1):n, i in axes(tab, 1)
-                tab[i, j] = 0
+    @inbounds for j in 1:n
+        b = _canonical_basis_symbol(basis_vec[j])
+        if b === :X
+            tab[j, j] = 1
+        elseif b === :Z
+            tab[n + j, j] = 1
+        elseif b === :Y
+            tab[j, j] = 1
+            tab[n + j, j] = 1
+            if storephase && d == 2
+                tab[2n + 1, j] = 1
             end
         end
+    end
+    return nothing
+end
 
-        new{T}(
-            d,
-            n,
-            m,
-            tab,
-            storephase,
-            false,
-            inversemod,
-            zeros(Int, 2n, n),
-            zeros(Int, nrows),
-            zeros(Int, 2n),
-            zeros(Int, n),
-            zeros(Int, 2n),
-            zeros(Int, n),
-            zeros(Int, n),
-        )
+function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_tuple::Tuple, storephase::Bool)
+    length(basis_tuple) == n || throw(ArgumentError("basis must have length n=$n."))
+    if d == 2 && !storephase
+        @inbounds for b in basis_tuple
+            b isa Symbol || throw(ArgumentError("basis tuple entries must be Symbols."))
+            if _canonical_basis_symbol(b) === :Y
+                throw(ArgumentError("basis :Y for qubits requires storephase=true."))
+            end
+        end
     end
 
-    function StabilizerTableau(
-        d::Int,
-        n::Int,
-        tableau::AbstractMatrix{<:Integer};
-        m::Int=n,
-        storephase::Bool=(size(tableau, 1) == 2n + 1),
-        inversemod::T=PrecomputedInvMod(d),
-    ) where {T<:InverseMod}
-        return StabilizerTableau(d, n, m, tableau, storephase, inversemod)
+    @inbounds for j in 1:n
+        b = basis_tuple[j]
+        b isa Symbol || throw(ArgumentError("basis tuple entries must be Symbols."))
+        b = _canonical_basis_symbol(b)
+        if b === :X
+            tab[j, j] = 1
+        elseif b === :Z
+            tab[n + j, j] = 1
+        elseif b === :Y
+            tab[j, j] = 1
+            tab[n + j, j] = 1
+            if storephase && d == 2
+                tab[2n + 1, j] = 1
+            end
+        end
+    end
+    return nothing
+end
+
+function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis, storephase::Bool)
+    throw(ArgumentError("basis must be a Symbol or a vector/tuple of Symbols."))
+end
+
+function _fill_ghz_state!(tab::Matrix{Int}, _d::Int, n::Int)
+    n == 0 && return nothing
+
+    # Generator 1: X1 X2 ... Xn
+    @inbounds for q in 1:n
+        tab[q, 1] = 1
     end
 
-    function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer})
-        # Interpret as a "full capacity" tableau: n = number of columns, m defaults to n.
-        n = size(tableau, 1) ÷ 2
-        m = size(tableau, 2)
-        return StabilizerTableau(d, n, tableau; m=m)
+    # Generators 2..n: Z_{i-1} Z_i^{-1}
+    @inbounds for col in 2:n
+        i = col
+        tab[n + (i - 1), col] = 1
+        tab[n + i, col] = -1
     end
-
-    function StabilizerTableau(d::Int, n::Int;
-        storephase::Bool=true,
-        inversemod::T=PrecomputedInvMod(d)
-    ) where {T<:InverseMod}
-        # create maximally mixed stabilizer tableau on n qudits
-        nrows = 2n + (storephase ? 1 : 0)
-        tab = zeros(Int, nrows, n)
-        return StabilizerTableau(d, n, 0, tab, storephase, inversemod)
-    end
-
+    return nothing
 end
 
 """Number of active generator columns."""

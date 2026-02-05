@@ -14,4 +14,5 @@ using Aqua
     include("expectation_values.jl")
     include("entanglement.jl")
     include("purity.jl")
+    include("initialization.jl")
 end
