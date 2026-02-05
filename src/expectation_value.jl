@@ -1,29 +1,29 @@
 """
     expect_int!(stabtab::StabilizerTableau, op)
 
-Return the phase exponent of ⟨P⟩ for a Pauli operator `op`.
+Compute the expectation value ⟨P⟩ for a Pauli operator `op` in exponent form.
 
-Operator format:
-- AbstractVector{<:Integer} of length 2n or 2n+1
-- SinglePauli / DoublePauli / TriplePauli / NPauli
+# Arguments
+- `stabtab::StabilizerTableau`: Stabilizer tableau (canonicalized if needed).
+- `op`: Pauli operator as `SinglePauli`, `DoublePauli`, `TriplePauli`, `NPauli`,
+  or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
 
-Return value:
-- If ⟨P⟩ = 0, returns -1.
-- Otherwise returns k such that:
-    * odd prime d: ⟨P⟩ = ω^k with k mod d
-    * d=2:         ⟨P⟩ = i^k with k mod 4
+# Returns
+- `-1` if ⟨P⟩ = 0 (operator not in the stabilizer span).
+- For odd prime `d`, returns `k` with ⟨P⟩ = ω^k (k mod `d`).
+- For `d=2`, returns `k` with ⟨P⟩ = i^k (k mod 4).
+- If `storephase=false` and `op` is in-span, returns `0` by convention.
 
-If `storephase=false`, returns 0 for in-span operators by convention.
+# Examples
+```julia
+stab = StabilizerTableau(2, 2; state=:product, basis=:Z)
+k = expect_int!(stab, SinglePauli(1, 0, 1))  # Z on qudit 1 -> 0 (⟨Z⟩ = 1)
+k2 = expect_int!(stab, SinglePauli(1, 1, 0)) # X on qudit 1 -> -1 (⟨X⟩ = 0)
+```
 
-Assumes `canonicalize!(stabtab)` was called so that:
-- stabtab.tableau is in column-RCEF on rows 1:2n
-- stabtab.pivcol_of_row[r] is the pivot column index for pivot row r (or 0)
-- stabtab.xdotz_cache[j] == (x_j · z_j) mod d for each generator column j
-
-Uses preallocated fields:
-- res_workspace (length 2n)
-- c_workspace   (length n)   (valid entries 1:m)
-- zacc_workspace (length n)
+# Notes
+- Canonicalizes `stabtab` if needed, which may permute generator columns and sets `iscanonical=true`.
+- Uses the preallocated workspaces in `stabtab` to remain allocation-free.
 """
 function expect_int!(stabtab::StabilizerTableau, op)
     tab = stabtab.tableau
@@ -157,8 +157,24 @@ end
 """
     expect!(stabtab::StabilizerTableau, op)
 
-Allocation-free ⟨P⟩ for a Pauli operator `op`.
-Returns ComplexF64.
+Return the expectation value ⟨P⟩ as a `ComplexF64` for a Pauli operator `op`.
+
+# Arguments
+- `stabtab::StabilizerTableau`: Stabilizer tableau (canonicalized if needed).
+- `op`: Pauli operator as `SinglePauli`, `DoublePauli`, `TriplePauli`, `NPauli`,
+  or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
+
+# Returns
+- `ComplexF64` expectation value. Returns `0.0 + 0.0im` if ⟨P⟩ = 0.
+
+# Examples
+```julia
+stab = StabilizerTableau(3, 1; state=:product, basis=:Z)
+val = expect!(stab, SinglePauli(1, 0, 1))  # ⟨Z⟩ = 1 + 0im
+```
+
+# Notes
+Delegates to [`expect_int!`](@ref) and converts the exponent to a complex phase.
 """
 function expect!(stabtab::StabilizerTableau, op)
     k = expect_int!(stabtab, op)

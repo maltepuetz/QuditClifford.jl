@@ -1,9 +1,25 @@
 """
     canonicalize!(stabtab::StabilizerTableau)
 
-RCEF (column Gauss–Jordan) on stabtab.tableau, with correct phase updates if
-stabtab.storephase=true. Updates stabtab.pivcol_of_row internally such that 
-pivcol_of_row[r] = pivot column index for row r, or 0 if no pivot.
+Put the active generator columns of `stabtab` into column-reduced echelon form (RCEF),
+updating phases consistently and caching pivot metadata.
+
+# Arguments
+- `stabtab::StabilizerTableau`: Tableau to canonicalize in-place.
+
+# Returns
+- `nothing`. Mutates `stabtab`.
+
+# Examples
+```julia
+stab = StabilizerTableau(2, 3; state=:ghz)
+canonicalize!(stab)
+```
+
+# Notes
+- Operates on columns `1:m` (active generators). Columns `m+1:n` are unused capacity.
+- If `storephase=true`, the phase row is updated so the represented stabilizer subgroup is unchanged.
+- Updates `stabtab.pivcol_of_row`, `stabtab.xdotz_cache`, and sets `stabtab.iscanonical = true`.
 """
 function canonicalize!(stabtab::StabilizerTableau)
     tab = stabtab.tableau

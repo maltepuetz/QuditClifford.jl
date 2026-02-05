@@ -1,6 +1,51 @@
+"""
+    Operator
+
+Abstract supertype for operators supported by QuditClifford.
+Concrete operators (currently Pauli operators on a few qudits) can be used with
+[`measure!`](@ref) and [`expect!`](@ref).
+
+# Examples
+```julia
+op = SinglePauli(1, 1, 0)
+op isa Operator
+```
+"""
 abstract type Operator end
 
+"""
+    FewQuditOperator <: Operator
+
+Abstract supertype for Pauli operators acting on a small number of qudits.
+All concrete subtypes store 1-based qudit indices and X/Z exponents; the phase
+is stored as an exponent (interpreted by the consuming tableau's dimension).
+
+# Examples
+```julia
+op = DoublePauli(1, 1, 0, 3, 0, 1)  # X1 * Z3
+op isa FewQuditOperator
+```
+"""
 abstract type FewQuditOperator <: Operator end
+
+"""
+    SinglePauli(qudit::Int, x::Int, z::Int)
+    SinglePauli(qudit::Int, x::Int, z::Int, phase::Int)
+
+Pauli operator acting on a single qudit, with X/Z exponents and an optional phase.
+
+# Arguments
+- `qudit::Int`: 1-based qudit index.
+- `x::Int`: Exponent of `X` on that qudit (reduced mod `d` by consuming functions).
+- `z::Int`: Exponent of `Z` on that qudit (reduced mod `d` by consuming functions).
+- `phase::Int`: Phase exponent `k`. Interpreted as `ω^k` for odd prime `d` and `i^k` for `d=2`.
+
+# Examples
+```julia
+op = SinglePauli(2, 1, 0)        # X on qudit 2
+op = SinglePauli(1, 0, 1, 2)     # i^2 Z on qudit 1 when d=2
+```
+"""
 struct SinglePauli <: FewQuditOperator
     qudit::Int
     x::Int
@@ -8,6 +53,25 @@ struct SinglePauli <: FewQuditOperator
     phase::Int
 end
 SinglePauli(qudit::Int, x::Int, z::Int) = SinglePauli(qudit, x, z, 0)
+
+"""
+    DoublePauli(qudit1::Int, x1::Int, z1::Int, qudit2::Int, x2::Int, z2::Int)
+    DoublePauli(qudit1::Int, x1::Int, z1::Int, qudit2::Int, x2::Int, z2::Int, phase::Int)
+
+Pauli operator acting on two qudits.
+
+# Arguments
+- `qudit1::Int`, `qudit2::Int`: 1-based qudit indices.
+- `x1::Int`, `z1::Int`: Exponents for the first qudit.
+- `x2::Int`, `z2::Int`: Exponents for the second qudit.
+- `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
+
+# Examples
+```julia
+op = DoublePauli(1, 1, 0, 2, 0, 1)    # X1 * Z2
+op = DoublePauli(1, 0, 1, 2, 0, 1, 3) # i^3 Z1 * Z2 when d=2
+```
+"""
 struct DoublePauli <: FewQuditOperator
     qudit1::Int
     x1::Int
@@ -18,6 +82,27 @@ struct DoublePauli <: FewQuditOperator
     phase::Int
 end
 DoublePauli(qudit1::Int, x1::Int, z1::Int, qudit2::Int, x2::Int, z2::Int) = DoublePauli(qudit1, x1, z1, qudit2, x2, z2, 0)
+
+"""
+    TriplePauli(qudit1::Int, x1::Int, z1::Int,
+                qudit2::Int, x2::Int, z2::Int,
+                qudit3::Int, x3::Int, z3::Int)
+    TriplePauli(qudit1::Int, x1::Int, z1::Int,
+                qudit2::Int, x2::Int, z2::Int,
+                qudit3::Int, x3::Int, z3::Int, phase::Int)
+
+Pauli operator acting on three qudits.
+
+# Arguments
+- `qudit1::Int`, `qudit2::Int`, `qudit3::Int`: 1-based qudit indices.
+- `x1::Int`, `z1::Int`, `x2::Int`, `z2::Int`, `x3::Int`, `z3::Int`: Exponents for each qudit.
+- `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
+
+# Examples
+```julia
+op = TriplePauli(1, 1, 0, 2, 0, 1, 3, 1, 1)  # X1 * Z2 * X3Z3
+```
+"""
 struct TriplePauli <: FewQuditOperator
     qudit1::Int
     x1::Int
@@ -31,6 +116,24 @@ struct TriplePauli <: FewQuditOperator
     phase::Int
 end
 TriplePauli(qudit1::Int, x1::Int, z1::Int, qudit2::Int, x2::Int, z2::Int, qudit3::Int, x3::Int, z3::Int) = TriplePauli(qudit1, x1, z1, qudit2, x2, z2, qudit3, x3, z3, 0)
+
+"""
+    NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}) where D
+    NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}, phase::Int) where D
+
+Pauli operator acting on `D` qudits specified by tuples.
+
+# Arguments
+- `qudits::NTuple{D,Int}`: 1-based qudit indices (should be distinct).
+- `xs::NTuple{D,Int}`: X exponents for each qudit.
+- `zs::NTuple{D,Int}`: Z exponents for each qudit.
+- `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
+
+# Examples
+```julia
+op = NPauli((1, 3), (1, 0), (0, 1))  # X1 * Z3
+```
+"""
 struct NPauli{D} <: FewQuditOperator
     qudits::NTuple{D,Int}
     xs::NTuple{D,Int}
@@ -50,7 +153,7 @@ NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}) where D = NP
     set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::TriplePauli)
     set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::NPauli{D}) where D
     set_operator!(dst::AbstractVector{<:Integer}, stabtab::StabilizerTableau, op::AbstractVector{<:Integer})
-Set the i-th operator in the stabtab.tableau to the given operator `op`, or set
+Set the i-th generator in the stabtab.tableau to the given operator `op`, or set
 the vector dst to the given operator `op`.
 """
 function set_operator! end

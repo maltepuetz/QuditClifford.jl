@@ -12,11 +12,12 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
 - `tableau::AbstractMatrix{<:Integer}`: An integer matrix in either `(2n + storephase) × m` or `m × (2n + storephase)` layout.
 
 # Keyword Arguments
-- `state::Symbol`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
-- `basis::Union{Symbol,AbstractVector{<:Symbol},Tuple}`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
-- `storephase::Bool`: Whether to store the phase row. If omitted for `tableau`, it is inferred from its shape.
-- `m::Union{Int,Nothing}`: Number of active generator columns (defaults to `n` or inferred from the tableau width).
-- `inversemod::InverseMod`: Inversion strategy used for phase calculations (defaults to `PrecomputedInvMod(d)`).
+- `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
+- `basis=:Z`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
+- `storephase::Bool=true`: Whether to store the phase row (for the `(d, n)` constructor). When
+  constructing from a `tableau`, `storephase` is inferred from the matrix shape if not provided.
+- `m::Union{Int,Nothing}=nothing`: Number of active generator columns (for the `(d, tableau)` constructor).
+- `inversemod::InverseMod=PrecomputedInvMod(d)`: Inversion strategy used for phase calculations.
 
 # Examples
 ```julia
@@ -24,7 +25,7 @@ stab = StabilizerTableau(2, 3; state=:mixed)
 stab = StabilizerTableau(2, 3; state=:product, basis=:X)
 
 tab = reshape(Int[0, 1, 0], 3, 1)
-stab = StabilizerTableau(2, tab; m=1, storephase=true)
+stab = StabilizerTableau(2, tab)
 ```
 
 # Notes
@@ -212,8 +213,8 @@ Reset an existing stabilizer tableau in-place to a preset state.
 - `stabtab::StabilizerTableau`: The tableau to reset.
 
 # Keyword Arguments
-- `state::Symbol`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
-- `basis::Union{Symbol,AbstractVector{<:Symbol},Tuple}`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
+- `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
+- `basis=:Z`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
 
 # Examples
 ```julia

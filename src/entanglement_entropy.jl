@@ -1,3 +1,27 @@
+"""
+    entanglement_entropy(stabtab::StabilizerTableau, subsystem::AbstractVector)
+
+Compute the stabilizer entanglement entropy of a subsystem.
+
+# Arguments
+- `stabtab::StabilizerTableau`: Stabilizer tableau describing the (possibly mixed) state.
+- `subsystem::AbstractVector{<:Integer}`: 1-based qudit indices defining subsystem `A`.
+
+# Returns
+- An integer `S(A)` in log-`d` units (so `S=1` means entropy `log(d)`).
+
+# Examples
+```julia
+stab = StabilizerTableau(2, 3; state=:ghz)
+S1 = entanglement_entropy(stab, [1])      # 1
+S2 = entanglement_entropy(stab, [1, 2])   # 1
+```
+
+# Notes
+- For pure stabilizer states (`m == n`), the function uses `S(A) = S(B)` and computes the rank on the smaller side.
+- For mixed stabilizer states (`m < n`), the function traces out the complement and uses the mixed-state stabilizer formula.
+- `subsystem` should contain distinct indices; repeated indices lead to undefined results.
+"""
 function entanglement_entropy(
     stabtab::StabilizerTableau,
     subsystem::T

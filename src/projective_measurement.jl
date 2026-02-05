@@ -69,63 +69,6 @@ end
     comm
 end
 
-
-#########################################################
-# Helpers: extract XZ / phase from op (no allocations)  #
-#########################################################
-
-"""
-Fill `dst[1:2n]` with the XZ-vector of `op` reduced mod d.
-
-Supported op types:
-- SinglePauli, DoublePauli, TriplePauli, NPauli
-- AbstractVector{<:Integer} of length 2n or 2n+1  (phase ignored)
-
-Returns nothing. Does not allocate.
-"""
-@inline function fill_xz!(dst::AbstractVector{Int}, stabtab::StabilizerTableau, op)
-    n = stabtab.n
-    d = stabtab.d
-    @assert length(dst) >= 2n
-
-    if op isa AbstractVector{<:Integer}
-        @assert length(op) == 2n || length(op) == 2n + 1
-        @inbounds @simd for i in 1:2n
-            dst[i] = mod(op[i], d)
-        end
-        return nothing
-    end
-
-    @inbounds @simd for i in 1:2n
-        dst[i] = 0
-    end
-
-    if op isa SinglePauli
-        dst[op.qudit] = mod(op.x, d)
-        dst[op.qudit+n] = mod(op.z, d)
-    elseif op isa DoublePauli
-        dst[op.qudit1] = mod(op.x1, d)
-        dst[op.qudit1+n] = mod(op.z1, d)
-        dst[op.qudit2] = mod(op.x2, d)
-        dst[op.qudit2+n] = mod(op.z2, d)
-    elseif op isa TriplePauli
-        dst[op.qudit1] = mod(op.x1, d)
-        dst[op.qudit1+n] = mod(op.z1, d)
-        dst[op.qudit2] = mod(op.x2, d)
-        dst[op.qudit2+n] = mod(op.z2, d)
-        dst[op.qudit3] = mod(op.x3, d)
-        dst[op.qudit3+n] = mod(op.z3, d)
-    else
-        # NPauli{D}
-        @turbo for i in 1:length(op.qudits)
-            q = op.qudits[i]
-            dst[q] = mod(op.xs[i], d)
-            dst[q+n] = mod(op.zs[i], d)
-        end
-    end
-    return nothing
-end
-
 #########################################################
 # Column update primitive used in noncommuting branch   #
 #########################################################
@@ -306,28 +249,44 @@ end
 
 """
     measure!(stabtab::StabilizerTableau, op;
-        outcome::Int=rand(0:stabtab.d-1) # outcome used if non-deterministic
+        outcome::Int=rand(0:stabtab.d-1)
     )
 
-Projective measurement of a Pauli operator. If the measurement is non-deterministic, you
-can optionally specify the `outcome` to be used for the post-measurement state update
-(otherwise it is sampled uniformly at random).
+Projectively measure a Pauli operator `op` and update `stabtab` in-place.
 
-### case 1: operator does NOT commute with all stabilizer generators
-- the measurement outcome is uniformly random
-- we replace the first generator that does not commute with the operator by the measured operator
-  with a phase chosen so that the new generator stabilizes the post-measurement state
-- we multiply all other generators that do not commute with the operator by powers of the
-  replaced generator to restore commutation
+# Arguments
+- `stabtab::StabilizerTableau`: Tableau to update.
+- `op`: Pauli operator specified as `SinglePauli`, `DoublePauli`, `TriplePauli`,
+  `NPauli`, or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
 
-### case 2: operator commutes with all stabilizer generators
-- if the operator is in the stabilizer span: outcome is deterministic, state unchanged
-- otherwise: outcome is uniformly random and we append the measured operator as a new generator
-  (again with a phase chosen to stabilize the post-measurement state)
+# Keyword Arguments
+- `outcome::Int=rand(0:stabtab.d-1)`: Outcome used when the measurement is non-deterministic
+  (uniform on `0:(d-1)`).
 
-Returns the outcome as an integer:
-- odd prime d: t ∈ 0:(d-1) meaning eigenvalue ω^t of the Pauli observable
-- d=2: b ∈ {0,1,2,3} meaning eigenvalue (i)^b of the Pauli observable
+# Returns
+- Integer outcome `t`.
+- For odd prime `d`, the measured eigenvalue is `ω^t` (mod `d`).
+- For `d=2`, the eigenvalue exponent is returned in deterministic cases when `storephase=true`
+  (values `0:3` for `i^t`). In non-deterministic branches, the returned value is exactly `outcome`.
+
+# Examples
+```julia
+stab = StabilizerTableau(2, 2; state=:product, basis=:Z)
+op = SinglePauli(1, 1, 0)           # X on qudit 1
+t = measure!(stab, op)              # random outcome, tableau updated
+
+stab3 = StabilizerTableau(3, 2; state=:ghz)
+op3 = DoublePauli(1, 0, 1, 2, 0, 2) # Z1 * Z2^2
+t3 = measure!(stab3, op3)           # deterministic outcome t3=0, tableau unchanged
+```
+
+# Notes
+- If `op` does not commute with all generators, the outcome is random and the first
+  non-commuting generator is replaced; other non-commuting generators are adjusted
+  to restore commutation.
+- If `op` commutes with all generators, the outcome is deterministic when `op` lies
+  in the stabilizer span; otherwise a new generator is appended (if `m < n`).
+- If `storephase=false`, deterministic outcomes return `0` by convention.
 """
 function measure!(stabtab::StabilizerTableau, op;
     outcome::Int=rand(0:stabtab.d-1) # outcome used if non-deterministic
