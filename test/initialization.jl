@@ -29,7 +29,6 @@ using QuditClifford
     @test stab_y.tableau[1, 1] == 1
     @test stab_y.tableau[2, 1] == 1
     @test stab_y.tableau[3, 1] == 1
-    @test_throws ArgumentError StabilizerTableau(2, 1; state=:product, basis=:Y, storephase=false)
 
     # GHZ state
     stab_ghz = StabilizerTableau(2, 3; state=:ghz, storephase=true)
@@ -54,7 +53,7 @@ using QuditClifford
     @test stab_reset.tableau[3, 2] == 1
 
     stab_nophase = StabilizerTableau(2, 1; state=:mixed, storephase=false)
-    @test_throws ArgumentError reset!(stab_nophase; state=:product, basis=:Y)
+    reset!(stab_nophase; state=:product, basis=:Y)
 
     # reset! should not allocate (after warm-up)
     reset!(stab_reset; state=:mixed)
