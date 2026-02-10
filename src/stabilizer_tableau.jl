@@ -21,11 +21,11 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
 
 # Examples
 ```julia
-stab = StabilizerTableau(2, 3; state=:mixed)
-stab = StabilizerTableau(2, 3; state=:product, basis=:X)
+tab = StabilizerTableau(2, 3; state=:mixed)
+tab = StabilizerTableau(2, 3; state=:product, basis=:X)
 
-tab = reshape(Int[0, 1, 0], 3, 1)
-stab = StabilizerTableau(2, tab)
+raw = reshape(Int[0, 1, 0], 3, 1)
+tab = StabilizerTableau(2, raw)
 ```
 
 # Notes
@@ -48,11 +48,11 @@ If `storephase=true`, the last row stores the phase exponent `k`:
 
 See also [`reset!`](@ref).
 """
-mutable struct StabilizerTableau{T<:InverseMod}
+mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    tableau::Matrix{Int}               # tableau has dimensions (2n + storephase) × n
+    stab::Matrix{Int}                 # tableau has dimensions (2n + storephase) × n
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
     inversemod::T                      # inverse mod function for dimension d
@@ -204,13 +204,13 @@ end
 end
 
 """
-    reset!(stabtab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
-    reset!(stabtab::StabilizerTableau, state::Symbol; basis=:Z)
+    reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
+    reset!(tab::StabilizerTableau, state::Symbol; basis=:Z)
 
 Reset an existing stabilizer tableau in-place to a preset state.
 
 # Arguments
-- `stabtab::StabilizerTableau`: The tableau to reset.
+- `tab::StabilizerTableau`: The tableau to reset.
 
 # Keyword Arguments
 - `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
@@ -218,24 +218,24 @@ Reset an existing stabilizer tableau in-place to a preset state.
 
 # Examples
 ```julia
-stab = StabilizerTableau(2, 3; state=:mixed)
-reset!(stab; state=:product, basis=:Z)
-reset!(stab, :ghz)
+tab = StabilizerTableau(2, 3; state=:mixed)
+reset!(tab; state=:product, basis=:Z)
+reset!(tab, :ghz)
 ```
 
 # Notes
-Uses the existing `n` and `storephase` of `stabtab`. See [`StabilizerTableau`](@ref).
+Uses the existing `n` and `storephase` of `tab`. See [`StabilizerTableau`](@ref).
 """
-function reset!(stabtab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
-    state_norm, basis_spec = _normalize_state_and_basis(state, basis, stabtab.n)
-    m = _preset_tableau!(stabtab.tableau, stabtab.d, stabtab.n, state_norm, basis_spec, stabtab.storephase)
-    stabtab.m = m
-    stabtab.iscanonical = false
-    return stabtab
+function reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
+    state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
+    m = _preset_tableau!(tab.stab, tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+    tab.m = m
+    tab.iscanonical = false
+    return tab
 end
 
-function reset!(stabtab::StabilizerTableau, state::Symbol; basis=:Z)
-    return reset!(stabtab; state=state, basis=basis)
+function reset!(tab::StabilizerTableau, state::Symbol; basis=:Z)
+    return reset!(tab; state=state, basis=basis)
 end
 
 @inline function _canonical_basis_symbol(basis::Symbol)::Symbol
@@ -331,21 +331,27 @@ function _reduce_tableau_mod!(tab::Matrix{Int}, d::Int, n::Int, storephase::Bool
     return nothing
 end
 
+@inline function _set_product_column!(tab::Matrix{Int}, d::Int, n::Int, col::Int, basis::Symbol, storephase::Bool)
+    if basis === :X
+        tab[col, col] = 1
+    elseif basis === :Z
+        tab[n + col, col] = 1
+    else
+        @assert basis === :Y
+        tab[col, col] = 1
+        tab[n + col, col] = 1
+        if storephase && d == 2
+            tab[2n + 1, col] = 1
+        end
+    end
+    return nothing
+end
+
 function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis::Symbol, storephase::Bool)
     b = _canonical_basis_symbol(basis)
 
     @inbounds for j in 1:n
-        if b === :X
-            tab[j, j] = 1
-        elseif b === :Z
-            tab[n + j, j] = 1
-        elseif b === :Y
-            tab[j, j] = 1
-            tab[n + j, j] = 1
-            if storephase && d == 2
-                tab[2n + 1, j] = 1
-            end
-        end
+        _set_product_column!(tab, d, n, j, b, storephase)
     end
     return nothing
 end
@@ -355,17 +361,7 @@ function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_vec::Abstr
 
     @inbounds for j in 1:n
         b = _canonical_basis_symbol(basis_vec[j])
-        if b === :X
-            tab[j, j] = 1
-        elseif b === :Z
-            tab[n + j, j] = 1
-        elseif b === :Y
-            tab[j, j] = 1
-            tab[n + j, j] = 1
-            if storephase && d == 2
-                tab[2n + 1, j] = 1
-            end
-        end
+        _set_product_column!(tab, d, n, j, b, storephase)
     end
     return nothing
 end
@@ -377,17 +373,7 @@ function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_tuple::Tup
         b = basis_tuple[j]
         b isa Symbol || throw(ArgumentError("basis tuple entries must be Symbols."))
         b = _canonical_basis_symbol(b)
-        if b === :X
-            tab[j, j] = 1
-        elseif b === :Z
-            tab[n + j, j] = 1
-        elseif b === :Y
-            tab[j, j] = 1
-            tab[n + j, j] = 1
-            if storephase && d == 2
-                tab[2n + 1, j] = 1
-            end
-        end
+        _set_product_column!(tab, d, n, j, b, storephase)
     end
     return nothing
 end
@@ -414,42 +400,42 @@ function _fill_ghz_state!(tab::Matrix{Int}, _d::Int, n::Int)
 end
 
 """Number of active generator columns."""
-@inline ngens(stabtab::StabilizerTableau) = stabtab.m
+@inline ngens(tab::StabilizerTableau) = tab.m
 
 """True iff the represented stabilizer density operator is mixed (i.e. m < n)."""
-@inline is_mixed(stabtab::StabilizerTableau) = stabtab.m < stabtab.n
+@inline is_mixed(tab::StabilizerTableau) = tab.m < tab.n
 
 const max_qudits_display = Ref(30)  # maximum number of qudits to display the full tableau
 
 # give the struct a nice standard presentation
-function Base.show(io::IO, stabtab::StabilizerTableau)
+function Base.show(io::IO, tab::StabilizerTableau)
     println(io, "Stabilizer Tableau:")
-    println(io, "    Qudit dimension:  d = ", stabtab.d)
-    println(io, "    Number of Qudits: n = ", stabtab.n)
-    println(io, "    Generators:       m = ", stabtab.m)
-    println(io, "    Canonical form:   ", stabtab.iscanonical)
-    # println(io, "    Mixed state:      ", is_mixed(stabtab))
+    println(io, "    Qudit dimension:  d = ", tab.d)
+    println(io, "    Number of Qudits: n = ", tab.n)
+    println(io, "    Generators:       m = ", tab.m)
+    println(io, "    Canonical form:   ", tab.iscanonical)
+    # println(io, "    Mixed state:      ", is_mixed(tab))
 
-    stabtab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
+    tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
 
-    if is_mixed(stabtab)
+    if is_mixed(tab)
         println(io, "    Mixed tableau (m < n generators):")
     else
         println(io, "    Tableau:")
     end
 
-    if stabtab.m == 0
-        println(io, "    (no generators; maximally mixed on the full space)")
+    if tab.m == 0
+        println(io, "     (no generators; maximally mixed on the full space)")
         return
     end
 
-    tabview = view(stabtab.tableau, :, 1:stabtab.m)
+    tabview = view(tab.stab, :, 1:tab.m)
     N = ndigits(maximum(abs, tabview)) - 1
     extraspace = 0
-    isodd(N) && isodd(stabtab.n) && (extraspace += 1)
-    dash_len = max(0, stabtab.n * (N + 2) ÷ 2 - 2 + extraspace)
-    print(io, "    ")
-    if stabtab.n > 1
+    isodd(N) && isodd(tab.n) && (extraspace += 1)
+    dash_len = max(0, tab.n * (N + 2) ÷ 2 - 2 + extraspace)
+    print(io, "     ")
+    if tab.n > 1
         print(io, "-"^dash_len, " X ", "-"^dash_len)
         print(io, extraspace == 1 ? "  " : "   ")
     else
@@ -459,11 +445,11 @@ function Base.show(io::IO, stabtab::StabilizerTableau)
     print(io, "-"^dash_len, " Z ", "-"^dash_len)
     println(io)
 
-    for col in 1:stabtab.m
-        print(io, "   ")
-        for row in 1:size(stabtab.tableau, 1)
-            ((row == stabtab.n + 1) || (row == 2 * stabtab.n + 1)) && print(io, " |")
-            print(io, lpad(stabtab.tableau[row, col], N + 2))
+    for col in 1:tab.m
+        print(io, "    ")
+        for row in 1:size(tab.stab, 1)
+            ((row == tab.n + 1) || (row == 2 * tab.n + 1)) && print(io, " |")
+            print(io, lpad(tab.stab[row, col], N + 2))
         end
         println(io)
     end

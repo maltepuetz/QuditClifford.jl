@@ -12,6 +12,7 @@ using Aqua
     # Functional tests split by topic for clarity.
     include("measurements.jl")
     include("expectation_values.jl")
+    include("destabilizers.jl")
     include("entanglement.jl")
     include("purity.jl")
     include("initialization.jl")

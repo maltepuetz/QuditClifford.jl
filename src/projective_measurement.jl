@@ -15,6 +15,37 @@
     comm
 end
 
+@inline commutation_vec_op(v::AbstractVector{<:Integer}, op::AbstractVector{<:Integer}) = commutation(v, op)
+@inline commutation_vec_op(v::AbstractVector{<:Integer}, op::GeneralPauli) = commutation(v, op.xz)
+@inline function commutation_vec_op(v::AbstractVector{<:Integer}, op::SinglePauli)
+    N = length(v) ÷ 2
+    return v[op.qudit] * op.z - v[op.qudit+N] * op.x
+end
+@inline function commutation_vec_op(v::AbstractVector{<:Integer}, op::DoublePauli)
+    N = length(v) ÷ 2
+    comm = 0
+    comm += v[op.qudit1] * op.z1 - v[op.qudit1+N] * op.x1
+    comm += v[op.qudit2] * op.z2 - v[op.qudit2+N] * op.x2
+    return comm
+end
+@inline function commutation_vec_op(v::AbstractVector{<:Integer}, op::TriplePauli)
+    N = length(v) ÷ 2
+    comm = 0
+    comm += v[op.qudit1] * op.z1 - v[op.qudit1+N] * op.x1
+    comm += v[op.qudit2] * op.z2 - v[op.qudit2+N] * op.x2
+    comm += v[op.qudit3] * op.z3 - v[op.qudit3+N] * op.x3
+    return comm
+end
+@inline function commutation_vec_op(v::AbstractVector{<:Integer}, op::NPauli{D}) where D
+    N = length(v) ÷ 2
+    comm = 0
+    @turbo for i in 1:D
+        q = op.qudits[i]
+        comm += v[q] * op.zs[i] - v[q+N] * op.xs[i]
+    end
+    return comm
+end
+
 @inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, s::AbstractVector{<:Integer})
     N = length(s) ÷ 2
     comm = 0
@@ -26,6 +57,9 @@ end
         comm -= A[i+N, col] * s[i]
     end
     comm
+end
+@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::GeneralPauli)
+    return commutation_col(A, col, op.xz)
 end
 @inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::SinglePauli)
     N = size(A, 1) ÷ 2
@@ -89,31 +123,31 @@ where g_pivot is stored in generator_workspace.
         use phase mod 4 as i^k and cross-term contributes 2*(x'·z) mod 4.
 """
 function mul_col_by_workspace_power!(
-    stabtab::StabilizerTableau,
+    tab::AbstractTableau,
     col::Int,
     a::Int,
 )
-    tab = stabtab.tableau
-    genws = stabtab.generator_workspace
-    n = stabtab.n
-    d = stabtab.d
+    stab = tab.stab
+    genws = tab.generator_workspace
+    n = tab.n
+    d = tab.d
 
     a == 0 && return nothing
 
     nrows_block = 2n
 
     # If we store phase, compute cross term using the OLD target Z (before XZ update)
-    if stabtab.storephase
+    if tab.storephase
         phase_row = 2n + 1
         d_phase = phase_modulus(d)
 
         if d == 2
             # a ∈ {0,1} and a != 0, so a == 1
             # cross = x_ws · z_col_old   (mod 2)
-            cross = dot_xz_ws_vs_col(genws, tab, n, col, d)  # uses old tab Z entries
-            tab[phase_row, col] = mod(tab[phase_row, col] + genws[phase_row] + 2 * cross, d_phase)
+            cross = dot_xz_ws_vs_col(genws, stab, n, col, d)  # uses old tab Z entries
+            stab[phase_row, col] = mod(stab[phase_row, col] + genws[phase_row] + 2 * cross, d_phase)
         else
-            inv2 = stabtab.inversemod(2, d)
+            inv2 = tab.inversemod(2, d)
 
             # Phase of (ws)^a:
             # k_power = a*k_ws + C(a,2)*(x_ws · z_ws)  (mod d)
@@ -121,125 +155,19 @@ function mul_col_by_workspace_power!(
             k_power = mod(a * genws[phase_row] + binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d_phase)
 
             # cross = a*(x_ws · z_col_old) (mod d)
-            cross_base = dot_xz_ws_vs_col(genws, tab, n, col, d)  # x_ws · z_col_old
+            cross_base = dot_xz_ws_vs_col(genws, stab, n, col, d)  # x_ws · z_col_old
             cross = mod(a * cross_base, d)
 
-            tab[phase_row, col] = mod(tab[phase_row, col] + k_power + cross, d_phase)
+            stab[phase_row, col] = mod(stab[phase_row, col] + k_power + cross, d_phase)
         end
     end
 
     # Now update XZ: col <- col + a*ws  (mod d)
     @inbounds @simd for i in 1:nrows_block
-        tab[i, col] = mod(tab[i, col] + mod(a * genws[i], d), d)
+        stab[i, col] = mod(stab[i, col] + mod(a * genws[i], d), d)
     end
 
     return nothing
-end
-
-
-#############################################################
-# Mixed-state membership test (in span) + phase reconstruction
-#############################################################
-
-# internal: allocation-free membership test and coefficient readout in canonical basis.
-# returns true iff op ∈ span(S), and fills c_workspace[1:m] with coefficients.
-@inline function in_span_and_coeffs!(stabtab::StabilizerTableau, op)
-    tab = stabtab.tableau
-    n = stabtab.n
-    m = stabtab.m
-    d = stabtab.d
-
-    stabtab.iscanonical || canonicalize!(stabtab)
-    piv = stabtab.pivcol_of_row
-
-    res = stabtab.res_workspace
-    set_operator!(res, stabtab, op)
-
-    cvec = stabtab.c_workspace
-    @turbo for j in eachindex(cvec)
-        cvec[j] = 0
-    end
-
-    @inbounds for r in 1:2n
-        pc = piv[r]
-        pc == 0 && continue
-        pc > m && continue
-
-        γ = res[r]
-        γ == 0 && continue
-
-        cvec[pc] = mod(γ, d)
-
-        @inbounds @simd for i in 1:2n
-            res[i] = mod(res[i] - mod(γ * tab[i, pc], d), d)
-        end
-    end
-
-    @inbounds for i in 1:2n
-        res[i] != 0 && return false
-    end
-    return true
-end
-
-# internal: compute phase exponent of Q = ∏ g_j^{c[j]} (same logic as expect!)
-# requires canonicalized xdotz_cache to be valid.
-@inline function phase_exponent_from_coeffs!(stabtab::StabilizerTableau)
-    tab = stabtab.tableau
-    n = stabtab.n
-    m = stabtab.m
-    d = stabtab.d
-    stabtab.storephase || return 0
-
-    prow = 2n + 1
-    d_phase = phase_modulus(d)
-
-    cvec = stabtab.c_workspace
-    zacc = stabtab.zacc_workspace
-    @turbo for q in 1:n
-        zacc[q] = 0
-    end
-    kacc = 0
-
-    if d == 2
-        @inbounds for j in 1:m
-            aj = cvec[j]
-            aj == 0 && continue
-
-            cross = 0
-            @turbo for q in 1:n
-                cross += tab[q, j] * zacc[q]
-            end
-            cross = cross & 1
-
-            kacc = mod(kacc + tab[prow, j] + 2 * cross, d_phase)
-
-            @inbounds @simd for q in 1:n
-                zacc[q] = (zacc[q] + tab[n+q, j]) & 1
-            end
-        end
-        return kacc
-    else
-        inv2 = stabtab.inversemod(2, d)
-        xdotz_cache = stabtab.xdotz_cache
-
-        @inbounds for j in 1:m
-            aj = mod(cvec[j], d)
-            aj == 0 && continue
-
-            xdotz_j = xdotz_cache[j]
-            kpow = mod(aj * tab[prow, j] + binom2_mod_oddprime(aj, d, inv2) * xdotz_j, d_phase)
-
-            cross_base = dot_xz_col_vs_zacc(tab, n, j, zacc, d)
-            cross = mod(aj * cross_base, d)
-
-            kacc = mod(kacc + kpow + cross, d_phase)
-
-            @inbounds @simd for q in 1:n
-                zacc[q] = mod(zacc[q] + mod(aj * tab[n+q, j], d), d)
-            end
-        end
-        return kacc
-    end
 end
 
 
@@ -247,21 +175,163 @@ end
 # Projective measurement (mixed-state)     #
 ############################################
 
+@inline function _apply_phase_policy!(op::AbstractPauli, d::Int, phase_policy::Int)
+    (0 <= phase_policy <= 2) || throw(ArgumentError("phase_policy must be 0, 1, or 2."))
+    d != 2 && return
+
+    valid = _is_valid_measurement(op, d)
+    valid && return
+
+    if phase_policy == 0
+        @warn "Measuring a non-Hermitian Pauli for d=2; results may be unphysical. Set phase_policy=2 to silence or phase_policy=1 to auto-fix."
+        return
+    elseif phase_policy == 1
+        parity = _xdotz_parity(op)
+        phase = _fix_qubit_phase(op.phase, parity)
+        op.phase = phase
+        return
+    else
+        return
+    end
+end
+
+#############################################################
+# Type-specific hooks for generic projective measurement    #
+#############################################################
+
+@inline _on_noncommuting_col_updated!(tab::AbstractTableau, _col::Int) = nothing
+@inline _on_noncommuting_col_updated!(tab::DestabilizerTableau, col::Int) = _update_xdotz_cache!(tab, col)
+
+@inline function _after_noncommuting_measurement!(
+    tab::AbstractTableau,
+    _pivot::Int,
+    _comm0::Int,
+    _m::Int,
+)
+    return nothing
+end
+
+@inline function _after_noncommuting_measurement!(
+    tab::DestabilizerTableau,
+    pivot::Int,
+    comm0::Int,
+    m::Int,
+)
+    n = tab.n
+    d = tab.d
+
+    # noncommuting branch: update destabilizers
+    inv_comm0 = tab.inversemod(comm0, d)
+    @inbounds for r in 1:(2n)
+        tab.destab[r, pivot] = mod(inv_comm0 * tab.generator_workspace[r], d)
+    end
+
+    @inbounds for j in 1:m
+        j == pivot && continue
+        t = mod(_symplectic_col_col(tab.destab, j, tab.stab, pivot, n), d)
+        t == 0 && continue
+        @inbounds @simd for r in 1:(2n)
+            tab.destab[r, j] = mod(tab.destab[r, j] - mod(t * tab.destab[r, pivot], d), d)
+        end
+    end
+
+    return nothing
+end
+
+@inline function _after_append_measurement!(
+    tab::AbstractTableau,
+    _newcol::Int,
+    _op::AbstractPauli,
+    _res::AbstractVector{Int},
+)
+    return nothing
+end
+
+@inline function _after_append_measurement!(
+    tab::DestabilizerTableau,
+    newcol::Int,
+    op::AbstractPauli,
+    res::AbstractVector{Int},
+)
+    n = tab.n
+    d = tab.d
+    m = newcol - 1
+
+    # Construct a new destabilizer without elimination.
+    # Use residual to pick a qudit.
+    q = 0
+    @inbounds for i in 1:n
+        if res[i] != 0 || res[n+i] != 0
+            q = i
+            break
+        end
+    end
+    q == 0 && throw(ArgumentError("Failed to construct destabilizer: residual is zero."))
+
+    genws = tab.generator_workspace
+    @turbo for j in eachindex(genws)
+        genws[j] = 0
+    end
+    if res[q] != 0
+        genws[n+q] = 1  # Z_q
+    else
+        genws[q] = 1    # X_q
+    end
+    v = view(genws, 1:(2n))
+
+    # Project v to commute with old stabilizers.
+    @inbounds for j in 1:m
+        t = mod(_symplectic_vec_col(v, tab.stab, j, n), d)
+        t == 0 && continue
+        @inbounds @simd for r in 1:(2n)
+            v[r] = mod(v[r] - mod(t * tab.destab[r, j], d), d)
+        end
+    end
+
+    # β = <v, op>
+    β = mod(commutation_vec_op(v, op), d)
+    β == 0 && throw(ArgumentError("Failed to construct destabilizer: β = 0."))
+    invβ = tab.inversemod(β, d)
+
+    # D_new = invβ * v
+    @inbounds @simd for r in 1:(2n)
+        tab.destab[r, newcol] = mod(invβ * v[r], d)
+    end
+
+    # Orthogonalize old destabilizers to the new stabilizer.
+    @inbounds for j in 1:m
+        t = mod(_symplectic_col_col(tab.destab, j, tab.stab, newcol, n), d)
+        t == 0 && continue
+        @inbounds @simd for r in 1:(2n)
+            tab.destab[r, j] = mod(tab.destab[r, j] - mod(t * tab.destab[r, newcol], d), d)
+        end
+    end
+
+    _update_xdotz_cache!(tab, newcol)
+    return nothing
+end
+
 """
-    measure!(stabtab::StabilizerTableau, op;
-        outcome::Int=rand(0:stabtab.d-1)
+    measure!(tab::AbstractTableau, op;
+        outcome::Int=rand(0:tab.d-1),
+        phase_policy::Int=0
     )
 
-Projectively measure a Pauli operator `op` and update `stabtab` in-place.
+Projectively measure a Pauli operator `op` and update `tab` in-place.
 
 # Arguments
-- `stabtab::StabilizerTableau`: Tableau to update.
-- `op`: Pauli operator specified as `SinglePauli`, `DoublePauli`, `TriplePauli`,
-  `NPauli`, or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
+- `tab::AbstractTableau`: Tableau to update (`StabilizerTableau` or `DestabilizerTableau`).
+- `op`: Pauli operator specified as `AbstractPauli` (e.g. `SinglePauli`, `DoublePauli`,
+  `TriplePauli`, `NPauli`, `GeneralPauli`), or an `AbstractVector{<:Integer}` of length
+  `2n` or `2n+1` (wrapped into `GeneralPauli` internally).
 
 # Keyword Arguments
-- `outcome::Int=rand(0:stabtab.d-1)`: Outcome used when the measurement is non-deterministic
+- `outcome::Int=rand(0:tab.d-1)`: Outcome used when the measurement is non-deterministic
   (uniform on `0:(d-1)`).
+- `phase_policy::Int=0`: How to handle non-Hermitian Paulis when `d=2`.
+  - `0`: warn (default), keep phase as-is.
+  - `1`: auto-fix phase to a Hermitian one, no warning.
+  - `2`: ignore and keep phase as-is, no warning.
 
 # Returns
 - Integer outcome `t`.
@@ -271,13 +341,13 @@ Projectively measure a Pauli operator `op` and update `stabtab` in-place.
 
 # Examples
 ```julia
-stab = StabilizerTableau(2, 2; state=:product, basis=:Z)
+tab = StabilizerTableau(2, 2; state=:product, basis=:Z)
 op = SinglePauli(1, 1, 0)           # X on qudit 1
-t = measure!(stab, op)              # random outcome, tableau updated
+t = measure!(tab, op)               # random outcome, tableau updated
 
-stab3 = StabilizerTableau(3, 2; state=:ghz)
+tab = StabilizerTableau(3, 2; state=:ghz)
 op3 = DoublePauli(1, 0, 1, 2, 0, 2) # Z1 * Z2^2
-t3 = measure!(stab3, op3)           # deterministic outcome t3=0, tableau unchanged
+t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchanged
 ```
 
 # Notes
@@ -288,22 +358,33 @@ t3 = measure!(stab3, op3)           # deterministic outcome t3=0, tableau unchan
   in the stabilizer span; otherwise a new generator is appended (if `m < n`).
 - If `storephase=false`, deterministic outcomes return `0` by convention.
 """
-function measure!(stabtab::StabilizerTableau, op;
-    outcome::Int=rand(0:stabtab.d-1) # outcome used if non-deterministic
+function measure!(tab::AbstractTableau, op::AbstractVector{<:Integer};
+    outcome::Int=rand(0:tab.d-1),
+    phase_policy::Int=0,
 )
-    d = stabtab.d
-    n = stabtab.n
-    m = stabtab.m
+    gop = GeneralPauli(tab.n, tab.d, op)
+    return measure!(tab, gop; outcome=outcome, phase_policy=phase_policy)
+end
+
+function measure!(tab::AbstractTableau, op::AbstractPauli;
+    outcome::Int=rand(0:tab.d-1), # outcome used if non-deterministic
+    phase_policy::Int=0,
+)
+    d = tab.d
+    n = tab.n
+    m = tab.m
+
+    tab.storephase && _apply_phase_policy!(op, d, phase_policy)
 
     # get phase of the operator (if available)
-    kop = op_phase_exponent(stabtab, op)
+    kop = op.phase
 
     # phase exponent of the generator we should store so that it stabilizes the post-measurement state
     # If P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome} P_xz) |ψ'> = |ψ'>.
     # Thus if ω^{kop} P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome + kop} P_xz) |ψ'> = |ψ'>.
     # For d=2: (-1)^b = i^(2b), so the required stabilizer phase exponent is 2*b (mod 4).
     kgen = 0
-    if stabtab.storephase
+    if tab.storephase
         if d == 2
             kgen = mod(2 * outcome + kop, phase_modulus(d))
         else
@@ -311,11 +392,13 @@ function measure!(stabtab::StabilizerTableau, op;
         end
     end
 
-    comm0 = 0  # the commutation with the first non-commuting generator
+    comm0 = 0  # commutation with the first non-commuting generator
+    pivot = 0
+
     for i in 1:m
 
-        # get the commutator of generator i with the operator
-        commutator = mod(commutation_col(stabtab.tableau, i, op), d)
+        # commutator of generator i with the operator
+        commutator = mod(commutation_col(tab.stab, i, op), d)
 
         ### case a: if they commute we continue
         commutator == 0 && continue
@@ -325,29 +408,32 @@ function measure!(stabtab::StabilizerTableau, op;
         # by the measured operator (with phase chosen to match the sampled outcome).
         # Else we multiply the generator with the generator that we replaced to some power.
         # The power is chosen, such that the new generator commutes with the operator.
-        if comm0 == 0
+        if comm0 == 0 # first non-commuting generator becomes pivot
             # store generator i in workspace and then replace it by the operator
-            @turbo for j in eachindex(stabtab.generator_workspace)
-                stabtab.generator_workspace[j] = stabtab.tableau[j, i]
+            @turbo for j in eachindex(tab.generator_workspace)
+                tab.generator_workspace[j] = tab.stab[j, i]
             end
 
             # replace generator i by op (phase-aware if storephase=true)
-            set_operator!(stabtab, i, op)
+            set_operator!(tab, i, op)
 
             # IMPORTANT for mixed-state measurement:
             # we override the phase row so that the new generator stabilizes the post-measurement state,
             # dependent on the sampled outcome, and the phase of the input operator.
-            if stabtab.storephase
-                stabtab.tableau[2n+1, i] = kgen
+            if tab.storephase
+                tab.stab[2n+1, i] = kgen
             end
 
             comm0 = commutator
+            pivot = i
+            _on_noncommuting_col_updated!(tab, i)
         else
             # multiply generator i by the (generator that we replaced)^(a)
             # where a = mod(-commutator * invmod(comm0, d), d)
             # this ensures that the new generator commutes with the operator
-            a = mod(-commutator * stabtab.inversemod(comm0, d), d)
-            mul_col_by_workspace_power!(stabtab, i, a)
+            a = mod(-commutator * tab.inversemod(comm0, d), d)
+            mul_col_by_workspace_power!(tab, i, a)
+            _on_noncommuting_col_updated!(tab, i)
         end
     end
 
@@ -357,7 +443,8 @@ function measure!(stabtab::StabilizerTableau, op;
     # and `outcome` is the returned measurement result.  #
     ######################################################
     if comm0 != 0
-        stabtab.iscanonical = false
+        _after_noncommuting_measurement!(tab, pivot, comm0, m)
+        tab.iscanonical = false
         return outcome
     end
 
@@ -367,45 +454,34 @@ function measure!(stabtab::StabilizerTableau, op;
     #########################################################
 
     # check whether op is in the stabilizer span and set coeffs in c_workspace
-    in_span = in_span_and_coeffs!(stabtab, op)
+    in_span = in_span_and_coeffs!(tab, op)
+    res = tab.res_workspace
 
     if in_span
         # deterministic outcome, state unchanged
-
-        if stabtab.storephase
-            # If Q = ∏ g_j^{c[j]} has the same XZ-part as op, then Q stabilizes the state:
-            # Q = ω^{kacc} * op_xz, so op_xz has eigenvalue ω^{-kacc}.
-            # Q = ω^{kacc} * op = ω^{kacc} * ω^{kop} * XZ(op), so op_xz has eigenvalue ω^{-kacc}.
-            kacc = phase_exponent_from_coeffs!(stabtab)
+        if tab.storephase
+            kacc = phase_exponent_from_coeffs!(tab)
             d_phase = phase_modulus(d)
-
             if d == 2
-                # eigenvalue is i^{-kacc + kop}
                 return mod(-kacc + kop, d_phase)
             else
-                # eigenvalue is ω^{-kacc + kop}
-                return mod(-kacc + kop, d)  # ω^t with t = -kacc mod d
+                return mod(-kacc + kop, d)
             end
         else
-            # Without phase tracking, we can only say it is deterministic, not which eigenvalue.
             return 0
         end
-    else
-        # commuting but not in span: random outcome, and we append a generator
-        (m < n) || throw(ArgumentError("Cannot append generator: tableau at full capacity (m==n)."))
-
-        newcol = m + 1
-        stabtab.m = newcol
-
-        # insert op as a new generator
-        set_operator!(stabtab, newcol, op)
-
-        # override phase so that the new generator stabilizes the post-measurement state
-        if stabtab.storephase
-            stabtab.tableau[2n+1, newcol] = kgen
-        end
-
-        stabtab.iscanonical = false
-        return outcome
     end
+    # commuting but not in span: random outcome, append a generator
+    (m < n) || throw(ArgumentError("Cannot append generator: tableau at full capacity (m==n)."))
+
+    newcol = m + 1
+    tab.m = newcol
+    set_operator!(tab, newcol, op)
+    if tab.storephase
+        tab.stab[2n+1, newcol] = kgen
+    end
+    _after_append_measurement!(tab, newcol, op, res)
+
+    tab.iscanonical = false
+    return outcome
 end
