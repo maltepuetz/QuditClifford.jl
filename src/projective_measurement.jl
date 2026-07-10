@@ -175,23 +175,21 @@ end
 # Projective measurement (mixed-state)     #
 ############################################
 
-@inline function _apply_phase_policy!(op::AbstractPauli, d::Int, phase_policy::Int)
+@inline function _effective_measurement_phase(op::AbstractPauli, d::Int, phase_policy::Int)::Int
     (0 <= phase_policy <= 2) || throw(ArgumentError("phase_policy must be 0, 1, or 2."))
-    d != 2 && return
+    d != 2 && return op.phase
 
     valid = _is_valid_measurement(op, d)
-    valid && return
+    valid && return op.phase
 
     if phase_policy == 0
         @warn "Measuring a non-Hermitian Pauli for d=2; results may be unphysical. Set phase_policy=2 to silence or phase_policy=1 to auto-fix."
-        return
+        return op.phase
     elseif phase_policy == 1
         parity = _xdotz_parity(op)
-        phase = _fix_qubit_phase(op.phase, parity)
-        op.phase = phase
-        return
+        return _fix_qubit_phase(op.phase, parity)
     else
-        return
+        return op.phase
     end
 end
 
@@ -374,10 +372,8 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     n = tab.n
     m = tab.m
 
-    tab.storephase && _apply_phase_policy!(op, d, phase_policy)
-
     # get phase of the operator (if available)
-    kop = op.phase
+    kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
 
     # phase exponent of the generator we should store so that it stabilizes the post-measurement state
     # If P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome} P_xz) |ψ'> = |ψ'>.

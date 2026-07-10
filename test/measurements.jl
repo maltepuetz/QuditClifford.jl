@@ -51,6 +51,46 @@ using Random
                     push!(outcomes2, out2)
                 end
                 @test sort!(unique(outcomes2)) == [0, 1]  # ensure we got both outcomes at least once
+
+                @testset "Phase policy does not mutate input operators" begin
+                    # Immutable operator: phase-fix is applied internally for measurement only.
+                    tab_imm = reshape(Int[0, 1, 0], 3, 1)
+                    tab_imm = TT(2, tab_imm; m=1, storephase=true)
+                    op_imm = SinglePauli(1, 1, 1, 0)  # invalid for d=2: parity=1, phase=0
+                    out_imm = measure!(tab_imm, op_imm; outcome=1, phase_policy=1)
+                    @test out_imm == 1
+                    @test op_imm.phase == 0
+                    @test tab_imm.stab[1, 1] == 1
+                    @test tab_imm.stab[2, 1] == 1
+                    @test tab_imm.stab[3, 1] == 3  # kgen = 2*outcome + fixed_phase = 2 + 1
+
+                    # Mutable operator: phase is also left unchanged.
+                    tab_mut = reshape(Int[0, 1, 0], 3, 1)
+                    tab_mut = TT(2, tab_mut; m=1, storephase=true)
+                    op_mut = GeneralPauli(Int[1, 1], 0)  # invalid for d=2: parity=1, phase=0
+                    out_mut = measure!(tab_mut, op_mut; outcome=1, phase_policy=1)
+                    @test out_mut == 1
+                    @test op_mut.phase == 0
+                    @test op_mut.xz == Int[1, 1]
+                    @test tab_mut.stab[1, 1] == 1
+                    @test tab_mut.stab[2, 1] == 1
+                    @test tab_mut.stab[3, 1] == 3
+                end
+
+                @testset "Phase policy 0 warns without mutating input" begin
+                    tab_warn = reshape(Int[0, 1, 0], 3, 1)
+                    tab_warn = TT(2, tab_warn; m=1, storephase=true)
+                    op_warn = GeneralPauli(Int[1, 1], 0)  # invalid for d=2: parity=1, phase=0
+                    @test_logs (:warn, r"Measuring a non-Hermitian Pauli") begin
+                        out_warn = measure!(tab_warn, op_warn; outcome=1, phase_policy=0)
+                        @test out_warn == 1
+                    end
+                    @test op_warn.phase == 0
+                    @test op_warn.xz == Int[1, 1]
+                    @test tab_warn.stab[1, 1] == 1
+                    @test tab_warn.stab[2, 1] == 1
+                    @test tab_warn.stab[3, 1] == 2  # kgen = 2*outcome + original_phase
+                end
             end
 
             @testset "Qudit (d=3)" begin
