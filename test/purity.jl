@@ -10,8 +10,6 @@ using Logging
                 tab_pure = zeros(Int, 5, 2)
                 tab_pure[3, 1] = 1  # Z₁
                 tab_pure[4, 2] = 1  # Z₂
-                # Note: is_independent is destructive (it Gauss-Jordan reduces a view),
-                # so use fresh tableaux for each property to keep tests isolated.
                 tab_pure_comm = TT(2, tab_pure; m=2, storephase=true)
                 @test QuditClifford.is_commuting(tab_pure_comm)
 
@@ -54,8 +52,6 @@ using Logging
                 tab_pure = zeros(Int, 5, 2)
                 tab_pure[3, 1] = 1  # Z₁
                 tab_pure[4, 2] = 1  # Z₂
-                # Note: is_independent is destructive (it Gauss-Jordan reduces a view),
-                # so use fresh tableaux for each property to keep tests isolated.
                 tab_pure_comm = TT(3, tab_pure; m=2, storephase=true)
                 @test QuditClifford.is_commuting(tab_pure_comm)
 

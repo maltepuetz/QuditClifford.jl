@@ -42,6 +42,50 @@ end
         @test val == 1
     end
 
+    @testset "Canonicalization preserves duality" begin
+        for d in (2, 3)
+            raw = zeros(Int, 5, 2)
+            raw[3, 1] = 1      # Z1
+            raw[3, 2] = 1      # Z1 Z2
+            raw[4, 2] = 1
+
+            tab = DestabilizerTableau(d, copy(raw); m=2, storephase=true)
+            canonicalize!(tab)
+
+            for i in 1:tab.m
+                for j in 1:tab.m
+                    val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), d)
+                    @test val == (i == j ? 1 : 0)
+                end
+            end
+
+            ref = StabilizerTableau(d, copy(raw); m=2, storephase=true)
+            op = copy(raw[:, 2])
+            @test expect_int!(tab, op) == expect_int!(ref, op)
+        end
+    end
+
+    @testset "Purity checks preserve duality" begin
+        d = 3
+        raw = zeros(Int, 5, 2)
+        raw[3, 1] = 1      # Z1
+        raw[3, 2] = 1      # Z1 Z2
+        raw[4, 2] = 1
+
+        tab = DestabilizerTableau(d, copy(raw); m=2, storephase=true)
+        op = copy(raw[:, 2])
+        expected = expect_int!(tab, op)
+        @test QuditClifford.is_pure(tab)
+        @test expect_int!(tab, op) == expected
+
+        for i in 1:tab.m
+            for j in 1:tab.m
+                val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), d)
+                @test val == (i == j ? 1 : 0)
+            end
+        end
+    end
+
     @testset "Expectation agreement" begin
         ops = [
             SinglePauli(1, 0, 1),

@@ -26,6 +26,10 @@ function is_independent(tab::AbstractTableau)
     m = tab.m
     d = tab.d
     m == 0 && return true
-    rank = rank_fp_cols!(view(tab.stab, 1:2n, 1:m), d, tab.inversemod)
+    ws = tab.workspace
+    @turbo for j in 1:m, i in 1:(2n)
+        ws[i, j] = tab.stab[i, j]
+    end
+    rank = rank_fp_cols!(view(ws, 1:2n, 1:m), d, tab.inversemod)
     return rank == m
 end

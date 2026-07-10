@@ -244,9 +244,10 @@ end
                 tab[i, jj] = mod(tab[i, jj] - mod(β * tab[i, c], d), d)
             end
 
-            # Update destabilizer: D_jj <- D_jj + β * D_c
+            # Update inverse-transpose dual basis for S_jj <- S_jj - β*S_c.
+            # All eliminated columns contribute to the pivot dual D_c.
             @inbounds @simd for i in 1:nrows_block
-                destab[i, jj] = mod(destab[i, jj] + mod(β * destab[i, c], d), d)
+                destab[i, c] = mod(destab[i, c] + mod(β * destab[i, jj], d), d)
             end
         end
 
