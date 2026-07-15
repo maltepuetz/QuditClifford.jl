@@ -10,6 +10,7 @@ using Aqua
     end
 
     # Functional tests split by topic for clarity.
+    include("operators.jl")
     include("measurements.jl")
     include("expectation_values.jl")
     include("destabilizers.jl")
