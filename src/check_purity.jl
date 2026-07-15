@@ -8,8 +8,8 @@ generator per qudit. The check does not change the represented state and does
 not emit diagnostic output.
 """
 function is_pure(tab::AbstractTableau)
-    is_commuting(tab) || return false
     tab.m == tab.n || return false
+    is_commuting(tab) || return false
     is_independent(tab) || return false
     return true
 end
