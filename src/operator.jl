@@ -16,8 +16,15 @@ abstract type AbstractPauli end
     FewQuditPauli <: AbstractPauli
 
 Abstract supertype for Pauli operators acting on a small number of qudits.
-All concrete subtypes store 1-based qudit indices and X/Z exponents; the phase
-is stored as an exponent (interpreted by the consuming tableau's dimension).
+All concrete subtypes store 1-based qudit indices, X/Z exponents, and a phase
+exponent, but not the local qudit dimension. These values are interpreted only
+when the operator is used with a tableau: X/Z exponents are reduced modulo the
+tableau dimension `d`, so the same operator object can represent different
+physical operators for different `d`.
+
+For odd prime `d`, phase exponent `k` represents ``\\omega^k``, where
+``\\omega = \\exp(2\\pi i/d)``, with `k` reduced modulo `d`. For `d = 2`, it
+represents ``i^k``, with `k` reduced modulo `4`.
 
 # Examples
 ```julia
@@ -149,11 +156,108 @@ NPauli(qudits::NTuple{D,Int}, xs::NTuple{D,Int}, zs::NTuple{D,Int}) where D = be
     NPauli{D}(qudits, xs, zs, 0)
 end
 
+########################################
+# Pauli representations                #
+########################################
+
+const _PAULI_SUBSCRIPT_DIGITS =
+    ('₀', '₁', '₂', '₃', '₄', '₅', '₆', '₇', '₈', '₉')
+const _PAULI_SUPERSCRIPT_DIGITS =
+    ('⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹')
+
+@inline function _show_script_integer(
+    io::IO,
+    value::Int,
+    digits::NTuple{10,Char},
+    minus::Char,
+)
+    for digit in string(value)
+        if digit == '-'
+            print(io, minus)
+        else
+            print(io, digits[Int(digit) - Int('0') + 1])
+        end
+    end
+    return nothing
+end
+
+@inline function _show_pauli_power(
+    io::IO,
+    axis::Char,
+    qudit::Int,
+    exponent::Int,
+    wrote_term::Bool,
+)
+    exponent == 0 && return wrote_term
+    wrote_term && print(io, ' ')
+    print(io, axis)
+    _show_script_integer(io, qudit, _PAULI_SUBSCRIPT_DIGITS, '₋')
+    if exponent != 1
+        _show_script_integer(io, exponent, _PAULI_SUPERSCRIPT_DIGITS, '⁻')
+    end
+    return true
+end
+
+function _show_pauli(
+    io::IO,
+    qudits,
+    xs,
+    zs,
+    phase::Int,
+)
+    wrote_term = false
+    if phase != 0
+        print(io, "[phase=", phase, ']')
+        wrote_term = true
+    end
+
+    wrote_local_term = false
+    @inbounds for i in eachindex(qudits)
+        if xs[i] != 0
+            wrote_term = _show_pauli_power(io, 'X', qudits[i], xs[i], wrote_term)
+            wrote_local_term = true
+        end
+        if zs[i] != 0
+            wrote_term = _show_pauli_power(io, 'Z', qudits[i], zs[i], wrote_term)
+            wrote_local_term = true
+        end
+    end
+
+    if !wrote_local_term
+        wrote_term && print(io, ' ')
+        print(io, 'I')
+    end
+    return nothing
+end
+
+@inline _few_qudit_pauli_data(op::SinglePauli) =
+    ((op.qudit,), (op.x,), (op.z,), op.phase)
+@inline _few_qudit_pauli_data(op::DoublePauli) = (
+    (op.qudit1, op.qudit2),
+    (op.x1, op.x2),
+    (op.z1, op.z2),
+    op.phase,
+)
+@inline _few_qudit_pauli_data(op::TriplePauli) = (
+    (op.qudit1, op.qudit2, op.qudit3),
+    (op.x1, op.x2, op.x3),
+    (op.z1, op.z2, op.z3),
+    op.phase,
+)
+@inline _few_qudit_pauli_data(op::NPauli) = (op.qudits, op.xs, op.zs, op.phase)
+
+const _BuiltinFewQuditPauli = Union{SinglePauli,DoublePauli,TriplePauli,NPauli}
+
+function Base.show(io::IO, op::_BuiltinFewQuditPauli)
+    return _show_pauli(io, _few_qudit_pauli_data(op)...)
+end
+
 """
     GeneralPauli(xz::AbstractVector{<:Integer}, phase::Int)
     GeneralPauli(n::Int, d::Int, op::AbstractVector{<:Integer})
 
 General Pauli operator backed by a dense `xz` vector of length `2n` and a phase exponent.
+The vector is ordered as `[x₁, …, xₙ, z₁, …, zₙ]`.
 
 Performance note: `xz` is stored as a `Vector{Int}`. If the input is not already
 `Vector{Int}` with length `2n` (including the `2n+1` case), the constructor will
@@ -201,6 +305,17 @@ function GeneralPauli(n::Int, d::Int, op::AbstractVector{<:Integer})
         end
         return GeneralPauli(xz_copy, phase)
     end
+end
+
+function Base.show(io::IO, op::GeneralPauli)
+    n = length(op.xz) ÷ 2
+    return _show_pauli(
+        io,
+        Base.OneTo(n),
+        @view(op.xz[1:n]),
+        @view(op.xz[(n + 1):(2n)]),
+        op.phase,
+    )
 end
 
 """
