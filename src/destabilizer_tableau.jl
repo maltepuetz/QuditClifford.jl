@@ -380,7 +380,6 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
-    println(io, "    Canonical form:   ", tab.iscanonical)
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
 
