@@ -2,6 +2,21 @@ using QuditClifford
 using Test
 using Random
 
+@inline function _measurement_symp(
+    A::AbstractMatrix{<:Integer},
+    colA::Int,
+    B::AbstractMatrix{<:Integer},
+    colB::Int,
+    n::Int,
+)
+    value = 0
+    @inbounds for q in 1:n
+        value += A[q, colA] * B[n+q, colB]
+        value -= A[n+q, colA] * B[q, colB]
+    end
+    return value
+end
+
 @testset "Measurements" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
         @testset "$label" begin
@@ -141,5 +156,45 @@ using Random
                 @test sort!(unique(outcomes2)) == [0, 1, 2]  # ensure we got all outcomes at least once
             end
         end
+    end
+end
+
+@testset "Multi-generator noncommuting measurement" begin
+    for d in (2, 3), storephase in (false, true)
+        outcome = d - 1
+        op = DoublePauli(1, 0, 1, 2, 0, 1) # Z₁Z₂
+
+        stab = StabilizerTableau(d, 2; state=:product, basis=:X, storephase=storephase)
+        destab = DestabilizerTableau(d, 2; state=:product, basis=:X, storephase=storephase)
+
+        # Both X-basis generators fail to commute with Z₁Z₂. The first is
+        # replaced and the second must be multiplied by the saved pivot.
+        @test measure!(stab, op; outcome=outcome) == outcome
+        @test measure!(destab, op; outcome=outcome) == outcome
+
+        expected_exponent = if !storephase
+            0
+        elseif d == 2
+            2 * outcome
+        else
+            outcome
+        end
+
+        for tab in (stab, destab)
+            @test tab.m == tab.n == 2
+            @test QuditClifford.is_commuting(tab)
+            @test QuditClifford.is_independent(tab)
+            @test is_pure(tab)
+            @test expect_int!(tab, op) == expected_exponent
+        end
+
+        for i in 1:destab.m, j in 1:destab.m
+            value = mod(_measurement_symp(destab.destab, i, destab.stab, j, destab.n), d)
+            @test value == (i == j ? 1 : 0)
+        end
+
+        canonicalize!(stab)
+        canonicalize!(destab)
+        @test stab.stab == destab.stab
     end
 end
