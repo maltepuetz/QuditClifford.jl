@@ -1,6 +1,5 @@
 using QuditClifford
 using Test
-using Logging
 
 @testset "Purity checks" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
@@ -24,14 +23,10 @@ using Logging
                 tab_noncomm[1, 1] = 1  # X₁
                 tab_noncomm[3, 2] = 1  # Z₁
                 tab_noncomm_comm = TT(2, tab_noncomm; m=2, storephase=true)
-                @test with_logger(NullLogger()) do
-                    !QuditClifford.is_commuting(tab_noncomm_comm)
-                end
+                @test !QuditClifford.is_commuting(tab_noncomm_comm)
 
                 tab_noncomm = TT(2, tab_noncomm; m=2, storephase=true)
-                @test with_logger(NullLogger()) do
-                    !QuditClifford.is_pure(tab_noncomm)
-                end
+                @test !is_pure(tab_noncomm)
 
                 # Linearly dependent generators (Z₁, Z₁) should fail independence and purity.
                 tab_dep = zeros(Int, 5, 2)
@@ -66,14 +61,10 @@ using Logging
                 tab_noncomm[1, 1] = 1  # X₁
                 tab_noncomm[3, 2] = 1  # Z₁
                 tab_noncomm_comm = TT(3, tab_noncomm; m=2, storephase=true)
-                @test with_logger(NullLogger()) do
-                    !QuditClifford.is_commuting(tab_noncomm_comm)
-                end
+                @test !QuditClifford.is_commuting(tab_noncomm_comm)
 
                 tab_noncomm = TT(3, tab_noncomm; m=2, storephase=true)
-                @test with_logger(NullLogger()) do
-                    !QuditClifford.is_pure(tab_noncomm)
-                end
+                @test !is_pure(tab_noncomm)
 
                 # Linearly dependent generators (Z₁, Z₁) should fail independence and purity.
                 tab_dep = zeros(Int, 5, 2)

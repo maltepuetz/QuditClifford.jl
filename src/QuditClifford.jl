@@ -2,7 +2,8 @@ module QuditClifford
 
 export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     reset!, entanglement_entropy, measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
-    SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!
+    SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
+    is_pure
 
 import Random, Primes
 import Random.rand!

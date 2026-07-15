@@ -1,4 +1,12 @@
-### check purity
+"""
+    is_pure(tab::AbstractTableau) -> Bool
+
+Return `true` when the active generators define a pure stabilizer state.
+
+Purity requires exactly one independent, mutually commuting stabilizer
+generator per qudit. The check does not change the represented state and does
+not emit diagnostic output.
+"""
 function is_pure(tab::AbstractTableau)
     is_commuting(tab) || return false
     tab.m == tab.n || return false
@@ -6,15 +14,12 @@ function is_pure(tab::AbstractTableau)
     return true
 end
 
-### check if all generators commute (explicitly)
+# Check if all active generators commute.
 function is_commuting(tab::AbstractTableau)
     m = tab.m
     for j in 1:m
         for i in (j+1):m
-            if mod(commutation_colcol(tab.stab, j, i), tab.d) != 0
-                @info "Generators $j and $i do not commute."
-                return false
-            end
+            mod(commutation_colcol(tab.stab, j, i), tab.d) != 0 && return false
         end
     end
     return true
