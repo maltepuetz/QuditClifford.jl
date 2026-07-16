@@ -3,7 +3,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://maltepuetz.github.io/QuditClifford.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://maltepuetz.github.io/QuditClifford.jl/dev/)
 [![Build Status](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/graph/badge.svg?token=6I4UJ47VOH)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
+[![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/graph/badge.svg)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
