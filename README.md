@@ -3,7 +3,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://maltepuetz.github.io/QuditClifford.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://maltepuetz.github.io/QuditClifford.jl/dev/)
 [![Build Status](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
+[![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/graph/badge.svg?token=6I4UJ47VOH)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 QuditClifford provides stabilizer and destabilizer tableaux for
@@ -41,32 +41,93 @@ QuditClifford requires Julia 1.10 or later.
 
 ## Quick start
 
-Create a two-qutrit X-basis product state, measure `Z₁Z₂`, and inspect the
-post-measurement state:
+This example follows a generalized qutrit Bell state through a local
+measurement.
 
 ```julia
-using QuditClifford
+julia> using QuditClifford
 
-tab = DestabilizerTableau(3, 2; state=:product, basis=:X)
-op = DoublePauli(1, 0, 1, 2, 0, 1)
+# Construct a qutrit Bell state and inspect the entanglement between its sites.
+# d = 3 selects qutrits; n = 2 creates two sites; :ghz gives their Bell state.
+julia> state = DestabilizerTableau(3, 2; state=:ghz)
+Destabilizer Tableau:
+    Qudit dimension:  d = 3
+    Number of Qudits: n = 2
+    Generators:       m = 2
+    Tableau:
+     Stabilizers:
+      X     Z
+     1 1 | 0 0 | 0
+     0 0 | 1 2 | 0
+     ---------
+     Destabilizers:
+      X     Z
+     0 0 | 2 0
+     1 0 | 0 0
 
-outcome = measure!(tab, op; outcome=2)  # 2
-expect!(tab, op)                        # ω² ≈ -0.5 - 0.866im
-is_pure(tab)                            # true
+julia> entanglement_entropy(state, [1]) # Entropy of the subsystem containing qutrit 1.
+1
 ```
-
-Qubits use the same interface. Entropies are returned in log-`d` units:
 
 ```julia
-bell = DestabilizerTableau(2, 2; state=:ghz)
-entanglement_entropy(bell, [1])  # 1, i.e. log(2)
+# Construct X₁ and calculate its expectation before measurement.
+# X₁ is not fixed by the Bell stabilizers, so the expectation is zero.
+julia> x1 = SinglePauli(1, 1, 0) # Qudit 1 with X exponent 1 and Z exponent 0.
+X₁
+
+julia> expect!(state, x1)
+0.0 + 0.0im
 ```
 
-`DestabilizerTableau` is the recommended default: its maintained dual basis
-makes repeated measurement, membership, and expectation operations efficient.
-`StabilizerTableau` uses less memory and can suit storage-heavy or occasional-
-query workflows. Both implement the same high-level measurement, expectation,
-purity, canonicalization, reset, and entropy interfaces.
+```julia
+# X₁ fails to commute with one stabilizer, so measuring it updates the tableau.
+julia> measure!(state, x1)
+2
+```
+
+```julia
+# measure! mutates state; display it again to inspect the updated generators.
+julia> state
+Destabilizer Tableau:
+    Qudit dimension:  d = 3
+    Number of Qudits: n = 2
+    Generators:       m = 2
+    Tableau:
+     Stabilizers:
+      X     Z
+     1 1 | 0 0 | 0
+     1 0 | 0 0 | 1
+     ---------
+     Destabilizers:
+      X     Z
+     0 0 | 0 2
+     0 0 | 2 1
+```
+
+```julia
+# Projection fixes X₁ to eigenvalue ω², changing its expectation from 0 to ω².
+julia> expect!(state, x1)
+-0.5000000000000004 - 0.8660254037844385im
+```
+
+```julia
+# The local measurement separates the pair, so qutrit 1's entropy falls to zero.
+julia> entanglement_entropy(state, [1])
+0
+```
+
+Entropies are returned in log-`d` units, so the initial value `1` corresponds
+to `log(3)` for this maximally entangled qutrit pair. Outcome `2` denotes the
+eigenvalue `ω²`. Since `X₁` does not commute with the original `Z₁Z₂²`
+stabilizer, `measure!` replaces that generator with one encoding the sampled
+eigenvalue and updates the dual destabilizers. The local projection also
+removes the entanglement between the two qutrits.
+
+Continue with [Getting Started](https://maltepuetz.github.io/QuditClifford.jl/dev/getting-started)
+for state and operator construction, explore complete workflows in
+[Examples](https://maltepuetz.github.io/QuditClifford.jl/dev/examples), and
+read [Representation and Phase Conventions](https://maltepuetz.github.io/QuditClifford.jl/dev/conventions)
+before constructing raw tableaux or interpreting phase exponents.
 
 ## Documentation and support
 
