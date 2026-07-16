@@ -42,6 +42,46 @@ end
         @test val == 1
     end
 
+    @testset "Commuting append projects and reorthogonalizes destabilizers" begin
+        # Start with S₁ = X₁X₂. Measuring the commuting operator X₁ leaves
+        # residual X₂. Constructing its dual first proposes Z₂, which must be
+        # projected against S₁; the old dual must then be reorthogonalized to X₁.
+        raw = zeros(Int, 5, 2)
+        raw[1, 1] = 1
+        raw[2, 1] = 1
+        tab = DestabilizerTableau(2, raw; m=1, storephase=true)
+
+        @test measure!(tab, SinglePauli(1, 1, 0); outcome=0) == 0
+        @test tab.m == 2
+        @test tab.stab[1:4, 1] == Int[1, 1, 0, 0]
+        @test tab.stab[1:4, 2] == Int[1, 0, 0, 0]
+        @test tab.destab[:, 1] == Int[0, 0, 0, 1] # Z₂
+        @test tab.destab[:, 2] == Int[0, 0, 1, 1] # Z₁Z₂
+
+        for i in 1:tab.m, j in 1:tab.m
+            val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+            @test val == (i == j ? 1 : 0)
+        end
+    end
+
+    @testset "Noncommuting replacement reorthogonalizes unaffected duals" begin
+        # For S₁=X₁, S₂=X₂ and P=Z₁X₂, replacing S₁ makes the
+        # old dual of S₂ fail to commute with P. The update must correct that dual.
+        tab = DestabilizerTableau(2, 2; state=:product, basis=:X)
+        op = DoublePauli(1, 0, 1, 2, 1, 0)
+
+        @test measure!(tab, op; outcome=0) == 0
+        @test tab.stab[1:4, 1] == Int[0, 1, 1, 0]
+        @test tab.stab[1:4, 2] == Int[0, 1, 0, 0]
+        @test tab.destab[:, 1] == Int[1, 0, 0, 0] # X₁
+        @test tab.destab[:, 2] == Int[1, 0, 0, 1] # X₁Z₂
+
+        for i in 1:tab.m, j in 1:tab.m
+            val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+            @test val == (i == j ? 1 : 0)
+        end
+    end
+
     @testset "Canonicalization preserves duality" begin
         for d in (2, 3)
             raw = zeros(Int, 5, 2)
@@ -63,6 +103,20 @@ end
             op = copy(raw[:, 2])
             @test expect_int!(tab, op) == expect_int!(ref, op)
         end
+    end
+
+    @testset "Mixed-state canonicalization clears inactive caches" begin
+        raw = zeros(Int, 7, 3)
+        raw[4, 1] = 1 # Z₁, with two inactive capacity columns
+        tab = DestabilizerTableau(3, raw; m=1, storephase=true)
+        fill!(tab.xdotz_cache, 2)
+
+        canonicalize!(tab)
+
+        @test tab.iscanonical
+        @test tab.xdotz_cache[1] == 0
+        @test tab.xdotz_cache[2:3] == [0, 0]
+        @test mod(_symp(tab.destab, 1, tab.stab, 1, tab.n), tab.d) == 1
     end
 
     @testset "Purity checks preserve duality" begin

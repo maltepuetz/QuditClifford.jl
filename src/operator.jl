@@ -271,9 +271,6 @@ end
 function GeneralPauli(xz::AbstractVector{<:Integer}, phase::Int)
     n = length(xz) ÷ 2
     (2n == length(xz)) || throw(ArgumentError("xz must have even length (2n)."))
-    if xz isa Vector{Int}
-        return GeneralPauli(xz, phase)
-    end
     xz_copy = Vector{Int}(undef, length(xz))
     @inbounds for i in eachindex(xz)
         xz_copy[i] = Int(xz[i])

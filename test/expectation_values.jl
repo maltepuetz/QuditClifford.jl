@@ -83,3 +83,31 @@ using Test
         end
     end
 end
+
+@testset "Expectation values agree across Pauli representations" begin
+    dense = GeneralPauli(Int[0, 0, 0, 1, 2, 1], 2)
+    triple = TriplePauli(1, 0, 1, 2, 0, 2, 3, 0, 1, 2)
+    sparse = NPauli((1, 2, 3), (0, 0, 0), (1, 2, 1), 2)
+
+    for (label, TT) in [
+        ("StabilizerTableau", StabilizerTableau),
+        ("DestabilizerTableau", DestabilizerTableau),
+    ]
+        @testset "$label" begin
+            tab = TT(3, 3; state=:product, basis=:Z)
+            for op in (dense, triple, sparse)
+                @test expect_int!(tab, op) == 2
+                @test expect!(tab, op) ≈ cis(4π / 3)
+            end
+
+            # An X component takes each representation outside the Z-stabilizer span.
+            dense_outside = GeneralPauli(Int[1, 0, 0, 1, 2, 1], 0)
+            triple_outside = TriplePauli(1, 1, 1, 2, 0, 2, 3, 0, 1)
+            sparse_outside = NPauli((1, 2, 3), (1, 0, 0), (1, 2, 1))
+            for op in (dense_outside, triple_outside, sparse_outside)
+                @test expect_int!(tab, op) == -1
+                @test expect!(tab, op) == 0.0 + 0.0im
+            end
+        end
+    end
+end

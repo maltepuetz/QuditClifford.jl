@@ -106,6 +106,53 @@ end
                     @test tab_warn.stab[2, 1] == 1
                     @test tab_warn.stab[3, 1] == 2  # kgen = 2*outcome + original_phase
                 end
+
+                @testset "Phase policy validation and silent opt-out" begin
+                    invalid_op = SinglePauli(1, 1, 1, 0)
+
+                    tab_silent = TT(2, 1; state=:product, basis=:Z)
+                    out_silent = @test_logs measure!(
+                        tab_silent,
+                        invalid_op;
+                        outcome=1,
+                        phase_policy=2,
+                    )
+                    @test out_silent == 1
+                    @test tab_silent.stab[:, 1] == Int[1, 1, 2]
+                    @test invalid_op.phase == 0
+
+                    tab_invalid = TT(2, 1; state=:product, basis=:Z)
+                    @test_throws ArgumentError measure!(
+                        tab_invalid,
+                        invalid_op;
+                        outcome=0,
+                        phase_policy=3,
+                    )
+
+                    # The optimized sparse representations must apply the same
+                    # Hermiticity correction as their dense equivalent.
+                    sparse_invalid_ops = (
+                        TriplePauli(1, 1, 1, 2, 0, 0, 3, 0, 0),
+                        NPauli((1,), (1,), (1,)),
+                    )
+                    for sparse_op in sparse_invalid_ops
+                        tab_sparse = TT(2, 3; state=:product, basis=:Z)
+                        @test measure!(
+                            tab_sparse,
+                            sparse_op;
+                            outcome=0,
+                            phase_policy=1,
+                        ) == 0
+                        @test tab_sparse.stab[:, 1] == Int[1, 0, 0, 1, 0, 0, 1]
+                    end
+                end
+
+                @testset "Phase-free deterministic measurements" begin
+                    tab_nophase = TT(2, 1; state=:product, basis=:Z, storephase=false)
+                    before = copy(tab_nophase.stab)
+                    @test measure!(tab_nophase, SinglePauli(1, 0, 1); outcome=1) == 0
+                    @test tab_nophase.stab == before
+                end
             end
 
             @testset "Qudit (d=3)" begin
@@ -155,6 +202,53 @@ end
                 end
                 @test sort!(unique(outcomes2)) == [0, 1, 2]  # ensure we got all outcomes at least once
             end
+        end
+    end
+end
+
+@testset "Symplectic commutation specializations" begin
+    v = Int[1, 2, 0, 2, 1, 1]
+    xz = Int[2, 0, 1, 1, 2, 2]
+    expected = QuditClifford.commutation(v, xz)
+    matrix = hcat(v, reverse(v))
+
+    operators = (
+        xz,
+        GeneralPauli(xz, 0),
+        TriplePauli(1, 2, 1, 2, 0, 2, 3, 1, 2),
+        NPauli((1, 2, 3), (2, 0, 1), (1, 2, 2)),
+    )
+
+    # Sparse specializations must preserve the dense symplectic convention.
+    for op in operators
+        @test QuditClifford.commutation_vec_op(v, op) == expected
+        @test QuditClifford.commutation_col(matrix, 1, op) == expected
+    end
+end
+
+@testset "Measurement agrees across sparse Pauli representations" begin
+    dense = GeneralPauli(Int[0, 0, 0, 0, 1, 1], 0)
+    triple = TriplePauli(1, 0, 0, 2, 0, 1, 3, 0, 1)
+    sparse = NPauli((2, 3), (0, 0), (1, 1))
+
+    for (label, TT) in [
+        ("StabilizerTableau", StabilizerTableau),
+        ("DestabilizerTableau", DestabilizerTableau),
+    ]
+        @testset "$label" begin
+            results = Matrix{Int}[]
+            for op in (dense, triple, sparse)
+                raw = zeros(Int, 7, 3)
+                raw[4, 1] = 1 # initial generator Z₁
+                tab = TT(3, raw; m=1, storephase=true)
+
+                @test measure!(tab, op; outcome=2) == 2
+                @test tab.m == 2
+                @test tab.stab[:, 1] == Int[0, 0, 0, 1, 0, 0, 0]
+                @test tab.stab[:, 2] == Int[0, 0, 0, 0, 1, 1, 1]
+                push!(results, copy(tab.stab))
+            end
+            @test all(==(first(results)), results)
         end
     end
 end
