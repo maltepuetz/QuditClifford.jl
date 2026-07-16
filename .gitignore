@@ -5,6 +5,7 @@
 /docs/Manifest*.toml
 /test/Manifest*.toml
 /docs/build/
+/docs/node_modules/
 
 
 testing.jl

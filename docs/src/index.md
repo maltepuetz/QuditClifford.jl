@@ -1,3 +1,40 @@
+```@raw html
+---
+# https://vitepress.dev/reference/default-theme-home-page
+layout: home
+
+hero:
+  name: "QuditClifford.jl"
+  text: "Stabilizer tableaux for prime-dimensional qudits"
+  tagline: Simulate qubits and qudits with measurements, expectations, and entanglement workflows in pure Julia.
+  actions:
+    - theme: brand
+      text: Getting Started
+      link: /getting-started
+    - theme: alt
+      text: Examples
+      link: /examples
+    - theme: alt
+      text: API Reference
+      link: /api
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/maltepuetz/QuditClifford.jl
+
+features:
+  - icon: "⚛️"
+    title: Qubits and qudits
+    details: One interface for qubits and odd prime dimensions, with pure and mixed stabilizer states.
+    link: /getting-started
+  - icon: "⚡"
+    title: Measurement-ready tableaux
+    details: Efficient projective Pauli measurements, expectation values, canonicalization, and purity checks.
+  - icon: "📈"
+    title: Entanglement workflows
+    details: Track stabilizer entanglement entropy through reproducible circuits and measurement trajectories.
+---
+```
+
 ```@meta
 CurrentModule = QuditClifford
 DocTestSetup = quote
@@ -7,19 +44,26 @@ DocTestSetup = quote
 end
 ```
 
-# QuditClifford.jl
+```@raw html
+<div style="height: 3rem" aria-hidden="true"></div>
+```
 
-QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits.
-It includes qubits (`d = 2`) and odd prime dimensions, and supports pure and
+# What is QuditClifford.jl?
+
+QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
+including projective Pauli measurements, expectation values, canonicalization,
+purity checks, and entanglement-entropy calculations. It supports qubits
+(`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as well as pure and
 mixed stabilizer states.
 
-The core capabilities are:
+!!! note "Development status"
+    QuditClifford.jl is under active development and has not yet reached a
+    stable release. Additional functionality is planned, including support
+    for Clifford unitaries. APIs may change before version 1.0.
 
-- Stabilizer and dual destabilizer tableau representations.
-- Preset mixed, product, and generalized GHZ states.
-- Projective measurement of dense and few-qudit Pauli operators.
-- Pauli expectation values, canonicalization, and purity checks.
-- Stabilizer entanglement entropy for pure and mixed states.
+Use [`DestabilizerTableau`](@ref) for repeated measurement and expectation
+workflows, or [`StabilizerTableau`](@ref) when compact storage is more
+important than maintaining a dual basis.
 
 ## Quick start
 
@@ -44,9 +88,7 @@ using QuditClifford
 ```
 
 This example follows a generalized qutrit Bell state through a local
-measurement. The random seed is fixed in the hidden doctest setup, so the
-measurement remains genuinely sampled while the displayed result is
-reproducible.
+measurement.
 
 ```jldoctest index-quick-start
 # Construct a qutrit Bell state and inspect the entanglement between its sites.
@@ -83,7 +125,6 @@ julia> expect!(state, x1)
 
 ```jldoctest index-quick-start
 # X₁ fails to commute with one stabilizer, so measuring it updates the tableau.
-# The outcome is sampled; a hidden fixed seed keeps the example reproducible.
 julia> measure!(state, x1)
 2
 ```

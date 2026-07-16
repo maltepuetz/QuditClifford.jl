@@ -12,6 +12,10 @@ dimensions, pure and mixed stabilizer states, projective Pauli measurements,
 expectation values, canonicalization, purity checks, and stabilizer
 entanglement entropy.
 
+> **Development status:** QuditClifford.jl is under active development and has
+> not yet reached a stable release. APIs may change before version 1.0, and
+> planned functionality includes support for Clifford unitaries.
+
 The package is deliberately focused on prime-dimensional qudit tableau
 operations. [QuantumClifford.jl](https://github.com/QuantumSavory/QuantumClifford.jl)
 is a separate, mature toolkit centered on qubit stabilizer states, Clifford

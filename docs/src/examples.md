@@ -311,7 +311,7 @@ results = [
 
 layers = collect(1:max_layers)
 
-figure = Figure(size=(480, 160), figure_padding=6)
+figure = Figure(size=(720, 240), figure_padding=9)
 rank_axis = Axis(
     figure[1, 1];
     xlabel=L"measurement layer $t$",
