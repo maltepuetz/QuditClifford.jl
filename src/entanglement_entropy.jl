@@ -1,38 +1,108 @@
+"""
+    entanglement_entropy(tab::AbstractTableau, subsystem::AbstractVector)
+
+Compute the stabilizer entanglement entropy of a subsystem.
+
+# Arguments
+- `tab::AbstractTableau`: Destabilizer or stabilizer tableau describing the
+  (possibly mixed) state.
+- `subsystem::AbstractVector{<:Integer}`: 1-based qudit indices defining subsystem `A`.
+
+# Returns
+- An integer `S(A)` in log-`d` units (so `S=1` means entropy `log(d)`).
+
+# Examples
+```julia
+tab = DestabilizerTableau(2, 3; state=:ghz)
+S1 = entanglement_entropy(tab, [1])      # 1
+S2 = entanglement_entropy(tab, [1, 2])   # 1
+```
+
+# Notes
+- For pure stabilizer states (`m == n`), the function uses `S(A) = S(B)` and computes the rank on the smaller side.
+- For mixed stabilizer states (`m < n`), the function traces out the complement and uses the mixed-state stabilizer formula.
+- `subsystem` should contain distinct indices; repeated indices lead to undefined results.
+"""
 function entanglement_entropy(
-    stabtab::StabilizerTableau,
+    tab::AbstractTableau,
     subsystem::T
 ) where T<:AbstractVector
 
-    if length(subsystem) > stabtab.n ÷ 2
-        throw(
-            ArgumentError(
-                "Subsystem size must be less than or equal to half the number of qudits."
-            )
+    N_A = length(subsystem)
+    n = tab.n
+    m = tab.m
+
+    if m == n
+        # Pure stabilizer state. Use smaller side since S(A) = S(B).
+        if N_A <= n ÷ 2
+            rank_A = rank_subsystem_cols!(tab, subsystem, m)
+            return rank_A - N_A
+        end
+        N_B = n - N_A
+        rank_B = rank_subsystem_cols!(tab, subsystem, m; complement=true)
+        return rank_B - N_B
+    end
+
+    # Mixed stabilizer state: trace out the complement B.
+    # If R_B is the restriction of generators to B, then
+    # m_A = m - rank(R_B), and S(ρ_A) = |A| - m_A (in log_d units).
+    rank_B = rank_subsystem_cols!(tab, subsystem, m; complement=true)
+    return N_A - m + rank_B
+end
+
+function rank_subsystem_cols!(
+    tab::AbstractTableau,
+    subsystem::AbstractVector,
+    mcols::Int;
+    complement::Bool=false,
+)
+    stab = tab.stab
+    ws = tab.workspace
+    n = tab.n
+
+    if complement
+        N = n - length(subsystem)
+        N == 0 && return 0
+
+        # Use c_workspace as a temporary membership mask (0/1).
+        mask = tab.c_workspace
+        @turbo for i in 1:n
+            mask[i] = 0
+        end
+        @inbounds for i in eachindex(subsystem)
+            mask[subsystem[i]] = 1
+        end
+
+        row = 1
+        @inbounds for qudit in 1:n
+            if mask[qudit] == 0
+                @turbo for j in 1:mcols
+                    ws[row, j] = stab[qudit, j]
+                    ws[row+N, j] = stab[qudit+n, j]
+                end
+                row += 1
+            end
+        end
+        return rank_fp_cols!(
+            view(ws, 1:2*N, 1:mcols),
+            tab.d,
+            tab.inversemod,
         )
     end
 
-    N_A = length(subsystem)
-    tab = stabtab.tableau
-    ws = stabtab.workspace
-    n = stabtab.n
-
-    @turbo for j in axes(tab, 2), i in eachindex(subsystem)
+    N = length(subsystem)
+    N == 0 && return 0
+    @turbo for j in 1:mcols, i in eachindex(subsystem)
         qudit = subsystem[i]
-        ws[i, j] = tab[qudit, j]
-        ws[i+N_A, j] = tab[qudit+n, j]
+        ws[i, j] = stab[qudit, j]
+        ws[i+N, j] = stab[qudit+n, j]
     end
 
-    ### compute the rank of the matrix stabtab.workspace[1:2*N_A, 1:stabtab.n]
-    # implement Gauss-Jordan algorithm
-
-    rank_A = rank_fp_cols!(
-        view(stabtab.workspace, 1:2*N_A, 1:stabtab.n),
-        stabtab.d,
-        stabtab.inversemod
+    return rank_fp_cols!(
+        view(ws, 1:2*N, 1:mcols),
+        tab.d,
+        tab.inversemod,
     )
-
-    S_A = rank_A - N_A
-    return S_A
 end
 
 function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMatrix

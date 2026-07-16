@@ -1,38 +1,40 @@
-### check purity (not allocation free)
-function is_pure(stabtab::StabilizerTableau)
-    is_commuting(stabtab) || return false
-    is_full_rank(stabtab) || return false
+"""
+    is_pure(tab::AbstractTableau) -> Bool
+
+Return `true` when the active generators define a pure stabilizer state.
+
+Purity requires exactly one independent, mutually commuting stabilizer
+generator per qudit. The check does not change the represented state and does
+not emit diagnostic output.
+"""
+function is_pure(tab::AbstractTableau)
+    tab.m == tab.n || return false
+    is_commuting(tab) || return false
+    is_independent(tab) || return false
     return true
 end
 
-
-### check if all generators commute (explicitly)
-function is_commuting(stabtab::StabilizerTableau)
-    for j in axes(stabtab.tableau, 2)
-        for i in j+1:size(stabtab.tableau, 2)
-            if mod(commutation_colcol(stabtab.tableau, j, i), stabtab.d) != 0
-                @info "Generators $j and $i do not commute."
-                return false
-            end
+# Check if all active generators commute.
+function is_commuting(tab::AbstractTableau)
+    m = tab.m
+    for j in 1:m
+        for i in (j+1):m
+            mod(commutation_colcol(tab.stab, j, i), tab.d) != 0 && return false
         end
     end
     return true
 end
 
-### check if all generators commute (using matrix multiplication)
-function is_commuting_matrix(stabtab::StabilizerTableau)
-    n = stabtab.n
-    d = stabtab.d
-    X = view(stabtab.tableau, 1:n, :)
-    Z = view(stabtab.tableau, n+1:2n, :)
-    comm_matrix = mod.(X' * Z - Z' * X, d)
-    return all(comm_matrix .== 0)
-end
-
-### check if the rank of the stabilizer generators is n
-function is_full_rank(stabtab::StabilizerTableau)
-    n = stabtab.n
-    d = stabtab.d
-    rank = rank_fp_cols!(stabtab.tableau[1:2n, 1:n], d, stabtab.inversemod)
-    return rank == n
+"""Check if the active stabilizer generators are linearly independent (rank m)."""
+function is_independent(tab::AbstractTableau)
+    n = tab.n
+    m = tab.m
+    d = tab.d
+    m == 0 && return true
+    ws = tab.workspace
+    @turbo for j in 1:m, i in 1:(2n)
+        ws[i, j] = tab.stab[i, j]
+    end
+    rank = rank_fp_cols!(view(ws, 1:2n, 1:m), d, tab.inversemod)
+    return rank == m
 end
