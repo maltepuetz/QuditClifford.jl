@@ -1,3 +1,11 @@
+"""
+    QuditClifford
+
+Tools for prime-dimensional qudit stabilizer states represented by stabilizer
+and destabilizer tableaux. The package supports pure and mixed states, Pauli
+measurements, expectation values, canonicalization, and stabilizer
+entanglement entropy.
+"""
 module QuditClifford
 
 export AbstractTableau, StabilizerTableau, DestabilizerTableau,

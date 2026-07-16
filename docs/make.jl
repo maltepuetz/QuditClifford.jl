@@ -7,6 +7,7 @@ makedocs(;
     modules=[QuditClifford],
     authors="Malte Pütz",
     sitename="QuditClifford.jl",
+    checkdocs=:exports,
     format=Documenter.HTML(;
         canonical="https://maltepuetz.github.io/QuditClifford.jl",
         edit_link="main",
@@ -14,6 +15,11 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "Getting Started" => "getting-started.md",
+        "Examples" => "examples.md",
+        "Representation and Conventions" => "conventions.md",
+        "Measurements and Expectations" => "measurements.md",
+        "API Reference" => "api.md",
     ],
 )
 

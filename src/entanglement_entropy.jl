@@ -1,10 +1,11 @@
 """
-    entanglement_entropy(tab::StabilizerTableau, subsystem::AbstractVector)
+    entanglement_entropy(tab::AbstractTableau, subsystem::AbstractVector)
 
 Compute the stabilizer entanglement entropy of a subsystem.
 
 # Arguments
-- `tab::StabilizerTableau`: Stabilizer tableau describing the (possibly mixed) state.
+- `tab::AbstractTableau`: Destabilizer or stabilizer tableau describing the
+  (possibly mixed) state.
 - `subsystem::AbstractVector{<:Integer}`: 1-based qudit indices defining subsystem `A`.
 
 # Returns
@@ -12,7 +13,7 @@ Compute the stabilizer entanglement entropy of a subsystem.
 
 # Examples
 ```julia
-tab = StabilizerTableau(2, 3; state=:ghz)
+tab = DestabilizerTableau(2, 3; state=:ghz)
 S1 = entanglement_entropy(tab, [1])      # 1
 S2 = entanglement_entropy(tab, [1, 2])   # 1
 ```

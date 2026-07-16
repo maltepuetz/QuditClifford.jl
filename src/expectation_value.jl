@@ -52,7 +52,7 @@ Return the expectation value ⟨P⟩ as a `ComplexF64` for a Pauli operator `op`
 
 # Examples
 ```julia
-tab = StabilizerTableau(3, 1; state=:product, basis=:Z)
+tab = DestabilizerTableau(3, 1; state=:product, basis=:Z)
 val = expect!(tab, SinglePauli(1, 0, 1))  # ⟨Z⟩ = 1 + 0im
 ```
 

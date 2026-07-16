@@ -318,7 +318,7 @@ end
 Projectively measure a Pauli operator `op` and update `tab` in-place.
 
 # Arguments
-- `tab::AbstractTableau`: Tableau to update (`StabilizerTableau` or `DestabilizerTableau`).
+- `tab::AbstractTableau`: Tableau to update (`DestabilizerTableau` or `StabilizerTableau`).
 - `op`: Pauli operator specified as `AbstractPauli` (e.g. `SinglePauli`, `DoublePauli`,
   `TriplePauli`, `NPauli`, `GeneralPauli`), or an `AbstractVector{<:Integer}` of length
   `2n` or `2n+1` (wrapped into `GeneralPauli` internally).
@@ -339,11 +339,11 @@ Projectively measure a Pauli operator `op` and update `tab` in-place.
 
 # Examples
 ```julia
-tab = StabilizerTableau(2, 2; state=:product, basis=:Z)
+tab = DestabilizerTableau(2, 2; state=:product, basis=:Z)
 op = SinglePauli(1, 1, 0)           # X on qudit 1
 t = measure!(tab, op)               # random outcome, tableau updated
 
-tab = StabilizerTableau(3, 2; state=:ghz)
+tab = DestabilizerTableau(3, 2; state=:ghz)
 op3 = DoublePauli(1, 0, 1, 2, 0, 2) # Z1 * Z2^2
 t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchanged
 ```
