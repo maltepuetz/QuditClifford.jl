@@ -45,7 +45,7 @@ Return the expectation value ⟨P⟩ as a `ComplexF64` for a Pauli operator `op`
 # Arguments
 - `tab::AbstractTableau`: Tableau (canonicalized if needed for stabilizers).
 - `op`: Pauli operator as `SinglePauli`, `DoublePauli`, `TriplePauli`, `NPauli`,
-  or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
+  `GeneralPauli`, or an `AbstractVector{<:Integer}` of length `2n` or `2n+1`.
 
 # Returns
 - `ComplexF64` expectation value. Returns `0.0 + 0.0im` if ⟨P⟩ = 0.
