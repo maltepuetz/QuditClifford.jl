@@ -282,7 +282,7 @@ updating phases consistently and caching pivot metadata.
 
 # Examples
 ```julia
-tab = StabilizerTableau(2, 3; state=:ghz)
+tab = DestabilizerTableau(2, 3; state=:ghz)
 canonicalize!(tab)
 ```
 

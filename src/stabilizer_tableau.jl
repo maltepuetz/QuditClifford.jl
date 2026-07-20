@@ -204,13 +204,15 @@ end
 end
 
 """
+    reset!(tab::DestabilizerTableau; state::Symbol=:mixed, basis=:Z)
+    reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
     reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
     reset!(tab::StabilizerTableau, state::Symbol; basis=:Z)
 
-Reset an existing stabilizer tableau in-place to a preset state.
+Reset an existing destabilizer or stabilizer tableau in-place to a preset state.
 
 # Arguments
-- `tab::StabilizerTableau`: The tableau to reset.
+- `tab::AbstractTableau`: The tableau to reset.
 
 # Keyword Arguments
 - `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
@@ -218,13 +220,15 @@ Reset an existing stabilizer tableau in-place to a preset state.
 
 # Examples
 ```julia
-tab = StabilizerTableau(2, 3; state=:mixed)
+tab = DestabilizerTableau(2, 3; state=:mixed)
 reset!(tab; state=:product, basis=:Z)
 reset!(tab, :ghz)
 ```
 
 # Notes
-Uses the existing `n` and `storephase` of `tab`. See [`StabilizerTableau`](@ref).
+Uses the existing `d`, `n`, `storephase`, and inversion strategy of `tab`. For a
+[`DestabilizerTableau`](@ref), the dual destabilizers are rebuilt for the new
+state. See also [`StabilizerTableau`](@ref).
 """
 function reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
