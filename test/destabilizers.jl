@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+using Random
 
 @inline function _symp(A::AbstractMatrix{<:Integer}, colA::Int, B::AbstractMatrix{<:Integer}, colB::Int, n::Int)
     s = 0
@@ -8,6 +9,13 @@ using Test
         s -= A[n + q, colA] * B[q, colB]
     end
     return s
+end
+
+@inline function _assert_duality(tab)
+    for i in 1:tab.m, j in 1:tab.m
+        val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+        @test val == (i == j ? 1 : 0)
+    end
 end
 
 @testset "Destabilizers" begin
@@ -79,6 +87,89 @@ end
         for i in 1:tab.m, j in 1:tab.m
             val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
             @test val == (i == j ? 1 : 0)
+        end
+    end
+
+    @testset "Noncommuting replacement corrects several duals at once" begin
+        # S_j = X_j with duals D_j = Z_j (up to normalisation). P = Z1 X2 X3
+        # anticommutes with S1 only, so S1 is the pivot -- but P also fails to
+        # commute with BOTH D2 and D3, so the update must correct two duals,
+        # not just the first one it meets.
+        for d in (2, 3)
+            tab = DestabilizerTableau(d, 3; state=:product, basis=:X)
+            d2_before = copy(tab.destab[:, 2])
+            d3_before = copy(tab.destab[:, 3])
+
+            @test measure!(tab, TriplePauli(1, 0, 1, 2, 1, 0, 3, 1, 0);
+                           outcome=0, phase_policy=1) == 0
+
+            @test tab.destab[:, 2] != d2_before   # both duals really moved
+            @test tab.destab[:, 3] != d3_before
+            _assert_duality(tab)
+        end
+    end
+
+    @testset "Noncommuting replacement duality for x-only and z-only ops" begin
+        # The measured operator's support must be read from BOTH halves of the
+        # tableau column. Each case below is built so the pivot is qudit 2 and
+        # the dual of qudit 1 genuinely needs correcting, so reading only one
+        # half of the column leaves duality broken rather than merely untested.
+        #
+        #   z-only: S = {Z1, X2}, D = {X1, Z2}, P = Z1 Z2 -> <D1,P> != 0
+        #   x-only: S = {X1, Z2}, D = {Z1, X2}, P = X1 X2 -> <D1,P> != 0
+        for d in (2, 3)
+            for (basis, op) in (([:Z, :X], DoublePauli(1, 0, 1, 2, 0, 1)),
+                                ([:X, :Z], DoublePauli(1, 1, 0, 2, 1, 0)))
+                tab = DestabilizerTableau(d, 2; state=:product, basis=basis)
+                d1_before = copy(tab.destab[:, 1])
+
+                @test measure!(tab, op; outcome=0, phase_policy=1) == 0
+
+                @test tab.destab[:, 1] != d1_before   # the dual really moved
+                _assert_duality(tab)
+            end
+        end
+    end
+
+    @testset "Noncommuting replacement duality for a dense GeneralPauli" begin
+        # Dense operator: support covers every qudit, in both halves.
+        for d in (2, 3)
+            n = 4
+            tab = DestabilizerTableau(d, n; state=:product, basis=:Z)
+            xz = ones(Int, 2n)
+            op = GeneralPauli(n, d, vcat(xz, 0))
+            @test measure!(tab, op; outcome=0, phase_policy=1) == 0
+            _assert_duality(tab)
+        end
+    end
+
+    @testset "Randomized measurement circuit preserves duality and outcomes" begin
+        # The destabilizer update must agree with a plain StabilizerTableau on
+        # every returned outcome while keeping <D_j, S_k> = delta_jk throughout.
+        for d in (2, 3)
+            n = 6
+            rng = Random.MersenneTwister(20260909)
+            dtab = DestabilizerTableau(d, n; state=:product, basis=:Z)
+            stab = StabilizerTableau(d, n; state=:product, basis=:Z)
+
+            for _ in 1:150
+                q1 = rand(rng, 1:n)
+                q2 = rand(rng, 1:n)
+                op = if q1 == q2
+                    SinglePauli(q1, rand(rng, 0:d-1), rand(rng, 0:d-1))
+                else
+                    DoublePauli(q1, rand(rng, 0:d-1), rand(rng, 0:d-1),
+                                q2, rand(rng, 0:d-1), rand(rng, 0:d-1))
+                end
+                outcome = rand(rng, 0:d-1)
+
+                got = measure!(dtab, op; outcome=outcome, phase_policy=1)
+                want = measure!(stab, op; outcome=outcome, phase_policy=1)
+
+                @test got == want
+                @test dtab.m == stab.m
+                _assert_duality(dtab)
+            end
         end
     end
 

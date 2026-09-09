@@ -98,6 +98,9 @@ mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
     res_workspace::Vector{Int}         # length 2n
     c_workspace::Vector{Int}           # length n
     zacc_workspace::Vector{Int}        # length n
+
+    # workspace for the noncommuting measurement update
+    support_workspace::Vector{Int}     # length n (qudit support of one column)
 end
 
 function DestabilizerTableau(d::Int, n::Int;
@@ -198,6 +201,7 @@ function _build_destabilizer_tableau(
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
+        zeros(Int, n),
         zeros(Int, n),
         zeros(Int, n),
     )
@@ -404,6 +408,44 @@ end
     end
     @turbo for q in 1:n
         s -= A[n+q, colA] * B[q, colB]
+    end
+    return s
+end
+
+"""
+Collect into `supp` the qudit indices where column `col` of `A` is nonzero in
+either its X or its Z half, returning how many were found.
+
+Every term of a symplectic pairing against that column carries a factor from
+one of those two halves, so all terms outside this index set vanish and a
+pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
+"""
+@inline function _column_support!(supp::Vector{Int}, A::AbstractMatrix{<:Integer}, col::Int, n::Int)
+    nsupp = 0
+    # Loop-carried counter, so neither @turbo nor @simd applies here.
+    @inbounds for q in 1:n
+        if A[q, col] != 0 || A[n+q, col] != 0
+            nsupp += 1
+            supp[nsupp] = q
+        end
+    end
+    return nsupp
+end
+
+"""
+`_symplectic_col_col` restricted to the qudit indices in `supp[1:nsupp]`.
+Equal to the full pairing whenever `supp` covers the support of column `colB`
+of `B` (see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
+"""
+@inline function _symplectic_col_col_support(
+    A::AbstractMatrix{<:Integer}, colA::Int,
+    B::AbstractMatrix{<:Integer}, colB::Int,
+    n::Int, supp::Vector{Int}, nsupp::Int,
+)
+    s = 0
+    @inbounds @simd for k in 1:nsupp
+        q = supp[k]
+        s += A[q, colA] * B[n+q, colB] - A[n+q, colA] * B[q, colB]
     end
     return s
 end

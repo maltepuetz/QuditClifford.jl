@@ -224,9 +224,19 @@ end
         tab.destab[r, pivot] = mod(inv_comm0 * tab.generator_workspace[r], d)
     end
 
+    # Every dual must stay orthogonal to the newly written generator, which now
+    # holds the measured operator. Pairing each dual against it over all 2n rows
+    # would cost O(n*m) per measurement. But `set_operator!` zeroed the column
+    # before writing it, so every term outside the operator's own qudit support
+    # vanishes: collect that support once in O(n) and each pairing drops to
+    # O(nsupp) -- a handful of terms for a sparse Pauli. A dense operator keeps
+    # its full support, and so keeps the old cost; only zero terms go unvisited.
+    supp = tab.support_workspace
+    nsupp = _column_support!(supp, tab.stab, pivot, n)
+
     @inbounds for j in 1:m
         j == pivot && continue
-        t = mod(_symplectic_col_col(tab.destab, j, tab.stab, pivot, n), d)
+        t = mod(_symplectic_col_col_support(tab.destab, j, tab.stab, pivot, n, supp, nsupp), d)
         t == 0 && continue
         @inbounds @simd for r in 1:(2n)
             tab.destab[r, j] = mod(tab.destab[r, j] - mod(t * tab.destab[r, pivot], d), d)
