@@ -58,11 +58,16 @@ jobs:
             echo "| ratio | reading |"
             echo "| --- | --- |"
             echo "| 0.91 – 1.10 | noise. Ignore. |"
-            echo "| 1.10 – 1.25 or 0.80 – 0.91 | suggestive; reproduce locally before believing it |"
+            echo "| 1.10 – 1.25 or 0.80 – 0.91 | suggestive; reproduce locally first |"
             echo "| > 1.25 or < 0.80 | real |"
             echo "| any memory change | real — allocation counts are deterministic |"
             echo
-            echo "Also ignore any ratio whose deviation from 1 is smaller than the \`±\` on either cell."
+            echo "**Judge groups of rows, not single rows.** A real regression moves every cell it reaches."
+            echo "In a null run of this suite (108 rows, nothing changed), 3 rows still landed outside the band"
+            echo "and 39 deviated from 1.00 by more than their own \`±\`, so the error bars do not bound the"
+            echo "scatter — the two revisions are separate builds and differ in layout and CPU state."
+            echo "Read the memory table first: allocation counts are deterministic."
+            echo
             echo "Rationale and local reproduction: [\`benchmark/README.md\`](https://github.com/${{ github.repository }}/blob/main/benchmark/README.md)"
             echo
           } >> "$GITHUB_STEP_SUMMARY"

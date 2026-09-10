@@ -136,9 +136,13 @@ end
 # job REGARDLESS of how slow the runner is -- a slow machine yields fewer
 # samples, not a longer job. That makes the CI budget exact rather than a hope.
 #
-# The floor on samples is what matters for stability, because AirspeedVelocity
-# reports the MEDIAN. Tiers are set so even the slowest leaf clears ~20 samples
-# on a runner ~3x slower than the development machine.
+# Tiers are set so even the slowest leaf clears ~13 samples on a runner ~3x
+# slower than the development machine. That is deliberately modest: the first
+# CI run showed sample count is NOT what limits this suite. Error bars come
+# back under 2% almost everywhere, while ratios between the two revisions
+# scatter up to 14% -- that gap is build-to-build difference, not sampling, and
+# no amount of extra samples touches it. Spending budget to shrink an error bar
+# that is already 10x below the noise floor is waste. See benchmark/README.md.
 
 function _budget(profile, keypath)
     profile == "smoke" && return 0.05
@@ -153,14 +157,23 @@ function _budget(profile, keypath)
 
     # canonicalize! from a cold :ghz tableau, and :ghz construction itself, are
     # the expensive leaves: ~25 ms (Stab) and ~48-52 ms (Destab) at n = 256,
-    # against well under 1 ms for everything else in the cell. They need a
-    # bigger slice to clear a usable sample count on a CI runner 2-3x slower
-    # than a dev machine. The midcircuit canonicalize! starts from a nearly
-    # canonical tableau and is ~20x cheaper, so it stays in the default tier.
+    # ~150 ms on a CI runner, against well under 1 ms for everything else in
+    # the cell. They still need a bigger slice than the default.
+    #
+    # 2.0 s rather than the 3.0 s this started at. The first CI run showed
+    # these are already the most precise rows in the table -- 0.998 +/- 0.0019
+    # at ~19 samples, because they are pure integer work with no allocation
+    # variance. Within-revision precision of 0.2% is far below the ~5-10%
+    # between-revision scatter it is being compared against, so the extra
+    # second bought nothing. 2.0 s still clears ~13 samples on a runner 3x
+    # slower than a dev machine.
+    #
+    # The midcircuit canonicalize! starts from a nearly canonical tableau and
+    # is ~20x cheaper, so it stays in the default tier.
     cold = group == "micro" || group == "probe"
     if cold && (occursin("canonicalize!", joined) || occursin("construct/ghz", joined)) &&
        !occursin("n=64", joined)
-        return 3.0 * scale
+        return 2.0 * scale
     end
 
     occursin("is_pure", joined) && return 1.0 * scale

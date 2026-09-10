@@ -26,13 +26,53 @@ faster.** This is the single most misread thing in the output.
 | > 1.25 or < 0.80 | real |
 | any memory / allocation change | real — allocation counts are deterministic |
 
-10% rather than the 20–30% usually quoted for GitHub runners because both
-revisions are measured back-to-back in the *same* job on the *same* host, which
-removes between-host variance and leaves only within-run drift. Each cell also
-renders as `median ± interquartile range`; a supplementary rule is to ignore any
-ratio whose deviation from 1 is smaller than the `±` on either cell.
-
 Reported values are **medians**, not minima.
+
+### What the noise actually looks like
+
+These numbers are measured, not estimated. The pull request that introduced
+this suite touched no `src/`, so its own run was a null experiment: 108 rows
+whose true ratio is exactly 1.00. On `ubuntu-latest`:
+
+- median and mean ratio **1.000 / 0.999** — no systematic bias between the two
+  revisions
+- **105 of 108** rows inside 0.91 – 1.10, 99 inside ±5%
+- worst rows **0.738** and **1.140**
+
+So the band above holds for about 97% of rows — but three rows escaped it in a
+run where nothing had changed. **Never conclude anything from a single row.**
+
+### The error bars do not bound the noise
+
+Each cell renders as `median ± interquartile range`. It is tempting to dismiss
+any ratio whose deviation from 1 is smaller than that `±`, and an earlier
+version of this file said to. That rule is wrong, and the null run shows why:
+**39 of the 108 rows deviated from 1.00 by more than their own error bar.**
+
+The error bar measures how precisely each revision was measured *within* its
+own run, and it is tight — a median of 0.7% for kernels above 1 ms and under
+2% for the rest. The scatter between the two revisions is five to ten times
+larger. The two revisions are separate builds measured minutes apart, so they
+differ in code layout, allocation addresses and CPU state, and none of that
+shrinks with more samples. Collecting more samples tightens the `±` and leaves
+the ratio where it was.
+
+A small error bar therefore means the measurement is trustworthy, not that the
+ratio is. Use it in one direction only: a ratio whose `±` is *larger* than its
+deviation is definitely noise (this catches the very cheapest kernels, where
+`evals = 1` puts them near the timer floor).
+
+### How to read it instead
+
+- **Judge groups, not rows.** A real regression in a shared routine moves every
+  cell that reaches it. If all four `pauli/measure!/*` rows move together, or
+  both `d = 2` and `d = 3` at the same `n`, that is signal. One row moving
+  alone, with its neighbours flat, is noise — that is exactly the pattern the
+  null run produced.
+- **Read the memory table first.** Allocation counts are deterministic, so any
+  change there is real and points at where to look in the time table.
+- **Reproduce locally before believing a time ratio.** The local A/B below has
+  none of this between-build scatter.
 
 ## Profiles
 
