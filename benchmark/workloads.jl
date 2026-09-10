@@ -73,6 +73,38 @@ function tableau_maker(T, d::Int, n::Int;
                                     storephase = storephase, inversemod = inversemod)
 end
 
+# --------------------------------------------------------------- operators
+#
+# Qudit 1 is a soft best case: first column, first pivot, and the sparse
+# destabilizer dual update touches the smallest possible support. The spine
+# therefore measures a weight-2 operator spread across the chain instead.
+
+"""Two sites a quarter and three quarters along the chain."""
+spread_sites(n::Int) = (max(1, n ÷ 4), max(2, 3n ÷ 4))
+
+"""
+X on both spread sites. On a Z-basis `:product` state this anticommutes with
+the stabilizer on each of them, so `measure!` takes the non-commuting branch.
+`x*z = 0`, so it is Hermitian at d = 2.
+"""
+function spread_x(n::Int)
+    i, j = spread_sites(n)
+    return DoublePauli(i, 1, 0, j, 1, 0)
+end
+
+"""
+Z on both spread sites: the product of two Z-basis generators, so on a
+`:product` state it is in the stabilizer span -- with two nonzero coefficients
+rather than the single one a weight-1 operator gives.
+"""
+function spread_z(n::Int)
+    i, j = spread_sites(n)
+    return DoublePauli(i, 0, 1, j, 0, 1)
+end
+
+"""Eight sites spaced evenly around the chain; distinct for every n >= 8."""
+spread_eight(n::Int) = ntuple(k -> mod1(1 + (k - 1) * cld(n, 8), n), 8)
+
 bench_construct(mk; state = :product) =
     @benchmarkable $mk($state) evals = 1
 
@@ -110,8 +142,8 @@ explicit instead of an artefact of sample ordering.
 
 Note this is the *cheap* in-span query: on a freshly built `:product` state a
 weight-1 Pauli decomposes into a single generator, so almost nothing
-accumulates. On a `DestabilizerTableau` at n = 256 this is 2.0 us, against
-9.1 us for the same weight-1 call on a mid-circuit state and 40 us for a dense
+accumulates. On a `DestabilizerTableau` at n = 256 this is 3.5 us, against
+13 us for the same operator on a mid-circuit state and 37 us for a dense
 in-span operator there. `midcircuit_group` covers both.
 """
 function bench_expect(mk, op; state = :product)
@@ -161,20 +193,21 @@ function micro_group(; d::Int, n::Int, T,
 
     g["construct"] = bench_construct(mk)
 
-    # X on qudit 1 anticommutes with the Z-basis stabilizer there, so a
-    # generator is replaced.
-    g["measure!/noncommuting"] = bench_measure(mk, :product, SinglePauli(1, 1, 0))
-    # Z on qudit 1 IS a stabilizer: the state is unchanged and the cost is the
+    # X on both spread sites anticommutes with the Z-basis stabilizer on each,
+    # so a generator is replaced.
+    g["measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
+    # Z on both spread sites is a product of two stabilizers: the state is
+    # unchanged and the cost is the
     # span decomposition. On a StabilizerTableau that includes a canonicalize
-    # (229 us here vs 2.6 us on a Destabilizer), but only the collapsed O(n*m)
+    # (225 us here vs 4.3 us on a Destabilizer), but only the collapsed O(n*m)
     # one -- a :product tableau is already in RCEF. The full canonicalize is
     # measured by the canonicalize! leaf, and the mid-circuit cost by
     # midcircuit_group.
-    g["measure!/deterministic"] = bench_measure(mk, :product, SinglePauli(1, 0, 1))
+    g["measure!/deterministic"] = bench_measure(mk, :product, spread_z(n))
     # From m = 0 everything commutes and lies outside the span, so m grows.
-    g["measure!/append"] = bench_measure(mk, :mixed, SinglePauli(1, 0, 1))
+    g["measure!/append"] = bench_measure(mk, :mixed, spread_z(n))
 
-    g["expect!"] = bench_expect(mk, SinglePauli(1, 0, 1))
+    g["expect!"] = bench_expect(mk, spread_z(n))
     g["canonicalize!"] = bench_canonicalize(mk)
     # The pure-state path takes the smaller side, so half the chain is worst case.
     g["entropy/half"] = bench_entropy(mk, collect(1:(n ÷ 2)))
@@ -190,8 +223,8 @@ end
 # is not the regime a user is usually in: by the time they call expect! or
 # entanglement_entropy the state has been through a circuit. The difference is
 # not small. On a DestabilizerTableau at n = 256, against the fresh-state leaf:
-# measure!/deterministic 2.6 us -> 77 us, expect! 2.0 us -> 9.1 us, and
-# canonicalize! 50 ms -> 2.2 ms (the mid-circuit tableau is nearly canonical
+# measure!/deterministic 4.3 us -> 72 us, expect! 3.5 us -> 13 us, and
+# canonicalize! 49 ms -> 2.1 ms (the mid-circuit tableau is nearly canonical
 # already, so this one goes the other way).
 
 """
@@ -248,7 +281,10 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     snap = snapshot(tab)
     g = BenchmarkGroup()
 
-    anti = first_anticommuting(tab, [SinglePauli(i, 1, 0) for i in 1:min(n, 32)])
+    # spread_x first; the SinglePaulis are only a fallback for the case where a
+    # scrambled state happens to commute with it.
+    anti = first_anticommuting(tab, Any[spread_x(n);
+                                        [SinglePauli(i, 1, 0) for i in 1:min(n, 32)]])
     inspan = in_span_operator(tab)
 
     g["measure!/noncommuting"] = @benchmarkable(
@@ -263,7 +299,7 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     # Read-only, so they can share the scrambled tableau with no per-sample setup.
     let ro = scrambled_state(T, d, n; seed = seed)
         canonicalize!(ro)
-        loc = SinglePauli(1, 0, 1)
+        loc = spread_z(n)
         expect!(ro, loc)
         g["expect!/local"] = @benchmarkable expect!($ro, $loc)
         dense = in_span_operator(ro)

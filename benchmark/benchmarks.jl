@@ -58,15 +58,16 @@ end
 
 let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     dense_xz = vcat(fill(1, n), fill(0, n))   # prod_i X_i: dense, and anticommutes
+    s1, s2 = spread_sites(n)
 
     # storephase = false skips all phase bookkeeping. d = 3, where the odd-d
     # phase branches (inv2, binom2_mod_oddprime) actually run.
     for T in TYPES
         mk = tableau_maker(T, d, n; storephase = false)
         tag = "storephase=false/$(nameof(T))"
-        g["$tag/measure!/noncommuting"] = bench_measure(mk, :product, SinglePauli(1, 1, 0))
+        g["$tag/measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
         g["$tag/canonicalize!"] = bench_canonicalize(mk)
-        g["$tag/expect!"] = bench_expect(mk, SinglePauli(1, 0, 1))
+        g["$tag/expect!"] = bench_expect(mk, spread_z(n))
     end
 
     # JustInTimeInvMod is a type parameter, so each of these forces a fresh set
@@ -75,7 +76,7 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     # tripwire against that changing, not a study.
     let mk = tableau_maker(DestabilizerTableau, d, n; inversemod = QuditClifford.JustInTimeInvMod())
         g["invmod=jit/canonicalize!"] = bench_canonicalize(mk)
-        g["invmod=jit/measure!/noncommuting"] = bench_measure(mk, :product, SinglePauli(1, 1, 0))
+        g["invmod=jit/measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
     end
 
     # Pauli sparsity. commutation_col is O(weight) for the FewQuditPauli types
@@ -83,12 +84,14 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     # is now restricted to the operator's support -- so a dense operator
     # regresses that path back to full O(n*m). This is the probe that guards it.
     let mk = tableau_maker(DestabilizerTableau, d, n)
-        g["pauli/measure!/SinglePauli"] = bench_measure(mk, :product, SinglePauli(1, 1, 0))
-        g["pauli/measure!/DoublePauli"] = bench_measure(mk, :product, DoublePauli(1, 1, 0, 2, 1, 0))
+        # Sites spread across the chain at every weight, so these rows differ in
+        # weight and not in where the support happens to sit.
+        g["pauli/measure!/SinglePauli"] = bench_measure(mk, :product, SinglePauli(s1, 1, 0))
+        g["pauli/measure!/DoublePauli"] = bench_measure(mk, :product, spread_x(n))
         g["pauli/measure!/NPauli8"] = bench_measure(mk, :product,
-            NPauli(ntuple(i -> i, 8), ntuple(_ -> 1, 8), ntuple(_ -> 0, 8)))
+            NPauli(spread_eight(n), ntuple(_ -> 1, 8), ntuple(_ -> 0, 8)))
         g["pauli/measure!/GeneralPauli"] = bench_measure(mk, :product, GeneralPauli(dense_xz, 0))
-        g["pauli/expect!/SinglePauli"] = bench_expect(mk, SinglePauli(1, 0, 1))
+        g["pauli/expect!/SinglePauli"] = bench_expect(mk, SinglePauli(s1, 0, 1))
         g["pauli/expect!/GeneralPauli"] = bench_expect(mk, GeneralPauli(dense_xz, 0))
     end
 
@@ -103,7 +106,7 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     # a single site is its expensive case -- a different path from entropy/half.
     let mk = tableau_maker(DestabilizerTableau, d, n)
         g["entropy/single_site"] = bench_entropy(mk, [1])
-        g["expect!/out_of_span"] = bench_expect(mk, SinglePauli(1, 1, 0))
+        g["expect!/out_of_span"] = bench_expect(mk, spread_x(n))
     end
 
     # is_pure is peripheral and expensive (~28 ms at n = 256), so it gets one

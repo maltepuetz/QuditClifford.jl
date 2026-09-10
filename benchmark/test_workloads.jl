@@ -98,6 +98,34 @@ include(joinpath(@__DIR__, "workloads.jl"))
         @test_logs purification_trajectory(d = 2, n = 6, seed = 3)
     end
 
+    @testset "Spine operators hit the branches they claim" begin
+        # Each spine leaf is named for a measure! branch. If the operator stops
+        # selecting that branch the leaf silently measures something else, and
+        # nothing else in the suite would notice.
+        for n in (8, 64, 256), d in (2, 3)
+            i, j = spread_sites(n)
+            @test 1 <= i < j <= n
+            @test length(unique(spread_eight(n))) == 8
+            @test all(1 .<= spread_eight(n) .<= n)
+
+            tab = DestabilizerTableau(d, n; state = :product)
+
+            # noncommuting: X on a Z-basis site anticommutes with its stabilizer
+            @test any(mod(QuditClifford.commutation_col(tab.stab, k, spread_x(n)), d) != 0
+                      for k in 1:tab.m)
+            # deterministic: Z*Z is a product of two generators, so in span
+            @test expect_int!(tab, spread_z(n)) != -1
+            # ...and spread_x is not, which is what expect!/out_of_span needs
+            @test expect_int!(tab, spread_x(n)) == -1
+
+            # Hermitian at d = 2, so phase_policy cannot matter for these two
+            if d == 2
+                @test_logs measure!(DestabilizerTableau(2, n; state = :product),
+                                    spread_x(n); outcome = 0)
+            end
+        end
+    end
+
     @testset "Mid-circuit state is scrambled, pure and deterministic" begin
         for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
             a = scrambled_state(T, d, 16; seed = 11)

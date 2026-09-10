@@ -52,16 +52,26 @@ The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
 substantially and a blended workload hides which dominates), `expect!`,
 `canonicalize!`, `entropy/half`, and `reset!`.
 
+The `measure!` and `expect!` leaves use a weight-2 operator on qudits `n/4` and
+`3n/4` rather than something on qudit 1. Qudit 1 is a soft best case — first
+column, first pivot, and the smallest possible support for the destabilizer's
+sparse dual update — and moving off it costs about 1.8× more work per call,
+which also lifts the cheapest leaves further off the timer floor. `spread_x`
+(X⊗X, non-commuting on a Z-basis product state) and `spread_z` (Z⊗Z, a product
+of two generators and so in span) keep each leaf on the branch it is named
+for; `test_workloads.jl` asserts that for every n and d in the profiles.
+
 Everything in the spine starts from a freshly constructed tableau. That is the
 right setup for `construct` and `reset!`, and the worst case for
 `canonicalize!`, but it is not the regime most calls happen in. A separate
 `midcircuit` group repeats the state-sensitive operations — both `measure!`
 branches, `canonicalize!`, `expect!` and `entropy/half` — on a state put
 through four seeded brickwork layers of random two-site measurements. The gap
-is not cosmetic: a mid-circuit `expect!` costs ~22× the fresh-`:product` one on
-a `DestabilizerTableau`, and `entropy/half` on `:ghz` is ~26× a typical
-circuit state (`:ghz` has one fully delocalised generator, which makes the
-subsystem elimination dense).
+is not cosmetic — at n = 256, d = 3 on a `DestabilizerTableau`,
+`measure!/deterministic` goes 4.3 µs → 72 µs and `expect!` 3.5 µs → 13 µs. Two
+go the other way, because the fresh state is the *worst* case there:
+`canonicalize!` 49 ms → 2.1 ms, and `entropy/half` 3.0 ms → 99 µs (`:ghz` has
+one fully delocalised generator, which makes the subsystem elimination dense).
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /
