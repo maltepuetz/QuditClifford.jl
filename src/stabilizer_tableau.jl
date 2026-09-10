@@ -79,7 +79,7 @@ function StabilizerTableau(d::Int, n::Int;
 ) where {T<:InverseMod}
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     tab, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
-    return _build_stabilizer_tableau(d, n, m, tab, storephase, inversemod)
+    return _build_stabilizer_tableau(d, n, m, tab, storephase, inversemod; preset=true)
 end
 
 StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = StabilizerTableau(d, n; state=state, kwargs...)
@@ -109,7 +109,8 @@ function _build_stabilizer_tableau(
     m::Int,
     tableau_in::AbstractMatrix{<:Integer},
     storephase::Bool,
-    inversemod::T,
+    inversemod::T;
+    preset::Bool=false,
 ) where {T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
@@ -129,24 +130,29 @@ function _build_stabilizer_tableau(
         throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
     end
 
-    # Reduce entries mod d / mod phase modulus
-    @turbo for j in 1:n
-        for i in 1:(2n)
-            tab[i, j] = mod(tab[i, j], d)
-        end
-    end
-    if storephase
-        d_phase = phase_modulus(d)
-        prow = 2n + 1
+    # A preset filler already writes reduced entries into a zeroed matrix, so
+    # both passes below are pure overhead there -- and they are O(n^2) on a
+    # matrix holding O(n) nonzeros.
+    if !preset
+        # Reduce entries mod d / mod phase modulus
         @turbo for j in 1:n
-            tab[prow, j] = mod(tab[prow, j], d_phase)
+            for i in 1:(2n)
+                tab[i, j] = mod(tab[i, j], d)
+            end
         end
-    end
+        if storephase
+            d_phase = phase_modulus(d)
+            prow = 2n + 1
+            @turbo for j in 1:n
+                tab[prow, j] = mod(tab[prow, j], d_phase)
+            end
+        end
 
-    # Ensure unused columns are zeroed.
-    if m < n
-        @turbo for j in (m+1):n, i in axes(tab, 1)
-            tab[i, j] = 0
+        # Ensure unused columns are zeroed.
+        if m < n
+            @turbo for j in (m+1):n, i in axes(tab, 1)
+                tab[i, j] = 0
+            end
         end
     end
 
@@ -308,31 +314,13 @@ function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis
         return 0
     elseif state === :product
         _fill_product_state!(tab, d, n, basis_spec, storephase)
-        _reduce_tableau_mod!(tab, d, n, storephase)
         return n
     elseif state === :ghz
         _fill_ghz_state!(tab, d, n)
-        _reduce_tableau_mod!(tab, d, n, storephase)
         return n
     end
 
     throw(ArgumentError("Unknown preset state: $state."))
-end
-
-function _reduce_tableau_mod!(tab::Matrix{Int}, d::Int, n::Int, storephase::Bool)
-    @turbo for j in 1:n
-        for i in 1:(2n)
-            tab[i, j] = mod(tab[i, j], d)
-        end
-    end
-    if storephase
-        d_phase = phase_modulus(d)
-        prow = 2n + 1
-        @turbo for j in 1:n
-            tab[prow, j] = mod(tab[prow, j], d_phase)
-        end
-    end
-    return nothing
 end
 
 @inline function _set_product_column!(tab::Matrix{Int}, d::Int, n::Int, col::Int, basis::Symbol, storephase::Bool)
@@ -386,7 +374,7 @@ function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis, storephas
     throw(ArgumentError("basis must be a Symbol or a vector/tuple of Symbols."))
 end
 
-function _fill_ghz_state!(tab::Matrix{Int}, _d::Int, n::Int)
+function _fill_ghz_state!(tab::Matrix{Int}, d::Int, n::Int)
     n == 0 && return nothing
 
     # Generator 1: X1 X2 ... Xn
@@ -394,11 +382,12 @@ function _fill_ghz_state!(tab::Matrix{Int}, _d::Int, n::Int)
         tab[q, 1] = 1
     end
 
-    # Generators 2..n: Z_{i-1} Z_i^{-1}
+    # Generators 2..n: Z_{i-1} Z_i^{-1}. The inverse exponent is written
+    # already reduced (d-1, not -1) so the preset path needs no mod pass.
     @inbounds for col in 2:n
         i = col
         tab[n + (i - 1), col] = 1
-        tab[n + i, col] = -1
+        tab[n + i, col] = d - 1
     end
     return nothing
 end
