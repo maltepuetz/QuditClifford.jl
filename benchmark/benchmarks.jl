@@ -146,14 +146,20 @@ end
 
 function _budget(profile, keypath)
     profile == "smoke" && return 0.05
-    scale = profile == "full" ? 2.0 : 1.0
+    # full is a manual sweep with a 90 min ceiling and no PR loop waiting on
+    # it, so it can afford a wider slice than ci. At scale 2.0 its heaviest
+    # leaves bottomed out at 7 samples locally, which is ~2 on a CI runner --
+    # below the point where a median can reject a single outlier.
+    scale = profile == "full" ? 3.0 : 1.0
     # Dispatch on the top-level group, not a substring of the joined path:
     # "midcircuit" contains "circuit", and matching that handed the midcircuit
     # leaves the five-second slot meant for whole trajectories.
     group = first(keypath)
     joined = join(keypath, "/")
 
-    group == "circuit" && return 5.0 * scale
+    # Whole trajectories: ~1.6 s per sample for purification at n = 64, so
+    # these need an absolute budget rather than a multiple of the ci one.
+    group == "circuit" && return profile == "full" ? 30.0 : 5.0
 
     # canonicalize! from a cold :ghz tableau, and :ghz construction itself, are
     # the expensive leaves: ~25 ms (Stab) and ~48-52 ms (Destab) at n = 256,
