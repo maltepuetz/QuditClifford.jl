@@ -105,6 +105,14 @@ function rank_subsystem_cols!(
     )
 end
 
+# Column-wise Gaussian elimination over F_d; returns the number of pivots.
+#
+# Because only that count is returned, the elimination runs forwards only. `A`
+# is therefore left in column echelon form and **not** in RCEF: pivot rows keep
+# whatever entries they had in earlier columns. Do not read a decomposition off
+# it. (`_canonicalize_tableau!` does need the reduced form, since
+# `coeffs_from_generators!` reads coefficients from pivot rows -- that is a
+# separate implementation and this shortcut must not be carried over to it.)
 function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMatrix
     n, m = size(A)
 
@@ -136,9 +144,10 @@ function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMa
             A[i, c] = mod(A[i, c] * α, d)
         end
 
-        # eliminate row r in every other column
-        for jj in axes(A, 2)
-            jj == c && continue
+        # Eliminate row r from the columns still to be processed. That is what
+        # keeps the pivot count honest; earlier columns are never read again,
+        # so reducing them too would only cost time.
+        for jj in (c+1):m
             β = A[r, jj]
             β == 0 && continue
             @inbounds @simd for i in axes(A, 1)

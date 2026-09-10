@@ -296,7 +296,8 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     g["canonicalize!"] = @benchmarkable(
         canonicalize!($tab), setup = (restore!($snap)), evals = 1)
 
-    # Read-only, so they can share the scrambled tableau with no per-sample setup.
+    # Read-only, so they can share one scrambled tableau with no per-sample
+    # setup. Canonicalized up front for the reason in `bench_expect`.
     let ro = scrambled_state(T, d, n; seed = seed)
         canonicalize!(ro)
         loc = spread_z(n)
@@ -305,6 +306,23 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
         dense = in_span_operator(ro)
         expect!(ro, dense)
         g["expect!/in_span"] = @benchmarkable expect!($ro, $dense)
+    end
+
+    # entanglement_entropy gets its OWN tableau, deliberately NOT canonicalized.
+    # Unlike expect!, it never canonicalizes -- it reads tab.stab straight into
+    # the workspace -- so a caller reaching it after a run of measure! has
+    # iscanonical == false, and how much the elimination in rank_fp_cols! has to
+    # do depends entirely on how close the generators already are to echelon
+    # form. Sharing the canonicalized tableau above measured a state no caller is
+    # in: at n = 256 the restricted generator matrix of a dirty
+    # DestabilizerTableau needs 424 eliminations against 2 canonical, so the leaf
+    # understated the real cost and was nearly blind to changes in the kernel.
+    #
+    # A StabilizerTableau barely moves either way, and that is a real asymmetry
+    # rather than a flaw here: `coeffs_from_generators!` canonicalizes it on
+    # every commuting measurement, so it ends a circuit near echelon form
+    # already, carrying a stale iscanonical == false.
+    let ro = scrambled_state(T, d, n; seed = seed)
         g["entropy/half"] = @benchmarkable entanglement_entropy($ro, $(collect(1:(n ÷ 2))))
     end
 

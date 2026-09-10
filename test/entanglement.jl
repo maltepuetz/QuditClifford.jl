@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+using Random
 
 @testset "Entanglement entropy" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
@@ -217,6 +218,129 @@ using Test
                     @test entanglement_entropy(tab, [1, 2, 3, 4, 5]) == 1
                 end
             end
+        end
+    end
+end
+
+# `rank_fp_cols!` is the kernel behind both `entanglement_entropy` and
+# `is_pure`, and it returns only a pivot count -- so it is free to leave the
+# matrix in plain column echelon form rather than reduced. These tests pin the
+# count itself, against a reference written independently of the
+# implementation so the two can genuinely disagree.
+
+"""Rank over F_d by plain row reduction. Deliberately unclever and unrelated
+to the column-wise implementation under test."""
+function _reference_rank(A0::AbstractMatrix{<:Integer}, d::Int)
+    A = Matrix{Int}(mod.(A0, d))
+    nrows, ncols = size(A)
+    rank = 0
+    row = 1
+    for col in 1:ncols
+        row > nrows && break
+        piv = 0
+        for r in row:nrows
+            if A[r, col] != 0
+                piv = r
+                break
+            end
+        end
+        piv == 0 && continue
+        if piv != row
+            A[row, :], A[piv, :] = A[piv, :], A[row, :]
+        end
+        A[row, :] .= mod.(A[row, :] .* invmod(A[row, col], d), d)
+        for r in 1:nrows
+            r == row && continue
+            f = A[r, col]
+            f == 0 && continue
+            A[r, :] .= mod.(A[r, :] .- f .* A[row, :], d)
+        end
+        rank += 1
+        row += 1
+    end
+    return rank
+end
+
+qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.PrecomputedInvMod(d))
+
+@testset "rank_fp_cols! pivot count" begin
+    @testset "Structured matrices with known rank" begin
+        for d in (2, 3, 5, 7)
+            @test qc_rank(zeros(Int, 6, 4), d) == 0
+
+            unit = zeros(Int, 6, 4)
+            for j in 1:4
+                unit[j, j] = 1
+            end
+            @test qc_rank(unit, d) == 4
+
+            # A repeated column is not a new direction.
+            dup = copy(unit)
+            dup[:, 3] .= dup[:, 1]
+            @test qc_rank(dup, d) == 3
+
+            # Nor is a scalar multiple of one, which only shows up mod d.
+            scaled = zeros(Int, 4, 3)
+            scaled[1, 1] = 1
+            scaled[2, 1] = 1
+            scaled[:, 2] .= mod.((d - 1) .* scaled[:, 1], d)
+            @test qc_rank(scaled, d) == 1
+
+            # Wider than tall: rank is capped by the rows.
+            wide = zeros(Int, 2, 5)
+            wide[1, 1] = 1
+            wide[2, 2] = 1
+            wide[1, 4] = 1
+            @test qc_rank(wide, d) == 2
+        end
+    end
+
+    @testset "Random matrices agree with the reference" begin
+        rng = Random.MersenneTwister(20260910)
+        for d in (2, 3, 5, 7)
+            for (rows, cols) in ((1, 1), (4, 4), (8, 3), (3, 8), (12, 12), (16, 9))
+                for _ in 1:12
+                    A = rand(rng, 0:(d - 1), rows, cols)
+                    @test qc_rank(A, d) == _reference_rank(A, d)
+                end
+                # Rank-deficient by construction: an inner dimension below both
+                # sides, which dense random matrices almost never produce.
+                for inner in (1, min(rows, cols) ÷ 2)
+                    inner == 0 && continue
+                    for _ in 1:8
+                        B = rand(rng, 0:(d - 1), rows, inner)
+                        C = rand(rng, 0:(d - 1), inner, cols)
+                        A = mod.(B * C, d)
+                        @test qc_rank(A, d) == _reference_rank(A, d)
+                    end
+                end
+            end
+        end
+    end
+end
+
+# Every nonempty proper subsystem of a generalized GHZ state carries exactly
+# one unit of entropy, whatever d, n or which sites -- and the empty and full
+# subsystems carry none. `entanglement_entropy`'s own docstring advertises this
+# and nothing tested it.
+#
+# This covers the physics, not the rank kernel: it still passes if
+# `rank_fp_cols!` eliminates in the wrong direction. The kernel's guard is the
+# `rank_fp_cols! pivot count` testset above.
+@testset "GHZ entanglement entropy is one unit for any proper subsystem" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (2, 3, 4, 6, 8)
+        tab = TT(d, n; state=:ghz)
+
+        @test entanglement_entropy(tab, Int[]) == 0
+        @test entanglement_entropy(tab, collect(1:n)) == 0
+
+        subsystems = Any[[1], [n], collect(1:(n ÷ 2)), collect(1:(n - 1))]
+        n >= 4 && push!(subsystems, [1, 3], [2, n], collect(2:(n - 1)))
+
+        for sub in subsystems
+            isempty(sub) && continue
+            length(sub) == n && continue
+            @test entanglement_entropy(tab, sub) == 1
         end
     end
 end

@@ -155,6 +155,27 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
+    @testset "entropy benchmark measures a non-canonical tableau" begin
+        # entanglement_entropy never canonicalizes, so most of its cost is the
+        # elimination in rank_fp_cols! -- and how much there is to eliminate
+        # depends entirely on how close the generators already are to echelon
+        # form. The leaf therefore has to hold a dirty tableau, and has to stay
+        # dirty sample after sample.
+        for T in (StabilizerTableau, DestabilizerTableau)
+            tab = scrambled_state(T, 3, 16; seed = 1)
+            sub = collect(1:8)
+            @test !tab.iscanonical
+
+            S = entanglement_entropy(tab, sub)
+            @test !tab.iscanonical           # ...and every later sample sees the same state
+
+            before = copy(tab.stab)
+            canonicalize!(tab)
+            @test tab.stab != before         # the data really was non-canonical
+            @test entanglement_entropy(tab, sub) == S   # same answer either way
+        end
+    end
+
     @testset "Mid-circuit group builds and runs" begin
         for T in (StabilizerTableau, DestabilizerTableau)
             g = midcircuit_group(d = 3, n = 16, T = T)
