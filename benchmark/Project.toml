@@ -1,0 +1,13 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+QuditClifford = "fd55b3c1-6bf5-4acb-ac66-43b8ce88861c"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+
+# Stripped by benchpkg (it installs an explicit revision instead), but this is
+# what makes `julia --project=benchmark` measure the working tree on Julia >= 1.11.
+[sources]
+QuditClifford = {path = ".."}
+
+[compat]
+BenchmarkTools = "1"
+julia = "1.10"

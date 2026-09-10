@@ -1,0 +1,97 @@
+name: Benchmark
+on:
+  pull_request:
+    # The action hardcodes the comparison base to the repository's default
+    # branch, so a PR targeting anything else would silently compare against
+    # the wrong thing.
+    branches:
+      - main
+    # Docs-only and README-only PRs cannot change performance, and the job
+    # costs ~10 minutes. `benchmark/**.jl` rather than `benchmark/**` so that
+    # editing benchmark/README.md is free. The workflow file is listed so that
+    # a change to it -- including Dependabot's eventual action bump -- is
+    # exercised by the very PR that makes it.
+    paths:
+      - 'src/**'
+      - 'benchmark/**.jl'
+      - 'benchmark/Project.toml'
+      - 'Project.toml'
+      - '.github/workflows/Benchmark.yml'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Sweep profile'
+        type: choice
+        options:
+          - ci
+          - full
+        default: full
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+jobs:
+  benchmark:
+    name: ${{ inputs.profile || 'ci' }} suite vs ${{ github.event.repository.default_branch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ (inputs.profile == 'full') && 90 || 30 }}
+    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      actions: write
+      contents: read
+    env:
+      # Read by benchmark/benchmarks.jl to pick sizes. benchpkg inherits this
+      # step's environment and passes it to both revisions' runner processes,
+      # so the two columns always measure identical workloads.
+      QC_BENCH_PROFILE: ${{ inputs.profile || 'ci' }}
+    steps:
+      # Written before the action runs so the legend lands above the tables.
+      # Whoever reads a ratio is looking at this page, not at the repository.
+      - name: Explain the tables
+        run: |
+          {
+            echo "### How to read the tables below"
+            echo
+            echo "Left value column is \`${{ github.event.repository.default_branch }}\`, right is this branch."
+            echo "The ratio is **base / head, so a ratio _above_ 1 means this branch is _faster_.**"
+            echo
+            echo "| ratio | reading |"
+            echo "| --- | --- |"
+            echo "| 0.91 – 1.10 | noise. Ignore. |"
+            echo "| 1.10 – 1.25 or 0.80 – 0.91 | suggestive; reproduce locally first |"
+            echo "| > 1.25 or < 0.80 | real |"
+            echo "| any memory change | real — allocation counts are deterministic |"
+            echo
+            echo "**Judge groups of rows, not single rows.** A real regression moves every cell it reaches."
+            echo "In a null run of this suite (108 rows, nothing changed), 3 rows still landed outside the band"
+            echo "and 39 deviated from 1.00 by more than their own \`±\`, so the error bars do not bound the"
+            echo "scatter — the two revisions are separate builds and differ in layout and CPU state."
+            echo "Read the memory table first: allocation counts are deterministic."
+            echo
+            echo "Rationale and local reproduction: [\`benchmark/README.md\`](https://github.com/${{ github.repository }}/blob/main/benchmark/README.md)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: MilesCranmer/AirspeedVelocity.jl@action-v1
+        with:
+          julia-version: '1'
+          # Job summary rather than a PR comment: that keeps the plain
+          # `pull_request` trigger, so PR code never runs with a write-scoped
+          # token. Do not switch to pull_request_target without re-reading
+          # benchmark/README.md.
+          job-summary: 'true'
+          # Take the suite from THIS branch's checkout. Without it benchpkg
+          # downloads benchmark/benchmarks.jl from the default branch, which
+          # fails outright until this PR lands and, afterwards, would let the
+          # two revisions be measured by two different suites.
+          script: 'benchmark/benchmarks.jl'
+          # Explicit because github.event.pull_request.head.sha is empty on
+          # workflow_dispatch; without the fallback the A/B collapses to one
+          # revision and the ratio column silently disappears.
+          rev: '${{ github.event.repository.default_branch }},${{ github.event.pull_request.head.sha || github.sha }}'
+          mode: 'time,memory'
+          exeflags: '--threads=1'
+          # Tuning would pick `evals` independently for each revision, which
+          # makes the two columns less comparable, and costs several minutes.
+          # The suite sets its own per-leaf budget instead.
+          tune: 'false'

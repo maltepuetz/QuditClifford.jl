@@ -4,6 +4,7 @@
 /Manifest*.toml
 /docs/Manifest*.toml
 /test/Manifest*.toml
+/benchmark/Manifest*.toml
 /docs/build/
 /docs/node_modules/
 
