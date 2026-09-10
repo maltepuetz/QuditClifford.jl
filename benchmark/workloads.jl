@@ -20,10 +20,12 @@ tableau_bytes(tab) = Base.summarysize(tab)
     TableauSnapshot
 
 Everything a mutating operation can change about a tableau, saved so it can be
-put back. Restoring costs one O(n^2) `copyto!` instead of a fresh construction,
-which matters a lot: `DestabilizerTableau(3, 256; state = :ghz)` takes ~51 ms
-(`rebuild_destabilizers!` is O(n^3) and the GHZ generator matrix is its worst
-case), against ~0.3 ms for the `canonicalize!` it was only ever there to set up.
+put back. Restoring is one O(n^2) `copyto!`, ~0.3 ms at n = 256, where building
+the tableau afresh costs ~53 ms: `DestabilizerTableau(3, 256; state = :ghz)`
+hits the worst case of `rebuild_destabilizers!`, which is O(n^3). Setup runs
+inside BenchmarkTools' sample loop and counts against the time budget, so a
+53 ms setup would more than halve the sample count of the ~50 ms
+`canonicalize!` it exists to prepare.
 
 Fields mirror the mutable, semantically-meaningful state of both tableau types:
 `stab`, `destab`, `m`, `iscanonical` and the `xdotz_cache`. The remaining
@@ -57,7 +59,7 @@ end
 
 # ------------------------------------------------------------ leaf builders
 #
-# Each returns one `Benchmark`. `micro_group` assembles the nine-operation
+# Each returns one `Benchmark`. `micro_group` assembles the eight-operation
 # spine from them; the probes call them individually with one axis flipped.
 #
 # `mk` is a thunk `state -> tableau`, closing over d, n, T, storephase and
@@ -108,8 +110,9 @@ explicit instead of an artefact of sample ordering.
 
 Note this is the *cheap* in-span query: on a freshly built `:product` state a
 weight-1 Pauli decomposes into a single generator, so almost nothing
-accumulates. On a mid-circuit state the same call costs ~22x more on a
-`DestabilizerTableau`. `midcircuit_group` covers that regime.
+accumulates. On a `DestabilizerTableau` at n = 256 this is 2.0 us, against
+9.1 us for the same weight-1 call on a mid-circuit state and 40 us for a dense
+in-span operator there. `midcircuit_group` covers both.
 """
 function bench_expect(mk, op; state = :product)
     tab = mk(state)
@@ -162,7 +165,11 @@ function micro_group(; d::Int, n::Int, T,
     # generator is replaced.
     g["measure!/noncommuting"] = bench_measure(mk, :product, SinglePauli(1, 1, 0))
     # Z on qudit 1 IS a stabilizer: the state is unchanged and the cost is the
-    # span decomposition -- plus, on a StabilizerTableau, a full canonicalize.
+    # span decomposition. On a StabilizerTableau that includes a canonicalize
+    # (229 us here vs 2.6 us on a Destabilizer), but only the collapsed O(n*m)
+    # one -- a :product tableau is already in RCEF. The full canonicalize is
+    # measured by the canonicalize! leaf, and the mid-circuit cost by
+    # midcircuit_group.
     g["measure!/deterministic"] = bench_measure(mk, :product, SinglePauli(1, 0, 1))
     # From m = 0 everything commutes and lies outside the span, so m grows.
     g["measure!/append"] = bench_measure(mk, :mixed, SinglePauli(1, 0, 1))
@@ -182,9 +189,10 @@ end
 # setup for construct/reset!, and it is the worst case for canonicalize!, but it
 # is not the regime a user is usually in: by the time they call expect! or
 # entanglement_entropy the state has been through a circuit. The difference is
-# not small -- a mid-circuit `expect!` costs ~22x the fresh-`:product` one on a
-# DestabilizerTableau, because the span decomposition actually has coefficients
-# to accumulate instead of exactly one.
+# not small. On a DestabilizerTableau at n = 256, against the fresh-state leaf:
+# measure!/deterministic 2.6 us -> 77 us, expect! 2.0 us -> 9.1 us, and
+# canonicalize! 50 ms -> 2.2 ms (the mid-circuit tableau is nearly canonical
+# already, so this one goes the other way).
 
 """
     scrambled_state(T, d, n; layers = 4, seed)
