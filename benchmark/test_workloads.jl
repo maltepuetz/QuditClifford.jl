@@ -98,6 +98,46 @@ include(joinpath(@__DIR__, "workloads.jl"))
         @test_logs purification_trajectory(d = 2, n = 6, seed = 3)
     end
 
+    @testset "Mid-circuit state is scrambled, pure and deterministic" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            a = scrambled_state(T, d, 16; seed = 11)
+            b = scrambled_state(T, d, 16; seed = 11)
+            @test a.stab == b.stab                     # deterministic
+            @test a.stab != T(d, 16; state = :product).stab   # actually scrambled
+            @test a.m == 16                            # stayed pure, so measure! cannot
+            @test is_pure(a)                           # hit the m == n append error
+            @test scrambled_state(T, d, 16; seed = 12).stab != a.stab
+        end
+    end
+
+    @testset "Mid-circuit operators hit the branches they claim" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            tab = scrambled_state(T, d, 16; seed = 11)
+
+            # in_span_operator is one of the generators, so expect! must find
+            # it (-1 means <P> = 0, i.e. not in the stabilizer group).
+            @test expect_int!(tab, in_span_operator(tab)) != -1
+
+            # first_anticommuting must genuinely anticommute, or measure! takes
+            # the commuting branch and throws once m == n.
+            anti = first_anticommuting(tab, [SinglePauli(i, 1, 0) for i in 1:16])
+            @test any(mod(QuditClifford.commutation_col(tab.stab, j, anti), d) != 0
+                      for j in 1:tab.m)
+            @test_throws ErrorException first_anticommuting(tab, SinglePauli[])
+        end
+    end
+
+    @testset "Mid-circuit group builds and runs" begin
+        for T in (StabilizerTableau, DestabilizerTableau)
+            g = midcircuit_group(d = 3, n = 16, T = T)
+            @test length(keys(g)) == 6
+            # Actually execute every leaf: @benchmarkable bodies are quoted, so
+            # a broken one is invisible until something runs it. This is also
+            # what proves the two measure! leaves do not throw.
+            run(g; samples = 1, evals = 1, seconds = 0.05)
+        end
+    end
+
     @testset "Destabilizer memory is 3x stabilizer" begin
         for n in (128, 512)
             rs = tableau_bytes(StabilizerTableau(2, n; state = :product))

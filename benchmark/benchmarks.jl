@@ -41,6 +41,16 @@ for T in TYPES, d in CONFIG.ds, n in CONFIG.ns
     SUITE["micro"]["$(nameof(T))/d=$d/n=$n"] = micro_group(; d = d, n = n, T = T)
 end
 
+# ------------------------------------------------------------- mid-circuit
+# The state-sensitive operations again, but on a state produced by a circuit
+# rather than a constructor. Large n only: this is about the regime, not the
+# scaling, and the spine already covers the scaling. See midcircuit_group.
+
+for T in TYPES, d in CONFIG.ds
+    n = last(CONFIG.ns)
+    SUITE["midcircuit"]["$(nameof(T))/d=$d/n=$n"] = midcircuit_group(; d = d, n = n, T = T)
+end
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in
@@ -129,20 +139,27 @@ end
 
 function _budget(profile, keypath)
     profile == "smoke" && return 0.05
-    joined = join(keypath, "/")
     scale = profile == "full" ? 2.0 : 1.0
+    # Dispatch on the top-level group, not a substring of the joined path:
+    # "midcircuit" contains "circuit", and matching that handed the midcircuit
+    # leaves the five-second slot meant for whole trajectories.
+    group = first(keypath)
+    joined = join(keypath, "/")
 
-    # canonicalize! from genuinely non-canonical data, and :ghz construction,
-    # are the expensive leaves: ~25 ms (Stab) and ~48-52 ms (Destab) at n = 256,
-    # against well under 1 ms for everything else in the cell. They need a much
+    group == "circuit" && return 5.0 * scale
+
+    # canonicalize! from a cold :ghz tableau, and :ghz construction itself, are
+    # the expensive leaves: ~25 ms (Stab) and ~48-52 ms (Destab) at n = 256,
+    # against well under 1 ms for everything else in the cell. They need a
     # bigger slice to clear a usable sample count on a CI runner 2-3x slower
-    # than a dev machine. (Measuring canonicalize! by re-running it on the same
-    # tableau reports ~0.2 ms -- that is the collapsed path, not the real cost.)
-    heavy = (occursin("canonicalize!", joined) || occursin("construct/ghz", joined)) &&
-            !occursin("n=64", joined)
+    # than a dev machine. The midcircuit canonicalize! starts from a nearly
+    # canonical tableau and is ~20x cheaper, so it stays in the default tier.
+    cold = group == "micro" || group == "probe"
+    if cold && (occursin("canonicalize!", joined) || occursin("construct/ghz", joined)) &&
+       !occursin("n=64", joined)
+        return 3.0 * scale
+    end
 
-    occursin("circuit", joined) && return 5.0 * scale
-    heavy && return 3.0 * scale
     occursin("is_pure", joined) && return 1.0 * scale
     occursin("n=64", joined) && return 0.2 * scale
     return 0.4 * scale

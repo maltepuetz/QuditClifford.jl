@@ -40,9 +40,9 @@ Reported values are **medians**, not minima.
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 51 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3 | 83 | ~50 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 217 | ~5 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `smoke` | n = 8 | 2, 3 | 75 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3 | 107 | ~60 s | the pull-request job |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 265 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
 
 ## Coverage
 
@@ -51,6 +51,17 @@ The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
 (non-commuting, deterministic, append — separated because their costs differ
 substantially and a blended workload hides which dominates), `expect!`,
 `canonicalize!`, `entropy/half`, and `reset!`.
+
+Everything in the spine starts from a freshly constructed tableau. That is the
+right setup for `construct` and `reset!`, and the worst case for
+`canonicalize!`, but it is not the regime most calls happen in. A separate
+`midcircuit` group repeats the state-sensitive operations — both `measure!`
+branches, `canonicalize!`, `expect!` and `entropy/half` — on a state put
+through four seeded brickwork layers of random two-site measurements. The gap
+is not cosmetic: a mid-circuit `expect!` costs ~22× the fresh-`:product` one on
+a `DestabilizerTableau`, and `entropy/half` on `:ghz` is ~26× a typical
+circuit state (`:ghz` has one fully delocalised generator, which makes the
+subsystem elimination dense).
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /
