@@ -318,3 +318,29 @@ qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.Precompute
         end
     end
 end
+
+# Every nonempty proper subsystem of a generalized GHZ state carries exactly
+# one unit of entropy, whatever d, n or which sites -- and the empty and full
+# subsystems carry none. `entanglement_entropy`'s own docstring advertises this
+# and nothing tested it.
+#
+# This covers the physics, not the rank kernel: it still passes if
+# `rank_fp_cols!` eliminates in the wrong direction. The kernel's guard is the
+# `rank_fp_cols! pivot count` testset above.
+@testset "GHZ entanglement entropy is one unit for any proper subsystem" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (2, 3, 4, 6, 8)
+        tab = TT(d, n; state=:ghz)
+
+        @test entanglement_entropy(tab, Int[]) == 0
+        @test entanglement_entropy(tab, collect(1:n)) == 0
+
+        subsystems = Any[[1], [n], collect(1:(n ÷ 2)), collect(1:(n - 1))]
+        n >= 4 && push!(subsystems, [1, 3], [2, n], collect(2:(n - 1)))
+
+        for sub in subsystems
+            isempty(sub) && continue
+            length(sub) == n && continue
+            @test entanglement_entropy(tab, sub) == 1
+        end
+    end
+end
