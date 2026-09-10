@@ -247,3 +247,35 @@ end
         end
     end
 end
+
+# Preset states get their dual basis and x·z cache written directly instead of
+# through the generic O(n^3) rebuild. Three properties pin that: duality
+# itself; the cache checked against its definition rather than against itself;
+# and equality with what the generic rebuild computes, so that changing the
+# dual basis has to be a deliberate act rather than a silent one.
+@testset "Preset dual basis and x·z cache" begin
+    for d in (2, 3, 5), n in (1, 2, 3, 5)
+        specs = Any[(:ghz, :Z), (:product, :X), (:product, :Y), (:product, :Z)]
+        n >= 3 && push!(specs, (:product, [:X, :Y, :Z][mod1.(1:n, 3)]))
+
+        for (state, basis) in specs
+            fresh = DestabilizerTableau(d, n; state=state, basis=basis)
+            after_reset = reset!(DestabilizerTableau(d, n; state=:mixed);
+                                 state=state, basis=basis)
+
+            for tab in (fresh, after_reset)
+                @test tab.m == n
+                _assert_duality(tab)
+
+                for j in 1:tab.m
+                    @test tab.xdotz_cache[j] ==
+                          QuditClifford.dot_xz_col(tab.stab, n, j, d)
+                end
+
+                direct = copy(tab.destab)
+                QuditClifford.rebuild_destabilizers!(tab)
+                @test tab.destab == direct
+            end
+        end
+    end
+end

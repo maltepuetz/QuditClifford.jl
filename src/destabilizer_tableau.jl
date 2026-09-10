@@ -111,7 +111,8 @@ function DestabilizerTableau(d::Int, n::Int;
 ) where {T<:InverseMod}
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     tab, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
-    return _build_destabilizer_tableau(d, n, m, tab, storephase, inversemod)
+    return _build_destabilizer_tableau(d, n, m, tab, storephase, inversemod;
+                                       preset_state=state_norm, preset_basis=basis_spec)
 end
 
 DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = DestabilizerTableau(d, n; state=state, kwargs...)
@@ -141,7 +142,9 @@ function _build_destabilizer_tableau(
     m::Int,
     stab_in::AbstractMatrix{<:Integer},
     storephase::Bool,
-    inversemod::T,
+    inversemod::T;
+    preset_state::Union{Symbol,Nothing}=nothing,
+    preset_basis=nothing,
 ) where {T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
@@ -161,24 +164,29 @@ function _build_destabilizer_tableau(
         throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
     end
 
-    # Reduce entries mod d / mod phase modulus
-    @turbo for j in 1:n
-        for i in 1:(2n)
-            stab[i, j] = mod(stab[i, j], d)
-        end
-    end
-    if storephase
-        d_phase = phase_modulus(d)
-        prow = 2n + 1
+    # A preset filler already writes reduced entries into a zeroed matrix, so
+    # both passes below are pure overhead there -- and they are O(n^2) on a
+    # matrix holding O(n) nonzeros.
+    if preset_state === nothing
+        # Reduce entries mod d / mod phase modulus
         @turbo for j in 1:n
-            stab[prow, j] = mod(stab[prow, j], d_phase)
+            for i in 1:(2n)
+                stab[i, j] = mod(stab[i, j], d)
+            end
         end
-    end
+        if storephase
+            d_phase = phase_modulus(d)
+            prow = 2n + 1
+            @turbo for j in 1:n
+                stab[prow, j] = mod(stab[prow, j], d_phase)
+            end
+        end
 
-    # Ensure unused columns are zeroed.
-    if m < n
-        @turbo for j in (m+1):n, i in axes(stab, 1)
-            stab[i, j] = 0
+        # Ensure unused columns are zeroed.
+        if m < n
+            @turbo for j in (m+1):n, i in axes(stab, 1)
+                stab[i, j] = 0
+            end
         end
     end
 
@@ -206,8 +214,12 @@ function _build_destabilizer_tableau(
         zeros(Int, n),
     )
 
-    rebuild_destabilizers!(tab)
-    _recompute_xdotz_cache!(tab)
+    if preset_state === nothing
+        rebuild_destabilizers!(tab)
+        _recompute_xdotz_cache!(tab)
+    else
+        _preset_destabilizers!(tab, preset_state, preset_basis)
+    end
 
     return tab
 end
@@ -373,6 +385,58 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     return destab
 end
 
+"""
+Fill `tab.destab` and `tab.xdotz_cache` with the closed-form duals of a preset
+state, in place of the generic O(n^3) `rebuild_destabilizers!`.
+
+Preset stabilizers are supported on a single qudit each (`:product`) or form a
+chain (`:ghz`), so their duals can be written down:
+
+  product, column j:   `:Z` -> `X_j`,  `:X` -> `Z_j^(d-1)`,  `:Y` -> `X_j`
+  ghz:                 `D_1 = Z_1^(d-1)`,  `D_j = X_1...X_{j-1}` for `j >= 2`
+
+Each satisfies the duality relation `<D_j, S_k> = delta_jk` directly. `:mixed`
+has no active generators, so its dual block stays zero.
+"""
+function _preset_destabilizers!(tab::DestabilizerTableau, state::Symbol, basis_spec)
+    n = tab.n
+    d = tab.d
+    destab = tab.destab
+    cache = tab.xdotz_cache
+
+    fill!(destab, 0)
+    fill!(cache, 0)
+
+    if state === :mixed
+        return nothing
+    elseif state === :ghz
+        n == 0 && return nothing
+        destab[n+1, 1] = d - 1              # D_1 = Z_1^(d-1)
+        @inbounds for j in 2:n, q in 1:(j-1)
+            destab[q, j] = 1                # D_j = X_1 ... X_{j-1}
+        end
+        return nothing                      # every GHZ generator has x.z = 0
+    elseif state === :product
+        @inbounds for j in 1:n
+            b = _preset_basis_at(basis_spec, j)
+            if b === :X
+                destab[n+j, j] = d - 1      # D_j = Z_j^(d-1)
+            else
+                destab[j, j] = 1            # :Z and :Y both take D_j = X_j
+                b === :Y && (cache[j] = 1)  # x.z = 1 only in the Y basis
+            end
+        end
+        return nothing
+    end
+
+    throw(ArgumentError("Unknown preset state: $state."))
+end
+
+@inline _preset_basis_at(basis::Symbol, ::Int) = _canonical_basis_symbol(basis)
+@inline _preset_basis_at(basis::AbstractVector{<:Symbol}, j::Int) =
+    _canonical_basis_symbol(basis[j])
+@inline _preset_basis_at(basis::Tuple, j::Int) = _canonical_basis_symbol(basis[j])
+
 #############################
 # Cache maintenance helpers #
 #############################
@@ -470,8 +534,7 @@ function reset!(tab::DestabilizerTableau; state::Symbol=:mixed, basis=:Z)
     m = _preset_tableau!(tab.stab, tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
-    rebuild_destabilizers!(tab)
-    _recompute_xdotz_cache!(tab)
+    _preset_destabilizers!(tab, state_norm, basis_spec)
     return tab
 end
 

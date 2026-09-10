@@ -251,3 +251,31 @@ end
     destab_large_text = sprint(show, DestabilizerTableau(2, 30; state=:mixed))
     @test occursin("too large to display", destab_large_text)
 end
+
+# Preset construction writes values that are already reduced, so it needs no
+# separate mod pass over the (2n + storephase) × n matrix. Nothing else
+# guarantees that: the GHZ generators are the natural place to write a literal
+# -1, and only an assertion like this catches it once the pass is gone.
+@testset "Preset tableaux are built already reduced" begin
+    for TT in (StabilizerTableau, DestabilizerTableau),
+        d in (2, 3, 5, 7), n in (1, 3, 4), storephase in (true, false)
+
+        specs = Any[(:mixed, :Z), (:ghz, :Z),
+                    (:product, :X), (:product, :Y), (:product, :Z)]
+        n >= 3 && push!(specs, (:product, [:X, :Y, :Z][mod1.(1:n, 3)]))
+
+        for (state, basis) in specs
+            fresh = TT(d, n; state=state, basis=basis, storephase=storephase)
+            after_reset = reset!(TT(d, n; state=:mixed, storephase=storephase);
+                                 state=state, basis=basis)
+
+            for tab in (fresh, after_reset)
+                @test all(v -> 0 <= v < d, @view tab.stab[1:(2n), :])
+                if storephase
+                    dphase = QuditClifford.phase_modulus(d)
+                    @test all(v -> 0 <= v < dphase, @view tab.stab[2n + 1, :])
+                end
+            end
+        end
+    end
+end
