@@ -279,3 +279,66 @@ end
         end
     end
 end
+
+# The dual column is rescaled by the pivot when the stabilizer column is scaled
+# by its inverse. Every other canonicalization test here happens to have
+# pivot == 1 -- forced at d = 2, accidental at d = 3 -- which makes that
+# rescaling an identity operation and leaves the site unguarded. This one uses
+# Z_1^2, so the pivot is 2 and inv(2, 3) = 2.
+@testset "Canonicalization rescales duals when the pivot is not 1" begin
+    raw = zeros(Int, 5, 2)
+    raw[3, 1] = 2      # S_1 = Z_1^2  -> pivot 2
+    raw[3, 2] = 1      # S_2 = Z_1 Z_2^2
+    raw[4, 2] = 2
+
+    tab = DestabilizerTableau(3, raw; m=2, storephase=true)
+    _assert_duality(tab)
+
+    canonicalize!(tab)
+
+    @test tab.iscanonical
+    _assert_duality(tab)
+end
+
+# The commuting-append branch of measure! (case 3: commutes, not in span) with
+# a projection that actually has work to do. Every other destabilizer circuit
+# test starts from a pure state with m == n, where this branch cannot fire, and
+# the two mixed-state tests that do reach it are degenerate: at d = 2 the sign
+# of the projection does not matter and inv(beta) is always 1, and at n = 1,
+# m = 0 both loops have zero iterations.
+#
+# S_1 = X_1 X_2^e commutes with X_1^a but does not span it, so measuring X_1^a
+# appends. The dual constructed for the residual is Z_1, which does NOT commute
+# with S_1 -- that is what makes the projection loop run -- and beta != 1 for
+# a != 1, which is what makes the inv(beta) scaling observable.
+@testset "Commuting append with a non-trivial projection at odd d" begin
+    for e in (1, 2), a in (1, 2)
+        n = 2
+        raw = zeros(Int, 2n + 1, n)
+        raw[1, 1] = 1
+        raw[2, 1] = e                       # S_1 = X_1 X_2^e
+
+        tab = DestabilizerTableau(3, raw; m=1, storephase=true)
+        _assert_duality(tab)
+
+        measure!(tab, SinglePauli(1, a, 0); outcome=0, phase_policy=1)
+
+        @test tab.m == 2
+        _assert_duality(tab)
+    end
+
+    # Two existing generators, so the projection and the re-orthogonalization
+    # loops both run more than once.
+    n = 3
+    raw = zeros(Int, 2n + 1, n)
+    raw[1, 1] = 1; raw[2, 1] = 1            # S_1 = X_1 X_2
+    raw[2, 2] = 1; raw[3, 2] = 2            # S_2 = X_2 X_3^2
+
+    tab = DestabilizerTableau(3, raw; m=2, storephase=true)
+    _assert_duality(tab)
+
+    measure!(tab, SinglePauli(1, 2, 0); outcome=0, phase_policy=1)
+
+    @test tab.m == 3
+    _assert_duality(tab)
+end
