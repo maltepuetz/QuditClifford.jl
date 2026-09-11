@@ -85,10 +85,17 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 | `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 265 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
-that takes the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
+that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
 multiply-free tiers exclusively. Without a `d = 5` row, no pull-request
 benchmark exercises that tier, and a Barrett guard that began rejecting every
 `d` would show up as no change rather than as a regression.
+
+Only the **mid-circuit** `d = 5` leaves actually reach it. Every `micro` leaf
+starts from a constructor, whose tableau entries are just `0`, `1` and `d-1`, so
+its multipliers are always `1` or `d-1` and take the multiply-free tiers at every
+`d` -- the `:ghz` `canonicalize!` rows make zero Barrett calls even at `d = 131`.
+The mid-circuit leaves run a scrambling circuit first and hold general residues,
+which is what puts roughly half their calls on the Barrett path.
 
 ## Coverage
 
