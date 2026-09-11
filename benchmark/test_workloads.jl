@@ -176,6 +176,75 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
+    @testset "Fallback-prime probe actually reaches the fallback tier" begin
+        # The probe exists to cover the divide-twice fallback in src/modular.jl.
+        # Choosing a prime the Barrett guard rejects is necessary but NOT
+        # sufficient: a :ghz tableau holds only 0, 1 and d-1, so every
+        # elimination multiplier is d-1 and it takes the multiply-free tier at
+        # any prime. The first version of this probe did exactly that and
+        # measured nothing it claimed to. So assert the tier directly.
+        d = 131
+        @test !QuditClifford._barrett_valid(d)
+
+        # Replay the pivot scan of _canonicalize_tableau! to collect the
+        # elimination multipliers. Only the scan is duplicated; the replay is
+        # then checked against the real canonicalize! below, so it cannot drift
+        # away from the implementation without this test failing.
+        function elimination_multipliers(tab)
+            A = copy(tab.stab)[1:(2 * tab.n), :]
+            d, n, m = tab.d, tab.n, tab.m
+            mults = Int[]
+            r, c = 1, 1
+            while r <= 2n && c <= m
+                j = c
+                while j <= m && A[r, j] == 0
+                    j += 1
+                end
+                if j > m
+                    r += 1
+                    continue
+                end
+                j != c && (A[:, [c, j]] = A[:, [j, c]])
+                α = invmod(A[r, c], d)
+                for i in 1:(2n)
+                    A[i, c] = mod(A[i, c] * α, d)
+                end
+                for jj in 1:m
+                    jj == c && continue
+                    β = A[r, jj]
+                    β == 0 && continue
+                    push!(mults, β)
+                    for i in 1:(2n)
+                        A[i, jj] = mod(A[i, jj] - β * A[i, c], d)
+                    end
+                end
+                r += 1
+                c += 1
+            end
+            return mults, A
+        end
+
+        for nn in (16, 64)
+            tab = fallback_probe_state(nn; d = d)   # the exact probe fixture
+            mults, A = elimination_multipliers(tab)
+
+            # the replay is faithful: same XZ block as the real thing
+            ref = deepcopy(tab)
+            canonicalize!(ref)
+            @test A[:, 1:ref.m] == ref.stab[1:(2 * ref.n), 1:ref.m]
+
+            # and it reaches the general tier -- not just 0, 1, d-1
+            general = count(β -> β ∉ (0, 1, d - 1), mults)
+            @test !isempty(mults)
+            @test general > 0
+
+            # the contrast that makes the point: :ghz never does, at any prime
+            ghz_mults, _ = elimination_multipliers(DestabilizerTableau(d, nn; state = :ghz))
+            @test all(β -> β in (0, 1, d - 1), ghz_mults)
+            @test count(β -> β ∉ (0, 1, d - 1), ghz_mults) == 0
+        end
+    end
+
     @testset "Mid-circuit group builds and runs" begin
         for T in (StabilizerTableau, DestabilizerTableau)
             g = midcircuit_group(d = 3, n = 16, T = T)

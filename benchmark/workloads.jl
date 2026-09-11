@@ -135,6 +135,34 @@ function bench_canonicalize(mk)
 end
 
 """
+The tableau behind the `fallback-prime` probe, and the single definition both
+`benchmarks.jl` and `test_workloads.jl` refer to, so the thing benchmarked and
+the thing asserted cannot drift apart.
+
+`d = 131` is rejected by the Barrett guard, which is necessary for the probe
+but not sufficient: a constructor-built tableau holds only `0`, `1` and `d-1`,
+so every elimination multiplier is `d-1` and it takes the multiply-free tier
+at any prime. Scrambling is what puts general residues in.
+"""
+fallback_probe_state(n::Int; d::Int = 131) = scrambled_state(DestabilizerTableau, d, n)
+
+"""
+`canonicalize!` on an already-built tableau, restored from a snapshot before
+every sample exactly as `bench_canonicalize` does.
+
+`bench_canonicalize` always builds `:ghz`, whose generators are `Z_{i-1}
+Z_i^{d-1}`, so the only nonzero entries are `1` and `d-1`, every pivot is `1`
+and every elimination multiplier is `d-1`. That takes the multiply-free tiers
+of `src/modular.jl` at *any* `d` -- measured: zero general multipliers at
+d = 131 -- so a `:ghz` leaf cannot exercise the Barrett or fallback paths no
+matter which prime it is given. Pass a scrambled tableau to reach them.
+"""
+function bench_canonicalize_state(tab)
+    snap = snapshot(tab)
+    return @benchmarkable(canonicalize!($tab), setup = (restore!($snap)), evals = 1)
+end
+
+"""
 `expect!` on a shared, pre-canonicalized tableau -- deliberately the warm span
 pipeline. A fresh `StabilizerTableau` is dirty, so its first `expect!` pays a
 canonicalize and later ones do not; canonicalizing up front makes that choice

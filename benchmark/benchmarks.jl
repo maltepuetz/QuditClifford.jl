@@ -84,15 +84,19 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     end
 
     # A prime the Barrett guard REJECTS, so these rows run the divide-twice
-    # fallback in src/modular.jl. Nothing else in any profile does: d = 2 and 3
-    # take the multiply-free tiers and d = 5 takes Barrett, so without this the
-    # fallback path has no benchmark coverage at all and could regress unseen.
-    # Small n as well as the probe size, because the fallback's per-call tier
-    # dispatch costs a fixed amount that only shows up on short columns.
+    # fallback in src/modular.jl. Nothing else in any profile does, so without
+    # them the fallback has no benchmark coverage at all and could regress
+    # unseen. Small n as well as the probe size, because the fallback's
+    # per-call tier dispatch is a fixed cost that only shows on short columns.
     let d_fb = 131
         for nn in (16, n)
-            mk = tableau_maker(DestabilizerTableau, d_fb, nn)
-            g["fallback-prime/d=$d_fb/n=$nn/canonicalize!"] = bench_canonicalize(mk)
+            # scrambled, NOT :ghz: a constructor-built tableau holds only 0, 1
+            # and d-1, so all its elimination multipliers are d-1 and it takes
+            # the multiply-free tiers at every prime. Scrambling puts general
+            # residues in, which is what actually reaches the fallback.
+            # `test_workloads.jl` asserts that it does.
+            g["fallback-prime/d=$d_fb/n=$nn/canonicalize!"] =
+                bench_canonicalize_state(fallback_probe_state(nn; d = d_fb))
         end
     end
 
