@@ -163,9 +163,9 @@ function mul_col_by_workspace_power!(
     end
 
     # Now update XZ: col <- col + a*ws  (mod d)
-    @inbounds @simd for i in 1:nrows_block
-        stab[i, col] = mod(stab[i, col] + mod(a * genws[i], d), d)
-    end
+    # genws is a separate array from stab, and its contents were copied out of
+    # a tableau column, so they are reduced.
+    addmul_mod!(view(stab, 1:nrows_block, col), view(genws, 1:nrows_block), a, d)
 
     return nothing
 end
@@ -220,9 +220,8 @@ end
 
     # noncommuting branch: update destabilizers
     inv_comm0 = tab.inversemod(comm0, d)
-    @inbounds for r in 1:(2n)
-        tab.destab[r, pivot] = mod(inv_comm0 * tab.generator_workspace[r], d)
-    end
+    mulcopy_mod!(view(tab.destab, 1:(2n), pivot),
+                 view(tab.generator_workspace, 1:(2n)), inv_comm0, d)
 
     # Every dual must stay orthogonal to the newly written generator, which now
     # holds the measured operator. Pairing each dual against it over all 2n rows
@@ -238,9 +237,8 @@ end
         j == pivot && continue
         t = mod(_symplectic_col_col_support(tab.destab, j, tab.stab, pivot, n, supp, nsupp), d)
         t == 0 && continue
-        @inbounds @simd for r in 1:(2n)
-            tab.destab[r, j] = mod(tab.destab[r, j] - mod(t * tab.destab[r, pivot], d), d)
-        end
+        # j != pivot (guarded above), so these are disjoint columns of destab.
+        submul_mod!(view(tab.destab, 1:(2n), j), view(tab.destab, 1:(2n), pivot), t, d)
     end
 
     return nothing
@@ -291,9 +289,8 @@ end
     @inbounds for j in 1:m
         t = mod(_symplectic_vec_col(v, tab.stab, j, n), d)
         t == 0 && continue
-        @inbounds @simd for r in 1:(2n)
-            v[r] = mod(v[r] - mod(t * tab.destab[r, j], d), d)
-        end
+        # v views generator_workspace, a different array from destab.
+        submul_mod!(v, view(tab.destab, 1:(2n), j), t, d)
     end
 
     # β = <v, op>
@@ -302,17 +299,14 @@ end
     invβ = tab.inversemod(β, d)
 
     # D_new = invβ * v
-    @inbounds @simd for r in 1:(2n)
-        tab.destab[r, newcol] = mod(invβ * v[r], d)
-    end
+    mulcopy_mod!(view(tab.destab, 1:(2n), newcol), v, invβ, d)
 
     # Orthogonalize old destabilizers to the new stabilizer.
     @inbounds for j in 1:m
         t = mod(_symplectic_col_col(tab.destab, j, tab.stab, newcol, n), d)
         t == 0 && continue
-        @inbounds @simd for r in 1:(2n)
-            tab.destab[r, j] = mod(tab.destab[r, j] - mod(t * tab.destab[r, newcol], d), d)
-        end
+        # m == newcol - 1, so j < newcol: disjoint columns of destab.
+        submul_mod!(view(tab.destab, 1:(2n), j), view(tab.destab, 1:(2n), newcol), t, d)
     end
 
     _update_xdotz_cache!(tab, newcol)
