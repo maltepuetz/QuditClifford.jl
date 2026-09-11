@@ -195,9 +195,9 @@ end
     # inverse, that negation and multiply wrap in unsigned arithmetic BEFORE the
     # mod, which left both tableau types with non-commuting generators and no
     # error at all -- a corrupt state, not an exception. An Int32 table instead
-    # threw a MethodError from binom2_mod_oddprime. Both are fixed by converting
-    # at the InverseMod call operator, so every table type must now agree
-    # exactly with the Int control.
+    # threw a MethodError from binom2_mod_oddprime. PrecomputedInvMod now
+    # converts to Vector{Int} on construction, so neither can arise; these
+    # assert that every accepted table type behaves exactly as the Int control.
     tables = (Int[1, 2], Int32[1, 2], UInt64[1, 2])
     mk(TT, tbl; kw...) = TT(3, 2; inversemod=QuditClifford.PrecomputedInvMod(tbl), kw...)
 
@@ -308,12 +308,15 @@ end
     # construction error. Rejected at construction, where the mistake is.
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
-    # Integer-backed storage of any width stays legal, but the value is
-    # normalized to Int on read -- that normalization is what keeps the odd-d
-    # phase arithmetic correct, so it is pinned by type, not just by value.
+    # A table given in any integer type is converted to Vector{Int} on
+    # construction, so nothing downstream ever sees another type. Pinned by
+    # storage type, not just by value.
     for tbl in (Int[1, 2], Int32[1, 2], UInt64[1, 2])
-        @test QuditClifford.PrecomputedInvMod(tbl)(2, 3) === 2
+        p = QuditClifford.PrecomputedInvMod(tbl)
+        @test p.lookuptable isa Vector{Int}
+        @test p(2, 3) === 2
     end
+    @test QuditClifford.PrecomputedInvMod(Int32(5)).lookuptable isa Vector{Int}
 
     precomputed = QuditClifford.PrecomputedInvMod(Int[1, 2])
     just_in_time = QuditClifford.JustInTimeInvMod()

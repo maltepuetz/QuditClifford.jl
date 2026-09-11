@@ -58,69 +58,6 @@ const _BARRETT_VALID = Bool[_barrett_ok(_barrett_mul(d), d) for d in 1:_BARRETT_
     return ispow2(d) && ((1 << _BARRETT_K) % d == 0)
 end
 
-########################################################
-# Integer multipliers that are not Int                 #
-########################################################
-#
-# These are internal vector kernels, so they accept any `Integer` multiplier
-# rather than forcing every caller to pre-convert.
-#
-# Narrowing with `Int(a)` is exact for the value but NOT for the arithmetic that
-# follows: the general fallback forms `a * src[i]`, and with an unsigned `a`
-# that product is evaluated in the unsigned type, where it has more room. So
-# narrow only where the tier makes it harmless, and otherwise run the loop in
-# the caller's own type. Only the product is affected -- `mod(::Unsigned, ::Int)`
-# already returns an `Int` in `[0, d)`, so the outer add/subtract is signed
-# either way. The fast tiers are always safe to narrow: `a == 0`, `a == 1` and
-# `a == d-1` form no product, and an accepted Barrett modulus is at most 443,
-# whose largest product is 195364.
-#
-# NOTE: no call site inside the package reaches these methods any more. Inverse
-# results are normalized to `Int` at the `InverseMod` call operator (see
-# `inversemod.jl`), because the package's phase arithmetic is `Int` throughout
-# and an unsigned inverse silently corrupts it. Tableau entries are `Int` too.
-# These methods are what keeps the kernels total, not a supported path through
-# the package, and they are not a way to widen the package's overflow envelope.
-@inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
-    ai = Int(a)
-    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
-        return submul_mod!(dst, src, ai, d)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(dst[i] - mod(a * src[i], d), d)
-    end
-    return dst
-end
-
-@inline function addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
-    ai = Int(a)
-    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
-        return addmul_mod!(dst, src, ai, d)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(dst[i] + mod(a * src[i], d), d)
-    end
-    return dst
-end
-
-@inline function mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
-    ai = Int(a)
-    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
-        return mulcopy_mod!(dst, src, ai, d)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(a * src[i], d)
-    end
-    return dst
-end
-
-@inline function scale_mod!(dst::AbstractVector{Int}, a::Integer, d::Int)
-    ai = Int(a)
-    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
-        return scale_mod!(dst, ai, d)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(a * dst[i], d)
-    end
-    return dst
-end
-
 ##############################################
 # dst .= mod.(dst .- a .* src, d)            #
 ##############################################

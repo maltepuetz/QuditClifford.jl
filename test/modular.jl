@@ -256,29 +256,6 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test collect(view(M, :, 1)) == want
     end
 
-    # The InverseMod strategies return their lookup table's element type, which
-    # need not be Int: PrecomputedInvMod(Int32(d)) builds an Int32 table. Five
-    # call sites hand that value straight to a primitive, so the primitives must
-    # accept any Integer multiplier. Narrow tables canonicalized fine before
-    # src/modular.jl existed; this pins that they still do.
-    @testset "primitives accept any Integer multiplier" begin
-        d = 7
-        for A in (Int8, Int16, Int32, Int64, UInt8, UInt32)
-            a = A(3)
-            @test QC.submul_mod!([5], [4], a, d) == [mod(5 - 3 * 4, d)]
-            @test QC.addmul_mod!([5], [4], a, d) == [mod(5 + 3 * 4, d)]
-            @test QC.mulcopy_mod!([0], [4], a, d) == [mod(3 * 4, d)]
-            @test QC.scale_mod!([4], a, d) == [mod(3 * 4, d)]
-        end
-
-        # End-to-end through canonicalize!, which is where the Int32 table
-        # actually reaches scale_mod!. This exact call worked at e4b6315.
-        tab = StabilizerTableau(2, 2; state=:ghz,
-                                inversemod=QuditClifford.PrecomputedInvMod(Int32(2)))
-        canonicalize!(tab)
-        @test tab.iscanonical
-    end
-
     # The O(1) tier check is a cache of `_barrett_ok`, not a hardcoded list.
     # Acceptance is non-monotonic, so if the two ever disagree the fast path
     # silently selects a different tier from the one the guard sanctions.
@@ -291,30 +268,6 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test !QC._barrett_valid(131)
         @test QC._barrett_valid(137)
         @test QC._barrett_valid(443)
-    end
-
-    # An unsigned inverse table evaluates `a * src[i]` in the unsigned type.
-    # At d = 4000000007 that product reaches 1.12e19: it fits UInt64 and
-    # overflows Int, so narrowing `a` to Int before the multiply would give a
-    # silently wrong answer. The general fallback must keep the caller's width.
-    # Checked against Int128, which cannot overflow either way.
-    @testset "unsigned multipliers keep their arithmetic width" begin
-        d, U = Sys.WORD_SIZE == 64 ? (4_000_000_007, UInt64) : (65537, UInt32)
-        a = U(d - 2)                       # a*(d-1) overflows Int, fits U
-        @test widemul(Int128(a), Int128(d - 1)) > typemax(Int)
-        @test widemul(Int128(a), Int128(d - 1)) <= typemax(U)
-
-        for src in (0, 1, 5, d - 2, d - 1)
-            want = Int(mod(Int128(a) * Int128(src), Int128(d)))
-            @test QC.scale_mod!([src], a, d) == [want]
-            @test QC.mulcopy_mod!([0], [src], a, d) == [want]
-            for dst in (0, 7, d - 1)
-                @test QC.submul_mod!([dst], [src], a, d) ==
-                      [Int(mod(Int128(dst) - Int128(a) * Int128(src), Int128(d)))]
-                @test QC.addmul_mod!([dst], [src], a, d) ==
-                      [Int(mod(Int128(dst) + Int128(a) * Int128(src), Int128(d)))]
-            end
-        end
     end
 
     # The invariant the whole file depends on: everything that reaches a

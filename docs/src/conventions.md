@@ -95,9 +95,9 @@ On a 64-bit host the limit is `d ≤ 2147483648` at `n = 1`, `d ≤ 189812532` a
 
 ## Modular inversion strategies
 
-`PrecomputedInvMod` and `JustInTimeInvMod` both return an `Int`. A lookup table
-may be stored in any integer element type — `Vector{Int32}` and
-`Vector{UInt64}` are accepted, as is a lazy `AbstractVector` — and the value is
-converted when read, so the rest of the package sees `Int` arithmetic
-throughout. Tables of non-integer element type are rejected at construction.
+`PrecomputedInvMod` stores its lookup table as a `Vector{Int}` and both
+strategies return an `Int`, so the package is `Int` arithmetic throughout. A
+table given in a narrower or unsigned integer type is converted on
+construction; one whose element type is not an `Integer` is rejected there. Use
+`JustInTimeInvMod` to avoid storing a table at all.
 
