@@ -39,6 +39,25 @@ const _BARRETT_K = 20
     return (d - 1) <= isqrt(q)         # (d-1)^2 <= q, without forming the product
 end
 
+# `_barrett_ok` costs two divisions and an `isqrt`, and the primitives ran it on
+# every general-multiplier call.  On a length-8 column at a fallback prime that
+# is ~16-20% of the call; by length 64 it is ~1%.  It can only be true for
+# `d <= 2^(K/2)`: `q <= 2^K - 1`, so `isqrt(q) <= 1023` and `(d-1) <= isqrt(q)`
+# fails above that -- unless `d` divides `2^K` exactly, which beyond `2^(K/2)`
+# means `d` is a power of two, and so never a prime.  Precompute that range.
+#
+# The table is DERIVED from `_barrett_ok`; it is not a hardcoded prime list.
+# Acceptance is non-monotonic (131 rejected, 137/139/443 accepted), so a `d <=
+# limit` test would be wrong -- a test asserts the two agree over the whole
+# range, which is what stops them drifting apart.
+const _BARRETT_TABLE_MAX = 1 << (_BARRETT_K >> 1)
+const _BARRETT_VALID = Bool[_barrett_ok(_barrett_mul(d), d) for d in 1:_BARRETT_TABLE_MAX]
+
+@inline function _barrett_valid(d::Int)
+    d <= _BARRETT_TABLE_MAX && return @inbounds _BARRETT_VALID[d]
+    return ispow2(d) && ((1 << _BARRETT_K) % d == 0)
+end
+
 ########################################################
 # Integer multipliers that are not Int                 #
 ########################################################
@@ -49,14 +68,59 @@ end
 # value straight to a primitive (`canonicalize.jl` twice, `entanglement_entropy.jl`,
 # and `projective_measurement.jl` twice). Narrow once, here, rather than at each
 # site, so a future call site cannot reintroduce the MethodError.
-@inline submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
-    submul_mod!(dst, src, Int(a), d)
-@inline addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
-    addmul_mod!(dst, src, Int(a), d)
-@inline mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
-    mulcopy_mod!(dst, src, Int(a), d)
-@inline scale_mod!(dst::AbstractVector{Int}, a::Integer, d::Int) =
-    scale_mod!(dst, Int(a), d)
+#
+# Narrowing is exact for the value, but NOT for the arithmetic that follows.
+# The general fallback forms `a * src[i]`, and with an unsigned `a` that product
+# is evaluated in the unsigned type -- `PrecomputedInvMod` over a `UInt64` table
+# at `d = 4000000007` reaches 1.12e19, which fits `UInt64` and overflows `Int`.
+# Narrowing first turns that into a silently wrong answer. So narrow only where
+# the tier makes it harmless, and otherwise run the loop with the caller's own
+# type, exactly as the pre-primitive code did.
+#
+# Only the product needs the wider type: `mod(::Unsigned, ::Int)` already
+# returns an `Int` in `[0, d)`, so the outer add/subtract is signed either way.
+# The fast tiers are safe to narrow -- `a == 0`, `a == 1` and `a == d-1` form no
+# product at all, and an accepted Barrett modulus is at most 443, whose largest
+# product is 195364.
+@inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
+    ai = Int(a)
+    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
+        return submul_mod!(dst, src, ai, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = mod(dst[i] - mod(a * src[i], d), d)
+    end
+    return dst
+end
+
+@inline function addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
+    ai = Int(a)
+    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
+        return addmul_mod!(dst, src, ai, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = mod(dst[i] + mod(a * src[i], d), d)
+    end
+    return dst
+end
+
+@inline function mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
+    ai = Int(a)
+    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
+        return mulcopy_mod!(dst, src, ai, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = mod(a * src[i], d)
+    end
+    return dst
+end
+
+@inline function scale_mod!(dst::AbstractVector{Int}, a::Integer, d::Int)
+    ai = Int(a)
+    (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
+        return scale_mod!(dst, ai, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = mod(a * dst[i], d)
+    end
+    return dst
+end
 
 ##############################################
 # dst .= mod.(dst .- a .* src, d)            #
@@ -90,8 +154,8 @@ end
             dst[i] = r - ifelse(r >= d, d, 0)
         end
     else
-        M = _barrett_mul(d)
-        if _barrett_ok(M, d)
+        if _barrett_valid(d)
+            M = _barrett_mul(d)
             @turbo for i in eachindex(dst)
                 t = a * src[i]
                 t = t - ((t * M) >> _BARRETT_K) * d
@@ -125,8 +189,8 @@ end
             dst[i] = r + ifelse(r < 0, d, 0)
         end
     else
-        M = _barrett_mul(d)
-        if _barrett_ok(M, d)
+        if _barrett_valid(d)
+            M = _barrett_mul(d)
             @turbo for i in eachindex(dst)
                 t = a * src[i]
                 t = t - ((t * M) >> _BARRETT_K) * d
@@ -159,8 +223,8 @@ end
             dst[i] = ifelse(s == 0, 0, d - s)
         end
     else
-        M = _barrett_mul(d)
-        if _barrett_ok(M, d)
+        if _barrett_valid(d)
+            M = _barrett_mul(d)
             @turbo for i in eachindex(dst)
                 t = a * src[i]
                 dst[i] = t - ((t * M) >> _BARRETT_K) * d
@@ -193,8 +257,8 @@ end
             dst[i] = ifelse(s == 0, 0, d - s)
         end
     else
-        M = _barrett_mul(d)
-        if _barrett_ok(M, d)
+        if _barrett_valid(d)
+            M = _barrett_mul(d)
             @turbo for i in eachindex(dst)
                 t = a * dst[i]
                 dst[i] = t - ((t * M) >> _BARRETT_K) * d

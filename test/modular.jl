@@ -279,6 +279,44 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test tab.iscanonical
     end
 
+    # The O(1) tier check is a cache of `_barrett_ok`, not a hardcoded list.
+    # Acceptance is non-monotonic, so if the two ever disagree the fast path
+    # silently selects a different tier from the one the guard sanctions.
+    @testset "_barrett_valid caches _barrett_ok exactly" begin
+        probes = vcat(1:(QC._BARRETT_TABLE_MAX + 64),
+                      [1 << 20, (1 << 20) + 1, 10^6, 2^19, 2^21 - 1])
+        for d in probes
+            @test QC._barrett_valid(d) == QC._barrett_ok(QC._barrett_mul(d), d)
+        end
+        @test !QC._barrett_valid(131)
+        @test QC._barrett_valid(137)
+        @test QC._barrett_valid(443)
+    end
+
+    # An unsigned inverse table evaluates `a * src[i]` in the unsigned type.
+    # At d = 4000000007 that product reaches 1.12e19: it fits UInt64 and
+    # overflows Int, so narrowing `a` to Int before the multiply would give a
+    # silently wrong answer. The general fallback must keep the caller's width.
+    # Checked against Int128, which cannot overflow either way.
+    @testset "unsigned multipliers keep their arithmetic width" begin
+        d, U = Sys.WORD_SIZE == 64 ? (4_000_000_007, UInt64) : (65537, UInt32)
+        a = U(d - 2)                       # a*(d-1) overflows Int, fits U
+        @test widemul(Int128(a), Int128(d - 1)) > typemax(Int)
+        @test widemul(Int128(a), Int128(d - 1)) <= typemax(U)
+
+        for src in (0, 1, 5, d - 2, d - 1)
+            want = Int(mod(Int128(a) * Int128(src), Int128(d)))
+            @test QC.scale_mod!([src], a, d) == [want]
+            @test QC.mulcopy_mod!([0], [src], a, d) == [want]
+            for dst in (0, 7, d - 1)
+                @test QC.submul_mod!([dst], [src], a, d) ==
+                      [Int(mod(Int128(dst) - Int128(a) * Int128(src), Int128(d)))]
+                @test QC.addmul_mod!([dst], [src], a, d) ==
+                      [Int(mod(Int128(dst) + Int128(a) * Int128(src), Int128(d)))]
+            end
+        end
+    end
+
     # The invariant the whole file depends on: everything that reaches a
     # tableau column is reduced into [0, d) on write. If this ever stops being
     # true, the conditional tiers become silently wrong.
