@@ -344,3 +344,72 @@ end
         end
     end
 end
+
+# rank_fp_cols! and canonicalize! against an independent reference at the two
+# modular tiers that the rest of the suite does not exercise: d = 443 is the
+# largest prime the Barrett guard accepts, d = 131 is rejected and takes the
+# divide-twice fallback. Seeded, so a failure is reproducible.
+@testset "Differential rank and canonicalization across the modular tiers" begin
+    @test QuditClifford._barrett_valid(443)
+    @test !QuditClifford._barrett_valid(131)
+
+    # Independent column echelon reduction, written the obvious way.
+    function _reference_colrank(A0, d)
+        A = copy(A0)
+        nr, nc = size(A)
+        r = c = 1
+        while r <= nr && c <= nc
+            j = c
+            while j <= nc && A[r, j] == 0
+                j += 1
+            end
+            if j > nc
+                r += 1
+                continue
+            end
+            j != c && (A[:, [c, j]] = A[:, [j, c]])
+            inv_p = invmod(A[r, c], d)
+            A[:, c] = mod.(A[:, c] .* inv_p, d)
+            for jj in 1:nc
+                jj == c && continue
+                f = A[r, jj]
+                f == 0 && continue
+                A[:, jj] = mod.(A[:, jj] .- f .* A[:, c], d)
+            end
+            r += 1
+            c += 1
+        end
+        return c - 1
+    end
+
+    rng = Random.MersenneTwister(20260911)
+    for d in (131, 443), trial in 1:6
+        A = rand(rng, 0:(d - 1), 10, 6)
+        @test qc_rank(A, d) == _reference_colrank(A, d)
+    end
+
+    # canonicalize! at both primes agrees between the two tableau types and
+    # leaves a genuine RCEF.
+    for d in (131, 443)
+        rng2 = Random.MersenneTwister(4242)
+        n = 5
+        raw = zeros(Int, 2n + 1, n)
+        for j in 1:n, i in 1:j
+            raw[n + i, j] = i == j ? rand(rng2, 1:(d - 1)) : rand(rng2, 0:(d - 1))
+        end
+        st = StabilizerTableau(d, copy(raw); m=n, storephase=true)
+        dt = DestabilizerTableau(d, copy(raw); m=n, storephase=true)
+        canonicalize!(st)
+        canonicalize!(dt)
+        @test st.stab == dt.stab
+        @test st.pivcol_of_row == dt.pivcol_of_row
+        for r in 1:(2n)
+            c = st.pivcol_of_row[r]
+            c == 0 && continue
+            @test st.stab[r, c] == 1
+            for jj in 1:st.m
+                jj == c || @test st.stab[r, jj] == 0
+            end
+        end
+    end
+end
