@@ -39,6 +39,25 @@ const _BARRETT_K = 20
     return (d - 1) <= isqrt(q)         # (d-1)^2 <= q, without forming the product
 end
 
+########################################################
+# Integer multipliers that are not Int                 #
+########################################################
+#
+# `InverseMod` returns its lookup table's element type, and `PrecomputedInvMod`
+# builds that table from whatever integer type it was constructed with -- so
+# `PrecomputedInvMod(Int32(d))` yields an `Int32`. Five call sites hand that
+# value straight to a primitive (`canonicalize.jl` twice, `entanglement_entropy.jl`,
+# and `projective_measurement.jl` twice). Narrow once, here, rather than at each
+# site, so a future call site cannot reintroduce the MethodError.
+@inline submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
+    submul_mod!(dst, src, Int(a), d)
+@inline addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
+    addmul_mod!(dst, src, Int(a), d)
+@inline mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int) =
+    mulcopy_mod!(dst, src, Int(a), d)
+@inline scale_mod!(dst::AbstractVector{Int}, a::Integer, d::Int) =
+    scale_mod!(dst, Int(a), d)
+
 ##############################################
 # dst .= mod.(dst .- a .* src, d)            #
 ##############################################

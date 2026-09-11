@@ -241,6 +241,29 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test collect(view(M, :, 1)) == want
     end
 
+    # The InverseMod strategies return their lookup table's element type, which
+    # need not be Int: PrecomputedInvMod(Int32(d)) builds an Int32 table. Five
+    # call sites hand that value straight to a primitive, so the primitives must
+    # accept any Integer multiplier. Narrow tables canonicalized fine before
+    # src/modular.jl existed; this pins that they still do.
+    @testset "primitives accept any Integer multiplier" begin
+        d = 7
+        for A in (Int8, Int16, Int32, Int64, UInt8, UInt32)
+            a = A(3)
+            @test QC.submul_mod!([5], [4], a, d) == [mod(5 - 3 * 4, d)]
+            @test QC.addmul_mod!([5], [4], a, d) == [mod(5 + 3 * 4, d)]
+            @test QC.mulcopy_mod!([0], [4], a, d) == [mod(3 * 4, d)]
+            @test QC.scale_mod!([4], a, d) == [mod(3 * 4, d)]
+        end
+
+        # End-to-end through canonicalize!, which is where the Int32 table
+        # actually reaches scale_mod!. This exact call worked at e4b6315.
+        tab = StabilizerTableau(2, 2; state=:ghz,
+                                inversemod=QuditClifford.PrecomputedInvMod(Int32(2)))
+        canonicalize!(tab)
+        @test tab.iscanonical
+    end
+
     # The invariant the whole file depends on: everything that reaches a
     # tableau column is reduced into [0, d) on write. If this ever stops being
     # true, the conditional tiers become silently wrong.
