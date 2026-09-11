@@ -71,3 +71,33 @@ represented state, [`canonicalize!`](@ref) changes the generator basis, and
 [`expect!`](@ref) may canonicalize a plain stabilizer tableau as part of its
 span calculation. The represented quantum state is unchanged by
 canonicalization.
+
+## Supported arithmetic envelope
+
+Tableau entries, phases and dot products are all `Int`. Every phase and
+symplectic dot product sums `n` terms of size up to ``(d-1)^2``, and the
+odd-`d` phase update adds two such terms, so results are exact only while
+
+```math
+\max(n, 2)\,(d-1)^2 \le \texttt{typemax(Int)}
+```
+
+Past that the accumulators wrap silently, and there is no error to notice. The
+tableau constructors therefore emit a warning when `d` is too large for the
+given `n`, naming the largest safe dimension. The bound is the worst case --
+every entry equal to `d-1` -- so it is a warning rather than an error: sparse
+tableaux past it often still compute correctly.
+
+On a 64-bit host the limit is `d ≤ 2147483648` at `n = 1`, `d ≤ 189812532` at
+`n = 256`, and `d ≤ 94906266` at `n = 1024`. In practice only
+`JustInTimeInvMod` can reach it, since `PrecomputedInvMod` allocates a table of
+`d-1` integers and exhausts memory first.
+
+## Modular inversion strategies
+
+`PrecomputedInvMod` and `JustInTimeInvMod` both return an `Int`. A lookup table
+may be stored in any integer element type — `Vector{Int32}` and
+`Vector{UInt64}` are accepted, as is a lazy `AbstractVector` — and the value is
+converted when read, so the rest of the package sees `Int` arithmetic
+throughout. Tables of non-integer element type are rejected at construction.
+
