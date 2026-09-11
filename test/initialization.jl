@@ -301,11 +301,11 @@ end
 @testset "Modular inversion strategies" begin
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod(4)
 
-    # The lookup table's element type is the type the downstream multiplications
-    # are evaluated in, so it has to be an Integer. A Float64 table used to work
-    # by accident -- an exact value converts on assignment -- but one off by a
-    # ULP would round into a wrong-but-valid residue, which is far worse than a
-    # construction error. Rejected at construction, where the mistake is.
+    # Integer tables are converted to Vector{Int}; non-integer ones are rejected
+    # instead, so the error names the actual mistake. Before that a Float64
+    # table was accepted and then behaved differently per dimension: fine at
+    # d = 2, which never takes the odd-d phase branch, but a MethodError from
+    # inside binom2_mod_oddprime at every odd prime.
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
     # A table given in any integer type is converted to Vector{Int} on

@@ -77,8 +77,10 @@ end
 # tableau only ever holds 0, 1 and d-1.
 #
 # The `a == d-1` body adds two stored values, so it is exact for d <= 2^62 and
-# wraps above that; see the plan's correctness envelope. The `a == 1` body
-# subtracts, so it is exact for every d.
+# wraps above that. That ceiling never binds in practice: the package-wide
+# envelope (`max(n, 2) * (d-1)^2 <= typemax(Int)`, see `_warn_if_dimension_unsafe`
+# in helper.jl and the conventions page) caps d near 2^31 already. The `a == 1`
+# body subtracts, so it is exact for every d.
 @inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
     a == 0 && return dst
     if a == 1

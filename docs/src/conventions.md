@@ -95,9 +95,25 @@ On a 64-bit host the limit is `d ≤ 2147483648` at `n = 1`, `d ≤ 189812532` a
 
 ## Modular inversion strategies
 
-`PrecomputedInvMod` stores its lookup table as a `Vector{Int}` and both
-strategies return an `Int`, so the package is `Int` arithmetic throughout. A
-table given in a narrower or unsigned integer type is converted on
-construction; one whose element type is not an `Integer` is rejected there. Use
-`JustInTimeInvMod` to avoid storing a table at all.
+Every tableau carries a strategy for inverting residues mod `d`, selected with
+the `inversemod` keyword at construction. Neither strategy is exported, so name
+them through the module:
 
+```jldoctest
+julia> jit = QuditClifford.JustInTimeInvMod();
+
+julia> tab = StabilizerTableau(5, 4; state = :ghz, inversemod = jit);
+
+julia> is_pure(tab)
+true
+```
+
+The default is `QuditClifford.PrecomputedInvMod(d)`, which builds a `d-1` entry
+lookup table once. `QuditClifford.JustInTimeInvMod()` calls `Base.invmod` per
+query and stores nothing, which is what makes the large dimensions above
+reachable at all.
+
+`PrecomputedInvMod` stores its table as a `Vector{Int}`, and both strategies
+return an `Int`, so the package is `Int` arithmetic throughout. A table given
+in a narrower or unsigned integer type is converted on construction; one whose
+element type is not an `Integer` is rejected there.
