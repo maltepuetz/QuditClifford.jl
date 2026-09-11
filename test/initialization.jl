@@ -189,6 +189,57 @@ end
     )
 end
 
+@testset "Large-dimension overflow warning" begin
+    # Every phase and symplectic dot product accumulates n terms of size up to
+    # (d-1)^2, and the odd-d phase update sums two such terms, so a tableau is
+    # only safe while max(n, 2)*(d-1)^2 fits in an Int. Past that those sums
+    # wrap and every result is silently wrong, so the constructors warn.
+    safe_d(n) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
+    n = 4
+    over, under = Sys.WORD_SIZE == 64 ? (3037000507, 1518500213) : (65537, 8191)
+    @test over > safe_d(n)
+    @test under <= safe_d(n)
+
+    jit = QuditClifford.JustInTimeInvMod()
+    @test_logs (:warn, r"overflow") StabilizerTableau(over, n; state=:mixed, inversemod=jit)
+    @test_logs (:warn, r"overflow") DestabilizerTableau(over, n; state=:mixed, inversemod=jit)
+
+    # Inside the bound, silence -- from both builders, preset and raw paths.
+    @test_logs StabilizerTableau(under, n; state=:mixed, inversemod=jit)
+    @test_logs DestabilizerTableau(under, n; state=:mixed, inversemod=jit)
+    @test_logs StabilizerTableau(3, 4; state=:ghz)
+    @test_logs DestabilizerTableau(2, 8; state=:product, basis=:Z)
+    @test_logs StabilizerTableau(3, zeros(Int, 5, 2); m=2, storephase=true)
+
+    # The bound is on n*(d-1)^2, not on d alone: the same d is safe at n = 2
+    # and not at n = 256. A check on d by itself could not express this.
+    d_mid = Sys.WORD_SIZE == 64 ? 1000000007 : 32749
+    @test d_mid <= safe_d(2)
+    @test d_mid > safe_d(256)
+    @test_logs StabilizerTableau(d_mid, 2; state=:mixed, inversemod=jit)
+    @test_logs (:warn, r"overflow") StabilizerTableau(d_mid, 256; state=:mixed, inversemod=jit)
+
+    # n = 0 has no dot products at all and must not warn or divide by zero.
+    @test_logs StabilizerTableau(over, 0; state=:mixed, inversemod=jit)
+
+    # The boundary value itself is safe and one past it is not. Exercised on
+    # the helper directly: the constructors also demand a prime d, and
+    # max_safe_dimension(n) is not prime, so no tableau can sit exactly there.
+    @test_logs QuditClifford._warn_if_dimension_unsafe(safe_d(4), 4)
+    @test_logs (:warn, r"overflow") QuditClifford._warn_if_dimension_unsafe(safe_d(4) + 1, 4)
+
+    # The bound is exact, not approximate: max_safe_dimension(n) is the largest
+    # d whose worst-case accumulator still fits, and one more does not. Computed
+    # in Int128 so the check cannot itself overflow. This is what pins the
+    # max(n, 2) factor -- without it n = 1 would be off by 2x.
+    for nn in (1, 2, 4, 64, 256, 1024)
+        dm = Int128(QuditClifford.max_safe_dimension(nn))
+        terms = Int128(max(nn, 2))
+        @test terms * (dm - 1)^2 <= typemax(Int)
+        @test terms * dm^2 > typemax(Int)
+    end
+end
+
 @testset "Modular inversion strategies" begin
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod(4)
 

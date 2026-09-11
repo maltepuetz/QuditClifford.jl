@@ -114,6 +114,7 @@ function _build_stabilizer_tableau(
 ) where {T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    _warn_if_dimension_unsafe(d, n)
 
     nrows = 2n + (storephase ? 1 : 0)
     size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))

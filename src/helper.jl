@@ -10,6 +10,29 @@
 # - qubits d=2: i^k with k mod 4   (needed for Clifford closure)
 @inline phase_modulus(d::Int) = (d == 2 ? 4 : d)
 
+# Every phase and symplectic dot product below accumulates `n` terms of size up
+# to `(d-1)^2`, and the odd-`d` phase update sums two such terms, so the whole
+# package is exact only while `max(n, 2) * (d-1)^2` fits in an `Int`. Past that
+# the accumulators wrap and results are silently wrong -- `dot_xz_col` at n = 4,
+# d = 3037000507 returns 581896576 where the answer is 4.
+#
+# Warn rather than throw: the bound is the worst case, every entry equal to
+# `d-1`, and real tableaux are sparse enough that plenty of workloads past it
+# still compute correctly. Refusing them would be wrong; saying nothing is
+# worse. `maxlog=1` keeps a construction loop from drowning the session.
+#
+# `isqrt` keeps the test itself from overflowing, as in `_barrett_ok`.
+@inline max_safe_dimension(n::Int) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
+
+@inline function _warn_if_dimension_unsafe(d::Int, n::Int)
+    n == 0 && return nothing
+    dmax = max_safe_dimension(n)
+    d <= dmax && return nothing
+    @warn "Qudit dimension is large enough that phase and symplectic dot products \
+           can overflow Int, giving silently incorrect results." d n max_safe_d = dmax maxlog = 1
+    return nothing
+end
+
 # Helper: dot product x_i ⋅ z_j for a given column i and j, mod d.
 # useful when updating phases while multiplying stabilizer generators
 @inline function dot_xz_col(tab::AbstractMatrix{Int}, n::Int, i::Int, j::Int, d::Int)
