@@ -189,6 +189,64 @@ end
     )
 end
 
+@testset "Narrow and unsigned inverse tables behave as Int tables" begin
+    # The package is Int arithmetic throughout: binom2_mod_oddprime takes an
+    # Int, and measure! forms mod(-commutator * inv, d). Handed an unsigned
+    # inverse, that negation and multiply wrap in unsigned arithmetic BEFORE the
+    # mod, which left both tableau types with non-commuting generators and no
+    # error at all -- a corrupt state, not an exception. An Int32 table instead
+    # threw a MethodError from binom2_mod_oddprime. Both are fixed by converting
+    # at the InverseMod call operator, so every table type must now agree
+    # exactly with the Int control.
+    tables = (Int[1, 2], Int32[1, 2], UInt64[1, 2])
+    mk(TT, tbl; kw...) = TT(3, 2; inversemod=QuditClifford.PrecomputedInvMod(tbl), kw...)
+
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        # 1+2. canonicalization of a GHZ tableau agrees with the Int control
+        ref = (t = mk(TT, tables[1]; state=:ghz); canonicalize!(t); copy(t.stab))
+        for tbl in tables
+            t = mk(TT, tbl; state=:ghz)
+            canonicalize!(t)
+            @test t.stab == ref
+        end
+
+        # 3. expectation / span reconstruction agrees
+        op = DoublePauli(1, 0, 1, 2, 0, 1)
+        want = expect_int!(mk(TT, tables[1]; state=:ghz), op)
+        for tbl in tables
+            @test expect_int!(mk(TT, tbl; state=:ghz), op) == want
+        end
+
+        # 4. a non-commuting measurement leaves the generators mutually
+        #    commuting -- this is the assertion the corrupt state failed.
+        ctrl = (t = mk(TT, tables[1]; state=:product, basis=:X);
+                measure!(t, op; outcome=0); t)
+        for tbl in tables
+            tab = mk(TT, tbl; state=:product, basis=:X)
+            @test measure!(tab, op; outcome=0) == 0
+            for i in 1:tab.m, j in 1:tab.m
+                @test mod(QuditClifford.commutation_col(tab.stab, i, tab.stab[:, j]), tab.d) == 0
+            end
+            @test tab.stab == ctrl.stab
+            @test tab.m == ctrl.m
+            @test all(tab.stab[:, (tab.m+1):end] .== 0)      # capacity stays zeroed
+
+            # 5. destabilizer duality and the x.z cache survive too
+            if TT === DestabilizerTableau
+                @test tab.destab == ctrl.destab
+                for i in 1:tab.m, j in 1:tab.m
+                    v = mod(sum(tab.destab[q, i] * tab.stab[tab.n + q, j] -
+                                tab.destab[tab.n + q, i] * tab.stab[q, j] for q in 1:tab.n), tab.d)
+                    @test v == (i == j ? 1 : 0)
+                end
+                for j in 1:tab.m
+                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(tab.stab, tab.n, j, tab.d)
+                end
+            end
+        end
+    end
+end
+
 @testset "Large-dimension overflow warning" begin
     # Every phase and symplectic dot product accumulates n terms of size up to
     # (d-1)^2, and the odd-d phase update sums two such terms, so a tableau is
@@ -250,7 +308,12 @@ end
     # construction error. Rejected at construction, where the mistake is.
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
-    @test QuditClifford.PrecomputedInvMod(UInt64[1, 2])(2, 3) == 2   # unsigned stays legal
+    # Integer-backed storage of any width stays legal, but the value is
+    # normalized to Int on read -- that normalization is what keeps the odd-d
+    # phase arithmetic correct, so it is pinned by type, not just by value.
+    for tbl in (Int[1, 2], Int32[1, 2], UInt64[1, 2])
+        @test QuditClifford.PrecomputedInvMod(tbl)(2, 3) === 2
+    end
 
     precomputed = QuditClifford.PrecomputedInvMod(Int[1, 2])
     just_in_time = QuditClifford.JustInTimeInvMod()

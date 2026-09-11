@@ -62,28 +62,25 @@ end
 # Integer multipliers that are not Int                 #
 ########################################################
 #
-# `InverseMod` returns its lookup table's element type, and `PrecomputedInvMod`
-# builds that table from whatever integer type it was constructed with -- so
-# `PrecomputedInvMod(Int32(d))` yields an `Int32`. That type is part of the
-# `InverseMod` contract -- see the note at the top of `inversemod.jl`, which also
-# says why non-integer tables are refused. Five call sites hand that
-# value straight to a primitive (`canonicalize.jl` twice, `entanglement_entropy.jl`,
-# and `projective_measurement.jl` twice). Narrow once, here, rather than at each
-# site, so a future call site cannot reintroduce the MethodError.
+# These are internal vector kernels, so they accept any `Integer` multiplier
+# rather than forcing every caller to pre-convert.
 #
-# Narrowing is exact for the value, but NOT for the arithmetic that follows.
-# The general fallback forms `a * src[i]`, and with an unsigned `a` that product
-# is evaluated in the unsigned type -- `PrecomputedInvMod` over a `UInt64` table
-# at `d = 4000000007` reaches 1.12e19, which fits `UInt64` and overflows `Int`.
-# Narrowing first turns that into a silently wrong answer. So narrow only where
-# the tier makes it harmless, and otherwise run the loop with the caller's own
-# type, exactly as the pre-primitive code did.
+# Narrowing with `Int(a)` is exact for the value but NOT for the arithmetic that
+# follows: the general fallback forms `a * src[i]`, and with an unsigned `a`
+# that product is evaluated in the unsigned type, where it has more room. So
+# narrow only where the tier makes it harmless, and otherwise run the loop in
+# the caller's own type. Only the product is affected -- `mod(::Unsigned, ::Int)`
+# already returns an `Int` in `[0, d)`, so the outer add/subtract is signed
+# either way. The fast tiers are always safe to narrow: `a == 0`, `a == 1` and
+# `a == d-1` form no product, and an accepted Barrett modulus is at most 443,
+# whose largest product is 195364.
 #
-# Only the product needs the wider type: `mod(::Unsigned, ::Int)` already
-# returns an `Int` in `[0, d)`, so the outer add/subtract is signed either way.
-# The fast tiers are safe to narrow -- `a == 0`, `a == 1` and `a == d-1` form no
-# product at all, and an accepted Barrett modulus is at most 443, whose largest
-# product is 195364.
+# NOTE: no call site inside the package reaches these methods any more. Inverse
+# results are normalized to `Int` at the `InverseMod` call operator (see
+# `inversemod.jl`), because the package's phase arithmetic is `Int` throughout
+# and an unsigned inverse silently corrupts it. Tableau entries are `Int` too.
+# These methods are what keeps the kernels total, not a supported path through
+# the package, and they are not a way to widen the package's overflow envelope.
 @inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Integer, d::Int)
     ai = Int(a)
     (ai == 0 || ai == 1 || ai == d - 1 || _barrett_valid(d)) &&
@@ -136,9 +133,11 @@ end
 #   otherwise the original divide-twice loop, unchanged
 #
 # The two multiply-free tiers cover every multiplier that occurs at d = 2 and
-# d = 3, which is the whole `ci` benchmark profile: in `canonicalize!` the
-# multiplier is a nonzero tableau entry, and in `measure!` it is
-# mod(-commutator * inv(comm0, d), d) -- both in [1, d-1].
+# d = 3: in `canonicalize!` the multiplier is a nonzero tableau entry, and in
+# `measure!` it is mod(-commutator * inv(comm0, d), d) -- both in [1, d-1].
+# The `ci` profile also runs d = 5, whose mid-circuit leaves do reach Barrett;
+# its constructor-based leaves still do not, because a `:ghz` or `:product`
+# tableau only ever holds 0, 1 and d-1.
 #
 # The `a == d-1` body adds two stored values, so it is exact for d <= 2^62 and
 # wraps above that; see the plan's correctness envelope. The `a == 1` body
