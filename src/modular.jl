@@ -64,7 +64,9 @@ end
 #
 # `InverseMod` returns its lookup table's element type, and `PrecomputedInvMod`
 # builds that table from whatever integer type it was constructed with -- so
-# `PrecomputedInvMod(Int32(d))` yields an `Int32`. Five call sites hand that
+# `PrecomputedInvMod(Int32(d))` yields an `Int32`. That type is part of the
+# `InverseMod` contract -- see the note at the top of `inversemod.jl`, which also
+# says why non-integer tables are refused. Five call sites hand that
 # value straight to a primitive (`canonicalize.jl` twice, `entanglement_entropy.jl`,
 # and `projective_measurement.jl` twice). Narrow once, here, rather than at each
 # site, so a future call site cannot reintroduce the MethodError.

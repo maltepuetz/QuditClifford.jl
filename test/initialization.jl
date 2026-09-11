@@ -192,6 +192,15 @@ end
 @testset "Modular inversion strategies" begin
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod(4)
 
+    # The lookup table's element type is the type the downstream multiplications
+    # are evaluated in, so it has to be an Integer. A Float64 table used to work
+    # by accident -- an exact value converts on assignment -- but one off by a
+    # ULP would round into a wrong-but-valid residue, which is far worse than a
+    # construction error. Rejected at construction, where the mistake is.
+    @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
+    @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
+    @test QuditClifford.PrecomputedInvMod(UInt64[1, 2])(2, 3) == 2   # unsigned stays legal
+
     precomputed = QuditClifford.PrecomputedInvMod(Int[1, 2])
     just_in_time = QuditClifford.JustInTimeInvMod()
     @test precomputed(1, 3) == 1
