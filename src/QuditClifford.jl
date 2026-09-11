@@ -20,6 +20,7 @@ import LoopVectorization.@turbo
 
 
 # include the sub files
+include("modular.jl")
 include("helper.jl")
 include("inversemod.jl")
 include("abstract_tableau.jl")
