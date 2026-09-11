@@ -18,12 +18,16 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~60 s per revision
-#   full   n up to 512         workflow_dispatch; adds d = 5, 7 and the circuits
+#   ci     n in (64, 256)      the PR job; ~80 s per revision
+#   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
+#
+# d = 5 is in `ci` because it is the smallest prime that takes the Barrett tier
+# in src/modular.jl. Without it no pull-request benchmark executes that tier at
+# all, and a guard that started rejecting every d would look like no change.
 const CONFIG = if PROFILE == "smoke"
     (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false)
 elseif PROFILE == "ci"
-    (ns = (64, 256), ds = (2, 3), probe_n = 256, circuits = false)
+    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false)
 elseif PROFILE == "full"
     (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true)
 else

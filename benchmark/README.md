@@ -81,13 +81,19 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
 | `smoke` | n = 8 | 2, 3 | 75 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3 | 107 | ~60 s | the pull-request job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 151 | ~80 s | the pull-request job |
 | `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 265 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
+
+`d = 5` is in `ci` rather than only in `full` because it is the smallest prime
+that takes the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
+multiply-free tiers exclusively. Without a `d = 5` row, no pull-request
+benchmark exercises that tier, and a Barrett guard that began rejecting every
+`d` would show up as no change rather than as a regression.
 
 ## Coverage
 
 The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
-{d = 2, d = 3} × two sizes: `construct`, the three `measure!` branches
+{d = 2, d = 3, d = 5} × two sizes: `construct`, the three `measure!` branches
 (non-commuting, deterministic, append — separated because their costs differ
 substantially and a blended workload hides which dominates), `expect!`,
 `canonicalize!`, `entropy/half`, and `reset!`.

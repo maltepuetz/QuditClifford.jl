@@ -102,7 +102,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # Each spine leaf is named for a measure! branch. If the operator stops
         # selecting that branch the leaf silently measures something else, and
         # nothing else in the suite would notice.
-        for n in (8, 64, 256), d in (2, 3)
+        for n in (8, 64, 256), d in (2, 3, 5)
             i, j = spread_sites(n)
             @test 1 <= i < j <= n
             @test length(unique(spread_eight(n))) == 8
@@ -127,7 +127,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
     end
 
     @testset "Mid-circuit state is scrambled, pure and deterministic" begin
-        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
             a = scrambled_state(T, d, 16; seed = 11)
             b = scrambled_state(T, d, 16; seed = 11)
             @test a.stab == b.stab                     # deterministic
