@@ -19,9 +19,15 @@ end
 _primes_upto(n::Int) = [p for p in 2:n if _is_prime(p)]
 
 # nextprime(10^k) for k = 3..15, as literals: test/Project.toml has no Primes.
-const LARGE_PRIMES = [1009, 10007, 100003, 1000003, 10000019, 100000007,
-                      1000000007, 10000000019, 100000000003, 1000000000039,
-                      10000000000037, 100000000000031, 1000000000000037]
+# On 32-bit Julia `Int` is `Int32`, so the larger entries are not representable
+# and would both promote the array to Int64 and fail to match the primitives'
+# `d::Int` signatures. Keep only what this word size can hold: 7 of 13 survive
+# on 32-bit, all 13 on 64-bit.
+const LARGE_PRIMES = Int[p for p in (1009, 10007, 100003, 1000003, 10000019,
+                                     100000007, 1000000007, 10000000019,
+                                     100000000003, 1000000000039, 10000000000037,
+                                     100000000000031, 1000000000000037)
+                         if p <= typemax(Int)]
 
 # d = 131 is in here because the guard REJECTS Barrett there, so the fallback
 # path is exercised; 127 is the largest prime under 128, the ceiling for a
@@ -65,8 +71,12 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         # Regression: the direct encoding `(M*d - 2^K) * (d-1)^2 < 2^K`
         # overflows Int and wraps negative here, accepting an invalid tier.
         # This test exists to stop the guard being "simplified" back.
-        @testset "overflow regression at d = 2511241" begin
-            d = 2511241
+        # Which `d` first exposes the overflow depends on the word size: the
+        # product wraps once it passes typemax(Int). Both witnesses assert the
+        # same thing -- the naive form reports a tier valid that the guard
+        # rejects -- so the test stays meaningful on x86 rather than skipped.
+        @testset "overflow regression in the naive encoding" begin
+            d = Sys.WORD_SIZE == 64 ? 2511241 : 1367
             M = QC._barrett_mul(d)
             @test !QC._barrett_ok(M, d)
             @test (M * d - (1 << K)) * (d - 1)^2 < 0        # the wrap itself
@@ -77,7 +87,8 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         # rather than trusting random sampling.
         @testset "never over-claims at large d" begin
             rng = Random.MersenneTwister(20260911)
-            for d in vcat(LARGE_PRIMES[1:7], [2511241], _primes_upto(700))
+            large = [p for p in LARGE_PRIMES if p <= 10^9]
+            for d in vcat(large, [2511241], _primes_upto(700))
                 M = QC._barrett_mul(d)
                 QC._barrett_ok(M, d) || continue
                 X = (d - 1)^2
@@ -183,8 +194,12 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
     # The documented ceiling of the add form, pinned by a test rather than by
     # a comment. dst + src <= 2(d-1) must not overflow Int, i.e. d <= 2^62.
     @testset "Conditional tier ceiling" begin
-        dmax = (typemax(Int) >> 1) + 1          # 2^62 = 4611686018427387904
-        @test dmax == 4611686018427387904
+        # The ceiling is 2^62 on 64-bit and 2^30 on 32-bit, so assert the
+        # property that defines it rather than the 64-bit value: dmax is the
+        # largest d for which the add form's 2(d-1) still fits in an Int.
+        dmax = (typemax(Int) >> 1) + 1
+        @test widemul(2, dmax - 1) <= typemax(Int)
+        @test widemul(2, dmax) > typemax(Int)
 
         # Exact at the ceiling: a = d-1 in submul_mod! is the add form.
         @test QC.submul_mod!([dmax - 1], [dmax - 1], dmax - 1, dmax) ==
