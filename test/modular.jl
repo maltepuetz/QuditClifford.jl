@@ -256,4 +256,78 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             @test all(0 .<= ws[1:(2 * 3)] .< d)
         end
     end
+
+    _ref_mulcopy(src, a, d) = [mod(a * src[i], d) for i in eachindex(src)]
+    _ref_scale(dst, a, d) = [mod(a * dst[i], d) for i in eachindex(dst)]
+
+    @testset "mulcopy_mod! and scale_mod! exhaustive at small d" begin
+        for d in SMALL_D, a in 0:(d - 1)
+            src = collect(0:(d - 1))
+            dst0 = collect((d - 1):-1:0)
+
+            @test QC.mulcopy_mod!(copy(dst0), src, a, d) == _ref_mulcopy(src, a, d)
+            @test QC.scale_mod!(copy(dst0), a, d) == _ref_scale(dst0, a, d)
+        end
+    end
+
+    # The same witness as the accumulating pair, for the two writers. Neither
+    # has a conditional add to mask an unguarded Barrett tier, so at d = 131
+    # the error surfaces directly instead of being absorbed.
+    @testset "the Barrett guard is load-bearing for the writers" begin
+        d, a, s = 131, 118, 121
+        @test !QC._barrett_ok(QC._barrett_mul(d), d)
+        @test QC.mulcopy_mod!([0], [s], a, d) == [mod(a * s, d)]
+        @test QC.scale_mod!([s], a, d) == [mod(a * s, d)]
+    end
+
+    # mulcopy_mod! OVERWRITES, so a == 0 must write zeros rather than return.
+    @testset "mulcopy_mod! with a == 0 writes zeros" begin
+        for d in (2, 3, 7)
+            @test QC.mulcopy_mod!(fill(d - 1, 5), fill(d - 1, 5), 0, d) == zeros(Int, 5)
+        end
+    end
+
+    # scale_mod! with a == 1 is the identity and returns without looping.
+    @testset "scale_mod! with a == 1 is the identity" begin
+        for d in (2, 3, 443, LARGE_PRIMES[end])
+            v = [0, 1, d - 1, d ÷ 2]
+            @test QC.scale_mod!(copy(v), 1, d) == v
+        end
+    end
+
+    # Neither writer adds two stored values, so neither has a ceiling of its
+    # own beyond Barrett's -- exact right up to typemax(Int).
+    @testset "writers have no conditional-tier ceiling" begin
+        for d in vcat(LARGE_PRIMES, [(typemax(Int) >> 1) + 1, typemax(Int)])
+            src = [0, 1, d - 1]
+            for a in (0, 1, d - 1)
+                want = [Int(mod(Int128(a) * s, Int128(d))) for s in src]
+                @test QC.mulcopy_mod!(zeros(Int, 3), src, a, d) == want
+                @test QC.scale_mod!(copy(src), a, d) == want
+            end
+        end
+    end
+
+    @testset "writers at vector level: views, lengths, strides" begin
+        rng = Random.MersenneTwister(20260913)
+        for d in (2, 3, 5, 131, 443), len in (0, 1, 2, 7, 300)
+            a = rand(rng, 0:(d - 1))
+            src = rand(rng, 0:(d - 1), len)
+            dst0 = rand(rng, 0:(d - 1), len)
+
+            @test QC.mulcopy_mod!(copy(dst0), src, a, d) == _ref_mulcopy(src, a, d)
+            @test QC.scale_mod!(copy(dst0), a, d) == _ref_scale(dst0, a, d)
+
+            pad = vcat(rand(rng, 0:(d - 1), 3), dst0, rand(rng, 0:(d - 1), 3))
+            dv = view(pad, 4:(3 + len))
+            QC.scale_mod!(dv, a, d)
+            @test collect(dv) == _ref_scale(dst0, a, d)
+        end
+
+        d = 11
+        A = [mod(i * j, d) for i in 1:6, j in 1:9]
+        want = _ref_scale(collect(view(A, 3, :)), 4, d)
+        QC.scale_mod!(view(A, 3, :), 4, d)
+        @test collect(view(A, 3, :)) == want
+    end
 end

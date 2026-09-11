@@ -122,3 +122,69 @@ end
     end
     return dst
 end
+
+##############################################
+# dst .= mod.(a .* src, d)   (overwrites)    #
+##############################################
+# Unlike the accumulating pair, `a == 0` must WRITE zeros rather than return.
+@inline function mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
+    if a == 0
+        @turbo for i in eachindex(dst)
+            dst[i] = 0
+        end
+    elseif a == 1
+        copyto!(dst, src)
+    elseif a == d - 1
+        @turbo for i in eachindex(dst)
+            s = src[i]
+            dst[i] = ifelse(s == 0, 0, d - s)
+        end
+    else
+        M = _barrett_mul(d)
+        if _barrett_ok(M, d)
+            @turbo for i in eachindex(dst)
+                t = a * src[i]
+                dst[i] = t - ((t * M) >> _BARRETT_K) * d
+            end
+        else
+            @inbounds @simd for i in eachindex(dst)
+                dst[i] = mod(a * src[i], d)
+            end
+        end
+    end
+    return dst
+end
+
+##############################################
+# dst .= mod.(a .* dst, d)   (in place)      #
+##############################################
+# `a == 1` returns immediately: given the reduced-input invariant the loop is
+# the identity. At d = 2 that is EVERY call from `canonicalize!`, since the
+# pivot is nonzero (so 1) and inv(1, 2) = 1 -- about 2n^2 divisions per
+# canonicalize! that currently do nothing.
+@inline function scale_mod!(dst::AbstractVector{Int}, a::Int, d::Int)
+    a == 1 && return dst
+    if a == 0
+        @turbo for i in eachindex(dst)
+            dst[i] = 0
+        end
+    elseif a == d - 1
+        @turbo for i in eachindex(dst)
+            s = dst[i]
+            dst[i] = ifelse(s == 0, 0, d - s)
+        end
+    else
+        M = _barrett_mul(d)
+        if _barrett_ok(M, d)
+            @turbo for i in eachindex(dst)
+                t = a * dst[i]
+                dst[i] = t - ((t * M) >> _BARRETT_K) * d
+            end
+        else
+            @inbounds @simd for i in eachindex(dst)
+                dst[i] = mod(a * dst[i], d)
+            end
+        end
+    end
+    return dst
+end
