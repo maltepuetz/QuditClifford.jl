@@ -189,8 +189,157 @@ end
     )
 end
 
+@testset "Narrow and unsigned inverse tables behave as Int tables" begin
+    # The package is Int arithmetic throughout: binom2_mod_oddprime takes an
+    # Int, and measure! forms mod(-commutator * inv, d). Handed an unsigned
+    # inverse, that negation and multiply wrap in unsigned arithmetic BEFORE the
+    # mod, which left both tableau types with non-commuting generators and no
+    # error at all -- a corrupt state, not an exception. An Int32 table instead
+    # threw a MethodError from binom2_mod_oddprime. PrecomputedInvMod now
+    # converts to Vector{Int} on construction, so neither can arise; these
+    # assert that every accepted table type behaves exactly as the Int control.
+    tables = (Int[1, 2], Int32[1, 2], UInt64[1, 2])
+    mk(TT, tbl; kw...) = TT(3, 2; inversemod=QuditClifford.PrecomputedInvMod(tbl), kw...)
+
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        # 1+2. canonicalization of a GHZ tableau agrees with the Int control
+        ref = (t = mk(TT, tables[1]; state=:ghz); canonicalize!(t); copy(t.stab))
+        for tbl in tables
+            t = mk(TT, tbl; state=:ghz)
+            canonicalize!(t)
+            @test t.stab == ref
+        end
+
+        # 3. expectation / span reconstruction agrees
+        op = DoublePauli(1, 0, 1, 2, 0, 1)
+        want = expect_int!(mk(TT, tables[1]; state=:ghz), op)
+        for tbl in tables
+            @test expect_int!(mk(TT, tbl; state=:ghz), op) == want
+        end
+
+        # 4. a non-commuting measurement leaves the generators mutually
+        #    commuting -- this is the assertion the corrupt state failed.
+        ctrl = (t = mk(TT, tables[1]; state=:product, basis=:X);
+                measure!(t, op; outcome=0); t)
+        for tbl in tables
+            tab = mk(TT, tbl; state=:product, basis=:X)
+            @test measure!(tab, op; outcome=0) == 0
+            for i in 1:tab.m, j in 1:tab.m
+                @test mod(QuditClifford.commutation_col(tab.stab, i, tab.stab[:, j]), tab.d) == 0
+            end
+            @test tab.stab == ctrl.stab
+            @test tab.m == ctrl.m
+            @test all(tab.stab[:, (tab.m+1):end] .== 0)      # capacity stays zeroed
+
+            # 5. destabilizer duality and the x.z cache survive too
+            if TT === DestabilizerTableau
+                @test tab.destab == ctrl.destab
+                for i in 1:tab.m, j in 1:tab.m
+                    v = mod(sum(tab.destab[q, i] * tab.stab[tab.n + q, j] -
+                                tab.destab[tab.n + q, i] * tab.stab[q, j] for q in 1:tab.n), tab.d)
+                    @test v == (i == j ? 1 : 0)
+                end
+                for j in 1:tab.m
+                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(tab.stab, tab.n, j, tab.d)
+                end
+            end
+        end
+    end
+end
+
+@testset "Large-dimension overflow warning" begin
+    # Every phase and symplectic dot product accumulates n terms of size up to
+    # (d-1)^2, and the odd-d phase update sums two such terms, so a tableau is
+    # only safe while max(n, 2)*(d-1)^2 fits in an Int. Past that those sums
+    # wrap and every result is silently wrong, so the constructors warn.
+    safe_d(n) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
+    n = 4
+    over, under = Sys.WORD_SIZE == 64 ? (3037000507, 1518500213) : (65537, 8191)
+    @test over > safe_d(n)
+    @test under <= safe_d(n)
+
+    jit = QuditClifford.JustInTimeInvMod()
+    @test_logs (:warn, r"overflow") StabilizerTableau(over, n; state=:mixed, inversemod=jit)
+    @test_logs (:warn, r"overflow") DestabilizerTableau(over, n; state=:mixed, inversemod=jit)
+
+    # Inside the bound, silence -- from both builders, preset and raw paths.
+    @test_logs StabilizerTableau(under, n; state=:mixed, inversemod=jit)
+    @test_logs DestabilizerTableau(under, n; state=:mixed, inversemod=jit)
+    @test_logs StabilizerTableau(3, 4; state=:ghz)
+    @test_logs DestabilizerTableau(2, 8; state=:product, basis=:Z)
+    @test_logs StabilizerTableau(3, zeros(Int, 5, 2); m=2, storephase=true)
+
+    # The bound is on n*(d-1)^2, not on d alone: the same d is safe at n = 2
+    # and not at n = 256. A check on d by itself could not express this.
+    d_mid = Sys.WORD_SIZE == 64 ? 1000000007 : 32749
+    @test d_mid <= safe_d(2)
+    @test d_mid > safe_d(256)
+    @test_logs StabilizerTableau(d_mid, 2; state=:mixed, inversemod=jit)
+    @test_logs (:warn, r"overflow") StabilizerTableau(d_mid, 256; state=:mixed, inversemod=jit)
+
+    # n = 0 has no dot products at all and must not warn or divide by zero.
+    @test_logs StabilizerTableau(over, 0; state=:mixed, inversemod=jit)
+
+    # The boundary value itself is safe and one past it is not. Exercised on
+    # the helper directly: the constructors also demand a prime d, and
+    # max_safe_dimension(n) is not prime, so no tableau can sit exactly there.
+    @test_logs QuditClifford._warn_if_dimension_unsafe(safe_d(4), 4)
+    @test_logs (:warn, r"overflow") QuditClifford._warn_if_dimension_unsafe(safe_d(4) + 1, 4)
+
+    # The bound is exact, not approximate: max_safe_dimension(n) is the largest
+    # d whose worst-case accumulator still fits, and one more does not. Computed
+    # in Int128 so the check cannot itself overflow. This is what pins the
+    # max(n, 2) factor -- without it n = 1 would be off by 2x.
+    for nn in (1, 2, 4, 64, 256, 1024)
+        dm = Int128(QuditClifford.max_safe_dimension(nn))
+        terms = Int128(max(nn, 2))
+        @test terms * (dm - 1)^2 <= typemax(Int)
+        @test terms * dm^2 > typemax(Int)
+    end
+
+    # maxlog=1 budgets by the log message's id. With the default id -- the call
+    # site -- one unsafe tableau spent the budget for every dimension there will
+    # ever be, so a later, strictly worse (d, n) was silenced. The id now
+    # carries (d, n), and the policy that follows is identity, not severity:
+    # EVERY distinct pair warns once, including one that is unsafe by less than
+    # a pair already reported. n = 2 last pins that half -- its accumulator is
+    # the smallest of the three and it still speaks, which is what separates
+    # this policy from "only a worse pair warns". Asserted in one logger so the
+    # suppression is real rather than reset between blocks.
+    @testset "suppression is per (d, n), not per call site" begin
+        logger = Test.TestLogger(; respect_maxlog=true)
+        Base.CoreLogging.with_logger(logger) do
+            StabilizerTableau(over, 4; state=:mixed, inversemod=jit)
+            StabilizerTableau(over, 4; state=:mixed, inversemod=jit)  # repeat: silent
+            StabilizerTableau(over, 8; state=:mixed, inversemod=jit)  # new pair: warns
+            StabilizerTableau(over, 2; state=:mixed, inversemod=jit)  # less unsafe: warns
+        end
+        warns = [r for r in logger.logs if r.level == Base.CoreLogging.Warn]
+        @test length(warns) == 3
+        @test [r.kwargs[:n] for r in warns] == [4, 8, 2]
+        @test all(r -> r.kwargs[:d] == over, warns)
+    end
+end
+
 @testset "Modular inversion strategies" begin
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod(4)
+
+    # Integer tables are converted to Vector{Int}; non-integer ones are rejected
+    # instead, so the error names the actual mistake. Before that a Float64
+    # table was accepted and then behaved differently per dimension: fine at
+    # d = 2, which never takes the odd-d phase branch, but a MethodError from
+    # inside binom2_mod_oddprime at every odd prime.
+    @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
+    @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
+    # A table given in any integer type is converted to Vector{Int} on
+    # construction, so nothing downstream ever sees another type. Pinned by
+    # storage type, not just by value.
+    for tbl in (Int[1, 2], Int32[1, 2], UInt64[1, 2])
+        p = QuditClifford.PrecomputedInvMod(tbl)
+        @test p.lookuptable isa Vector{Int}
+        @test p(2, 3) === 2
+    end
+    @test QuditClifford.PrecomputedInvMod(Int32(5)).lookuptable isa Vector{Int}
 
     precomputed = QuditClifford.PrecomputedInvMod(Int[1, 2])
     just_in_time = QuditClifford.JustInTimeInvMod()

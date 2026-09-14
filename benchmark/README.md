@@ -71,8 +71,11 @@ deviation is definitely noise (this catches the very cheapest kernels, where
   null run produced.
 - **Read the memory table first.** Allocation counts are deterministic, so any
   change there is real and points at where to look in the time table.
-- **Reproduce locally before believing a time ratio.** The local A/B below has
-  none of this between-build scatter.
+- **Reproduce locally before believing a time ratio.** A local A/B removes the
+  two-runner variance, but it is still two builds measured at different moments
+  on a machine doing other things, so treat a single local ratio inside the
+  noise band the same way. Run it both ways round: if the ordering changes the
+  sign of a small ratio, it was noise.
 
 ## Profiles
 
@@ -80,14 +83,36 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 75 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3 | 107 | ~60 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 265 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `smoke` | n = 8 | 2, 3 | 77 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 153 | ~85 s | the pull-request job |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 267 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
+
+`d = 5` is in `ci` rather than only in `full` because it is the smallest prime
+that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
+multiply-free tiers exclusively. Without a `d = 5` row, no pull-request
+benchmark exercises that tier, and a Barrett guard that began rejecting every
+`d` would show up as no change rather than as a regression.
+
+The `probe/fallback-prime` rows are the only leaves anywhere that run the
+divide-twice fallback. `d = 131` is rejected by the Barrett guard, which is
+necessary but not sufficient: they are built from `scrambled_state`, not from a
+constructor, because a `:ghz` or `:product` tableau holds only `0`, `1` and
+`d-1` and so takes the multiply-free tier at *every* prime. `benchmark/
+test_workloads.jl` asserts the general tier is genuinely reached. `n = 16` is
+there because the fallback's per-call tier dispatch is a fixed cost that only
+shows on short columns.
+
+Only the **mid-circuit** `d = 5` leaves actually reach it. Every `micro` leaf
+starts from a constructor, whose tableau entries are just `0`, `1` and `d-1`, so
+its multipliers are always `1` or `d-1` and take the multiply-free tiers at every
+`d` -- the `:ghz` `canonicalize!` rows make zero Barrett calls even at `d = 131`.
+The mid-circuit leaves run a scrambling circuit first and hold general residues,
+which is what puts roughly half their calls on the Barrett path.
 
 ## Coverage
 
 The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
-{d = 2, d = 3} × two sizes: `construct`, the three `measure!` branches
+{d = 2, d = 3, d = 5} × two sizes: `construct`, the three `measure!` branches
 (non-commuting, deterministic, append — separated because their costs differ
 substantially and a blended workload hides which dominates), `expect!`,
 `canonicalize!`, `entropy/half`, and `reset!`.

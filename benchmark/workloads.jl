@@ -128,8 +128,47 @@ call collapses to O(n*m) -- it must be `:ghz`. `canonicalize!` has no
 `iscanonical` early return, so resetting the flag alone would not help: the
 *data* has to be restored.
 """
-function bench_canonicalize(mk)
-    tab = mk(:ghz)
+bench_canonicalize(mk) = bench_canonicalize_state(mk(:ghz))
+
+"""
+The prime behind the `fallback-prime` probe. `benchmarks.jl` builds the leaves
+from it and `test_workloads.jl` asserts the tier against it, so it is defined
+once: the two cannot name different primes.
+
+The Barrett guard REJECTS it, which is what routes the probe to the
+divide-twice fallback in `src/modular.jl`. Acceptance is not monotonic in `d`,
+so this cannot be replaced by "some prime above a threshold" -- 137, 139 and
+443 are all accepted and 131 is not.
+"""
+const FALLBACK_PRIME = 131
+
+"""
+The tableau behind the `fallback-prime` probe, and the single definition both
+`benchmarks.jl` and `test_workloads.jl` refer to, so the thing benchmarked and
+the thing asserted cannot drift apart.
+
+Rejection by the Barrett guard is necessary for the probe but not sufficient: a
+constructor-built tableau holds only `0`, `1` and `d-1`, so every elimination
+multiplier is `d-1` and it takes the multiply-free tier at any prime.
+Scrambling is what puts general residues in.
+"""
+fallback_probe_state(n::Int; d::Int = FALLBACK_PRIME) =
+    scrambled_state(DestabilizerTableau, d, n)
+
+"""
+`canonicalize!` on an already-built tableau, restored from a snapshot before
+every sample. `bench_canonicalize` is this function applied to a fresh `:ghz`
+tableau; take this one directly when the starting state has to be something
+else.
+
+A `:ghz` tableau's generators are `Z_{i-1} Z_i^{d-1}`, so the only nonzero
+entries are `1` and `d-1`, every pivot is `1` and every elimination multiplier
+is `d-1`. That takes the multiply-free tiers of `src/modular.jl` at *any* `d`
+-- measured: zero general multipliers at d = 131 -- so a `:ghz` leaf cannot
+exercise the Barrett or fallback paths no matter which prime it is given. Pass
+a scrambled tableau to reach them.
+"""
+function bench_canonicalize_state(tab)
     snap = snapshot(tab)
     return @benchmarkable(canonicalize!($tab), setup = (restore!($snap)), evals = 1)
 end

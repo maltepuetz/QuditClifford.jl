@@ -149,9 +149,7 @@ where `c_j` are taken from `tab.c_workspace` and `g_j` are active stabilizer gen
     @inbounds for j in 1:m
         aj = cvec[j]
         aj == 0 && continue
-        @inbounds @simd for i in 1:(2n)
-            res[i] = mod(res[i] - mod(aj * stab[i, j], d), d)
-        end
+        submul_mod!(view(res, 1:(2n)), view(stab, 1:(2n), j), aj, d)
     end
     return res
 end
@@ -231,9 +229,8 @@ where `g_j` are active stabilizer generators.
 
             kacc = mod(kacc + kpow + cross, d_phase)
 
-            @inbounds @simd for q in 1:n
-                zacc[q] = mod(zacc[q] + mod(aj * stab[n+q, j], d), d)
-            end
+            # zacc[1:n] accumulates the Z half of column j, i.e. stab rows n+1:2n.
+            addmul_mod!(view(zacc, 1:n), view(stab, (n+1):(2n), j), aj, d)
         end
         return kacc
     end

@@ -113,7 +113,13 @@ end
 # it. (`_canonicalize_tableau!` does need the reduced form, since
 # `coeffs_from_generators!` reads coefficients from pivot rows -- that is a
 # separate implementation and this shortcut must not be carried over to it.)
-function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMatrix
+#
+# `{Int}` is the real contract, not a narrowing for convenience: the inner
+# loops go through `src/modular.jl`, whose primitives take `AbstractVector{Int}`
+# and whose tiers assume Int arithmetic. Declaring it here makes a wrong
+# element type a signature mismatch at the call, rather than a MethodError
+# raised from inside `scale_mod!`.
+function rank_fp_cols!(A::AbstractMatrix{Int}, d::Int, inversemod::InverseMod)
     n, m = size(A)
 
     r = 1
@@ -140,9 +146,7 @@ function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMa
 
         # scale pivot column so A[r,c] = 1
         α = inversemod(A[r, c], d)
-        @turbo for i in axes(A, 1)
-            A[i, c] = mod(A[i, c] * α, d)
-        end
+        scale_mod!(view(A, axes(A, 1), c), α, d)
 
         # Eliminate row r from the columns still to be processed. That is what
         # keeps the pivot count honest; earlier columns are never read again,
@@ -150,9 +154,8 @@ function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMa
         for jj in (c+1):m
             β = A[r, jj]
             β == 0 && continue
-            @inbounds @simd for i in axes(A, 1)
-                A[i, jj] = mod(A[i, jj] - mod(β * A[i, c], d), d)
-            end
+            # jj > c, so these are disjoint columns.
+            submul_mod!(view(A, axes(A, 1), jj), view(A, axes(A, 1), c), β, d)
         end
 
         piv += 1

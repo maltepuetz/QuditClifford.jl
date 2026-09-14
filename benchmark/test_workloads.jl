@@ -102,7 +102,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # Each spine leaf is named for a measure! branch. If the operator stops
         # selecting that branch the leaf silently measures something else, and
         # nothing else in the suite would notice.
-        for n in (8, 64, 256), d in (2, 3)
+        for n in (8, 64, 256), d in (2, 3, 5)
             i, j = spread_sites(n)
             @test 1 <= i < j <= n
             @test length(unique(spread_eight(n))) == 8
@@ -127,7 +127,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
     end
 
     @testset "Mid-circuit state is scrambled, pure and deterministic" begin
-        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
             a = scrambled_state(T, d, 16; seed = 11)
             b = scrambled_state(T, d, 16; seed = 11)
             @test a.stab == b.stab                     # deterministic
@@ -173,6 +173,76 @@ include(joinpath(@__DIR__, "workloads.jl"))
             canonicalize!(tab)
             @test tab.stab != before         # the data really was non-canonical
             @test entanglement_entropy(tab, sub) == S   # same answer either way
+        end
+    end
+
+    @testset "Fallback-prime probe actually reaches the fallback tier" begin
+        # The probe exists to cover the divide-twice fallback in src/modular.jl.
+        # Choosing a prime the Barrett guard rejects is necessary but NOT
+        # sufficient: a :ghz tableau holds only 0, 1 and d-1, so every
+        # elimination multiplier is d-1 and it takes the multiply-free tier at
+        # any prime -- so a probe built from a constructor would measure
+        # nothing it claims to, however the prime is chosen. Assert the tier
+        # directly rather than inferring it from the prime.
+        d = FALLBACK_PRIME
+        @test !QuditClifford._barrett_valid(d)
+
+        # Replay the pivot scan of _canonicalize_tableau! to collect the
+        # elimination multipliers. Only the scan is duplicated; the replay is
+        # then checked against the real canonicalize! below, so it cannot drift
+        # away from the implementation without this test failing.
+        function elimination_multipliers(tab)
+            A = copy(tab.stab)[1:(2 * tab.n), :]
+            d, n, m = tab.d, tab.n, tab.m
+            mults = Int[]
+            r, c = 1, 1
+            while r <= 2n && c <= m
+                j = c
+                while j <= m && A[r, j] == 0
+                    j += 1
+                end
+                if j > m
+                    r += 1
+                    continue
+                end
+                j != c && (A[:, [c, j]] = A[:, [j, c]])
+                α = invmod(A[r, c], d)
+                for i in 1:(2n)
+                    A[i, c] = mod(A[i, c] * α, d)
+                end
+                for jj in 1:m
+                    jj == c && continue
+                    β = A[r, jj]
+                    β == 0 && continue
+                    push!(mults, β)
+                    for i in 1:(2n)
+                        A[i, jj] = mod(A[i, jj] - β * A[i, c], d)
+                    end
+                end
+                r += 1
+                c += 1
+            end
+            return mults, A
+        end
+
+        for nn in (16, 64)
+            tab = fallback_probe_state(nn; d = d)   # the exact probe fixture
+            mults, A = elimination_multipliers(tab)
+
+            # the replay is faithful: same XZ block as the real thing
+            ref = deepcopy(tab)
+            canonicalize!(ref)
+            @test A[:, 1:ref.m] == ref.stab[1:(2 * ref.n), 1:ref.m]
+
+            # and it reaches the general tier -- not just 0, 1, d-1
+            general = count(β -> β ∉ (0, 1, d - 1), mults)
+            @test !isempty(mults)
+            @test general > 0
+
+            # the contrast that makes the point: :ghz never does, at any prime
+            ghz_mults, _ = elimination_multipliers(DestabilizerTableau(d, nn; state = :ghz))
+            @test !isempty(ghz_mults)
+            @test count(β -> β ∉ (0, 1, d - 1), ghz_mults) == 0
         end
     end
 

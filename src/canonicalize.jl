@@ -66,9 +66,7 @@
             end
         end
 
-        @turbo for i in 1:nrows_block
-            tab[i, c] = mod(tab[i, c] * α, d)
-        end
+        scale_mod!(view(tab, 1:nrows_block, c), α, d)
 
         if storephase && d != 2
             # update x·z for scaled generator: (αx)·(αz) = α^2 (x·z)
@@ -101,9 +99,7 @@
                 end
             end
 
-            @inbounds @simd for i in 1:nrows_block
-                tab[i, jj] = mod(tab[i, jj] - mod(β * tab[i, c], d), d)
-            end
+            submul_mod!(view(tab, 1:nrows_block, jj), view(tab, 1:nrows_block, c), β, d)
         end
 
         pivcol_of_row[r] = c
@@ -199,15 +195,12 @@ end
             end
         end
 
-        @turbo for i in 1:nrows_block
-            tab[i, c] = mod(tab[i, c] * α, d)
-        end
+        scale_mod!(view(tab, 1:nrows_block, c), α, d)
 
         # Update destabilizer column by α^{-1} (inverse transpose of the column scaling).
+        # At d = 2 the pivot is 1, so this is a no-op that scale_mod! skips entirely.
         αinv = mod(pivot, d)
-        @inbounds @simd for i in 1:nrows_block
-            destab[i, c] = mod(destab[i, c] * αinv, d)
-        end
+        scale_mod!(view(destab, 1:nrows_block, c), αinv, d)
 
         if storephase && d != 2
             # update x·z for scaled generator: (αx)·(αz) = α^2 (x·z)
@@ -240,15 +233,12 @@ end
                 end
             end
 
-            @inbounds @simd for i in 1:nrows_block
-                tab[i, jj] = mod(tab[i, jj] - mod(β * tab[i, c], d), d)
-            end
+            submul_mod!(view(tab, 1:nrows_block, jj), view(tab, 1:nrows_block, c), β, d)
 
             # Update inverse-transpose dual basis for S_jj <- S_jj - β*S_c.
             # All eliminated columns contribute to the pivot dual D_c.
-            @inbounds @simd for i in 1:nrows_block
-                destab[i, c] = mod(destab[i, c] + mod(β * destab[i, jj], d), d)
-            end
+            # jj != c, so these are disjoint columns of destab.
+            addmul_mod!(view(destab, 1:nrows_block, c), view(destab, 1:nrows_block, jj), β, d)
         end
 
         pivcol_of_row[r] = c

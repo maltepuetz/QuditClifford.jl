@@ -71,3 +71,49 @@ represented state, [`canonicalize!`](@ref) changes the generator basis, and
 [`expect!`](@ref) may canonicalize a plain stabilizer tableau as part of its
 span calculation. The represented quantum state is unchanged by
 canonicalization.
+
+## Supported arithmetic envelope
+
+Tableau entries, phases and dot products are all `Int`. Every phase and
+symplectic dot product sums `n` terms of size up to ``(d-1)^2``, and the
+odd-`d` phase update adds two such terms, so results are exact only while
+
+```math
+\max(n, 2)\,(d-1)^2 \le \texttt{typemax(Int)}
+```
+
+Past that the accumulators wrap silently, and there is no error to notice. The
+tableau constructors therefore emit a warning when `d` is too large for the
+given `n`, naming the largest safe dimension. The bound is the worst case --
+every entry equal to `d-1` -- so it is a warning rather than an error: sparse
+tableaux past it often still compute correctly.
+
+On a 64-bit host the limit is `d ≤ 2147483648` at `n = 1`, `d ≤ 189812532` at
+`n = 256`, and `d ≤ 94906266` at `n = 1024`. In practice only
+`JustInTimeInvMod` can reach it, since `PrecomputedInvMod` allocates a table of
+`d-1` integers and exhausts memory first.
+
+## Modular inversion strategies
+
+Every tableau carries a strategy for inverting residues mod `d`, selected with
+the `inversemod` keyword at construction. Neither strategy is exported, so name
+them through the module:
+
+```jldoctest
+julia> jit = QuditClifford.JustInTimeInvMod();
+
+julia> tab = StabilizerTableau(5, 4; state = :ghz, inversemod = jit);
+
+julia> is_pure(tab)
+true
+```
+
+The default is `QuditClifford.PrecomputedInvMod(d)`, which builds a `d-1` entry
+lookup table once. `QuditClifford.JustInTimeInvMod()` calls `Base.invmod` per
+query and stores nothing, which is what makes the large dimensions above
+reachable at all.
+
+`PrecomputedInvMod` stores its table as a `Vector{Int}`, and both strategies
+return an `Int`, so the package is `Int` arithmetic throughout. A table given
+in a narrower or unsigned integer type is converted on construction; one whose
+element type is not an `Integer` is rejected there.

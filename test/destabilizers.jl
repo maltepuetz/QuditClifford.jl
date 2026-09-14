@@ -279,3 +279,144 @@ end
         end
     end
 end
+
+# The dual column is rescaled by the pivot when the stabilizer column is scaled
+# by its inverse. Every other canonicalization test here happens to have
+# pivot == 1 -- forced at d = 2, accidental at d = 3 -- which makes that
+# rescaling an identity operation and leaves the site unguarded. This one uses
+# Z_1^2, so the pivot is 2 and inv(2, 3) = 2.
+@testset "Canonicalization rescales duals when the pivot is not 1" begin
+    raw = zeros(Int, 5, 2)
+    raw[3, 1] = 2      # S_1 = Z_1^2  -> pivot 2
+    raw[3, 2] = 1      # S_2 = Z_1 Z_2^2
+    raw[4, 2] = 2
+
+    tab = DestabilizerTableau(3, raw; m=2, storephase=true)
+    _assert_duality(tab)
+
+    canonicalize!(tab)
+
+    @test tab.iscanonical
+    _assert_duality(tab)
+
+    # The exact canonical form, not just "it is canonical and dual". S_1 = Z_1^2
+    # normalizes to Z_1 and then clears Z_1 out of S_2, leaving Z_2^2 -> Z_2.
+    # Phases stay 0 because both generators are Z-type, so every x.z term is 0.
+    @test tab.stab[:, 1] == [0, 0, 1, 0, 0]
+    @test tab.stab[:, 2] == [0, 0, 0, 1, 0]
+    @test tab.destab[:, 1] == [1, 0, 0, 0]
+    @test tab.destab[:, 2] == [0, 1, 0, 0]
+    @test tab.pivcol_of_row == [0, 0, 1, 2]     # pivot metadata
+    @test tab.xdotz_cache[1:2] == [0, 0]
+
+    # RCEF structurally: each pivot is 1 and is alone in its row.
+    for r in 1:(2 * tab.n)
+        c = tab.pivcol_of_row[r]
+        c == 0 && continue
+        @test tab.stab[r, c] == 1
+        for jj in 1:tab.m
+            jj == c || @test tab.stab[r, jj] == 0
+        end
+    end
+
+    # A StabilizerTableau from the same raw input canonicalizes identically.
+    ref = StabilizerTableau(3, copy(raw); m=2, storephase=true)
+    canonicalize!(ref)
+    @test ref.stab == tab.stab
+    @test ref.pivcol_of_row == tab.pivcol_of_row
+end
+
+# The commuting-append branch of measure! (case 3: commutes, not in span) with
+# a projection that actually has work to do. Every other destabilizer circuit
+# test starts from a pure state with m == n, where this branch cannot fire, and
+# the two mixed-state tests that do reach it are degenerate: at d = 2 the sign
+# of the projection does not matter and inv(beta) is always 1, and at n = 1,
+# m = 0 both loops have zero iterations.
+#
+# S_1 = X_1 X_2^e commutes with X_1^a but does not span it, so measuring X_1^a
+# appends. The dual constructed for the residual is Z_1, which does NOT commute
+# with S_1 -- that is what makes the projection loop run -- and beta != 1 for
+# a != 1, which is what makes the inv(beta) scaling observable.
+@testset "Commuting append with a non-trivial projection at odd d" begin
+    for e in (1, 2), a in (1, 2)
+        n = 2
+        raw = zeros(Int, 2n + 1, n)
+        raw[1, 1] = 1
+        raw[2, 1] = e                       # S_1 = X_1 X_2^e
+
+        tab = DestabilizerTableau(3, raw; m=1, storephase=true)
+        _assert_duality(tab)
+
+        measure!(tab, SinglePauli(1, a, 0); outcome=0, phase_policy=1)
+
+        @test tab.m == 2
+        _assert_duality(tab)
+    end
+
+    # Two existing generators, so the projection and the re-orthogonalization
+    # loops both run more than once.
+    n = 3
+    raw = zeros(Int, 2n + 1, n)
+    raw[1, 1] = 1; raw[2, 1] = 1            # S_1 = X_1 X_2
+    raw[2, 2] = 1; raw[3, 2] = 2            # S_2 = X_2 X_3^2
+
+    tab = DestabilizerTableau(3, raw; m=2, storephase=true)
+    _assert_duality(tab)
+
+    measure!(tab, SinglePauli(1, 2, 0); outcome=0, phase_policy=1)
+
+    @test tab.m == 3
+    _assert_duality(tab)
+end
+
+# The two modular tiers that no other test in this file reaches. d = 5 accepts
+# Barrett and d = 131 rejects it, so these run the shift-reduce and the
+# divide-twice paths of src/modular.jl respectively -- through measure!, not
+# through the kernel directly. The state invariants are what would break if a
+# tier computed the wrong residue.
+@testset "Measurement across the modular tiers" begin
+    @test QuditClifford._barrett_valid(5)        # Barrett tier
+    @test !QuditClifford._barrett_valid(131)     # divide-twice fallback
+
+    # DoublePauli(1,1,0, 2,3,0) on a d=5 Z-basis product state anticommutes
+    # with both Z_1 and Z_2, with commutators 4 and 2, so the second generator
+    # is multiplied by the replaced one to the power
+    # mod(-2 * inv(4, 5), 5) = 2 -- a genuine Barrett multiplier, not 0/1/d-1.
+    cases = ((5, DoublePauli(1, 1, 0, 2, 3, 0), 2),
+             (131, DoublePauli(1, 1, 0, 2, 3, 0), nothing))
+
+    for (d, op, want_mult) in cases, TT in (StabilizerTableau, DestabilizerTableau)
+        n = 3
+        tab = TT(d, n; state=:product, basis=:Z)
+
+        if want_mult !== nothing
+            c1 = mod(QuditClifford.commutation_col(tab.stab, 1, op), d)
+            c2 = mod(QuditClifford.commutation_col(tab.stab, 2, op), d)
+            @test mod(-c2 * invmod(c1, d), d) == want_mult
+        end
+
+        out = measure!(tab, op; outcome=0, phase_policy=1)
+        @test out == 0
+        @test tab.m == n
+
+        # generators stay mutually commuting
+        for i in 1:tab.m, j in 1:tab.m
+            @test mod(QuditClifford.commutation_col(tab.stab, i, tab.stab[:, j]), d) == 0
+        end
+        # inactive capacity stays zeroed
+        @test all(tab.stab[:, (tab.m + 1):end] .== 0)
+
+        if TT === DestabilizerTableau
+            _assert_duality(tab)
+            for j in 1:tab.m
+                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(tab.stab, n, j, d)
+            end
+            @test all(tab.xdotz_cache[(tab.m + 1):end] .== 0)
+        end
+
+        # canonicalization at the same prime agrees between the two types
+        canonicalize!(tab)
+        @test tab.iscanonical
+        TT === DestabilizerTableau && _assert_duality(tab)
+    end
+end

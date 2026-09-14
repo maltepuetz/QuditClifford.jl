@@ -18,12 +18,16 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~60 s per revision
-#   full   n up to 512         workflow_dispatch; adds d = 5, 7 and the circuits
+#   ci     n in (64, 256)      the PR job; ~85 s per revision
+#   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
+#
+# d = 5 is in `ci` because it is the smallest prime that takes the Barrett tier
+# in src/modular.jl. Without it no pull-request benchmark executes that tier at
+# all, and a guard that started rejecting every d would look like no change.
 const CONFIG = if PROFILE == "smoke"
     (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false)
 elseif PROFILE == "ci"
-    (ns = (64, 256), ds = (2, 3), probe_n = 256, circuits = false)
+    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false)
 elseif PROFILE == "full"
     (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true)
 else
@@ -77,6 +81,27 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     let mk = tableau_maker(DestabilizerTableau, d, n; inversemod = QuditClifford.JustInTimeInvMod())
         g["invmod=jit/canonicalize!"] = bench_canonicalize(mk)
         g["invmod=jit/measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
+    end
+
+    # A prime the Barrett guard REJECTS, so these rows run the divide-twice
+    # fallback in src/modular.jl. Nothing else in any profile does, so without
+    # them the fallback has no benchmark coverage at all and could regress
+    # unseen. Small n as well as the probe size, because the fallback's
+    # per-call tier dispatch is a fixed cost that only shows on short columns.
+    #
+    # `unique` because the two sizes coincide if a profile ever sets
+    # probe_n = 16: both leaves would take the same key, the second would
+    # overwrite the first, and the profile would silently lose a row.
+    let d_fb = FALLBACK_PRIME
+        for nn in unique((16, n))
+            # scrambled, NOT :ghz: a constructor-built tableau holds only 0, 1
+            # and d-1, so all its elimination multipliers are d-1 and it takes
+            # the multiply-free tiers at every prime. Scrambling puts general
+            # residues in, which is what actually reaches the fallback.
+            # `test_workloads.jl` asserts that it does.
+            g["fallback-prime/d=$d_fb/n=$nn/canonicalize!"] =
+                bench_canonicalize_state(fallback_probe_state(nn; d = d_fb))
+        end
     end
 
     # Pauli sparsity. commutation_col is O(weight) for the FewQuditPauli types
