@@ -13,6 +13,14 @@
 # `dst` and `src` must not alias.  Disjoint columns of one matrix are fine and
 # are relied on; overlapping ranges are unsupported and unchecked.
 #
+# `dst` and `src` must also have IDENTICAL AXES.  The loops run over
+# `eachindex(dst)` and index `src` with the same `i`, so a shorter `src` is an
+# out-of-bounds read that `@turbo` does not check -- a plausible wrong answer
+# rather than an error -- and `mulcopy_mod!`'s `copyto!` tier would silently
+# stop early where the other tiers ran on.  Unlike the two preconditions above
+# this one is cheap to test, so it is a `@boundscheck`: active by default, and
+# elided at a caller that has already proved it with `@inbounds`.
+#
 # Phase rows use a different modulus (`phase_modulus`) and are deliberately not
 # handled here.
 
@@ -69,6 +77,14 @@ const _BARRETT_VALID = Bool[_barrett_ok(_barrett_mul(d), d) for d in 1:_BARRETT_
     return ispow2(d) && ((1 << _BARRETT_K) % d == 0)
 end
 
+# `@noinline` so the message construction stays out of the inlined bodies: the
+# three two-argument primitives are `@inline` at a dozen call sites, and the
+# error path is never taken. (`scale_mod!` has one vector, so nothing to check.)
+@noinline function _throw_axes_mismatch(fn, dst, src)
+    throw(DimensionMismatch(
+        "$fn: dst and src must have identical axes; got $(axes(dst)) and $(axes(src))."))
+end
+
 ##############################################
 # dst .= mod.(dst .- a .* src, d)            #
 ##############################################
@@ -93,6 +109,7 @@ end
 # in helper.jl and the conventions page) caps d near 2^31 already. The `a == 1`
 # body subtracts, so it is exact for every d.
 @inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
     a == 0 && return dst
     if a == 1
         @turbo for i in eachindex(dst)
@@ -128,6 +145,7 @@ end
 # Mirror of `submul_mod!` with the signs exchanged, so here `a == 1` is the add
 # form (ceiling d <= 2^62) and `a == d-1` is the subtract form (exact always).
 @inline function addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("addmul_mod!", dst, src)
     a == 0 && return dst
     if a == 1
         @turbo for i in eachindex(dst)
@@ -162,6 +180,7 @@ end
 ##############################################
 # Unlike the accumulating pair, `a == 0` must WRITE zeros rather than return.
 @inline function mulcopy_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("mulcopy_mod!", dst, src)
     if a == 0
         @turbo for i in eachindex(dst)
             dst[i] = 0

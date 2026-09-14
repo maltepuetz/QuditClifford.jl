@@ -324,6 +324,37 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test QC.scale_mod!([s], a, d) == [mod(a * s, d)]
     end
 
+    # The tier split is only sound if every tier writes the same elements, and
+    # a mismatched pair breaks that DIFFERENTLY per tier: `copyto!` in
+    # mulcopy_mod!'s a == 1 path stops at the shorter argument, while the
+    # @turbo tiers run over eachindex(dst) and read past the end of a short
+    # src without checking -- a plausible wrong answer, not an error. So the
+    # check sits ahead of the a == 0 early return, and the test sweeps every
+    # multiplier rather than a representative one: a check placed after that
+    # return would pass at a == 1 and a == d-1 and still let a == 0 through.
+    @testset "mismatched axes are rejected at every tier" begin
+        d = 7   # 0, 1, d-1, Barrett and (at d = 131 below) fallback
+        for dd in (d, 131), a in 0:(dd - 1)
+            @test_throws DimensionMismatch QC.submul_mod!(zeros(Int, 5), zeros(Int, 4), a, dd)
+            @test_throws DimensionMismatch QC.addmul_mod!(zeros(Int, 4), zeros(Int, 5), a, dd)
+            @test_throws DimensionMismatch QC.mulcopy_mod!(zeros(Int, 5), zeros(Int, 4), a, dd)
+        end
+
+        # Equal axes still pass, including the copyto! tier and length 0.
+        @test QC.mulcopy_mod!(zeros(Int, 4), fill(3, 4), 1, d) == fill(3, 4)
+        @test QC.submul_mod!(Int[], Int[], 3, d) == Int[]
+
+        # Equal LENGTH is not the contract -- equal axes is. A view is 1-based
+        # whatever it is a view of, so both of these have axes (1:4,) and are
+        # accepted; the check is written on axes so that an offset-indexed
+        # array cannot slip through on a length match.
+        pad = collect(0:9)
+        @test QC.submul_mod!(view(pad, 2:5), view(pad, 7:10), 1, d) == [mod(1 - 6, d),
+                                                                        mod(2 - 7, d),
+                                                                        mod(3 - 8, d),
+                                                                        mod(4 - 9, d)]
+    end
+
     # mulcopy_mod! OVERWRITES, so a == 0 must write zeros rather than return.
     @testset "mulcopy_mod! with a == 0 writes zeros" begin
         for d in (2, 3, 7)
