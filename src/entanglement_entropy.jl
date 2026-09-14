@@ -113,7 +113,13 @@ end
 # it. (`_canonicalize_tableau!` does need the reduced form, since
 # `coeffs_from_generators!` reads coefficients from pivot rows -- that is a
 # separate implementation and this shortcut must not be carried over to it.)
-function rank_fp_cols!(A::T, d::Int, inversemod::InverseMod) where T<:AbstractMatrix
+#
+# `{Int}` is the real contract, not a narrowing for convenience: the inner
+# loops go through `src/modular.jl`, whose primitives take `AbstractVector{Int}`
+# and whose tiers assume Int arithmetic. Declaring it here makes a wrong
+# element type a signature mismatch at the call, rather than a MethodError
+# raised from inside `scale_mod!`.
+function rank_fp_cols!(A::AbstractMatrix{Int}, d::Int, inversemod::InverseMod)
     n, m = size(A)
 
     r = 1

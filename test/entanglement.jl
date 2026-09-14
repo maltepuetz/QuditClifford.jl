@@ -264,6 +264,20 @@ end
 qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.PrecomputedInvMod(d))
 
 @testset "rank_fp_cols! pivot count" begin
+    # The signature says AbstractMatrix{Int} because the inner loops go through
+    # src/modular.jl, whose primitives are AbstractVector{Int}. Pin that the
+    # rejection happens at the signature: without the element type on the
+    # argument the call is accepted and then dies inside scale_mod!, which
+    # reports a MethodError naming a function the caller never mentioned.
+    @testset "Element type is part of the signature" begin
+        A = Int[1 0 1; 0 1 1; 1 1 0]
+        @test qc_rank(A, 2) == 2
+        for AT in (Int32, Int64, UInt8, Float64)
+            AT === Int && continue
+            @test_throws MethodError qc_rank(AT.(A), 2)
+        end
+    end
+
     @testset "Structured matrices with known rank" begin
         for d in (2, 3, 5, 7)
             @test qc_rank(zeros(Int, 6, 4), d) == 0
