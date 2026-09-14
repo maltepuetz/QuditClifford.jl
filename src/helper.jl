@@ -23,12 +23,27 @@
 #
 # `maxlog=1` keeps a construction loop from drowning the session, but Julia keys
 # that budget by the log message's `id`, which defaults to the call site -- one
-# budget for every dimension there will ever be. That silenced the second and
-# later warnings even when they were for a strictly worse `(d, n)` than the one
-# that spent the budget, which defeats the point of a warning whose whole
-# subject is that the results are otherwise silently wrong. Give each `(d, n)`
-# its own `id` instead: a loop over one unsafe tableau still warns exactly once,
-# and a new way to be unsafe still gets said out loud.
+# budget for every dimension there will ever be. The first unsafe tableau a
+# session builds would then silence every later one, including a strictly worse
+# `(d, n)`, which defeats the point of a warning whose whole subject is that
+# the results are otherwise silently wrong. So the `id` carries `(d, n)`.
+#
+# The policy that buys is "every distinct `(d, n)` warns once", NOT "a worse
+# one warns": a pair that is unsafe by less than one already reported still
+# gets its own warning, because the comparison is identity, not severity.
+# Accepted deliberately, with its cost stated rather than discovered:
+#
+#   - a sweep over `n` at one unsafe `d` warns once per `n`, so an `n = 1:10_000`
+#     scaling study past the bound prints 10_000 warnings, not one;
+#   - each distinct pair permanently interns a `Symbol` and adds an entry to the
+#     logger's `message_limits`, neither of which is ever freed.
+#
+# Both are unbounded in principle. Neither is reachable without already being
+# outside the range where this package returns correct numbers, which is the
+# situation the warning exists to make loud -- a quieter policy would spend its
+# one budget on whichever configuration happened to come first. If that trade
+# ever needs revisiting, bucketing `n` (say by `floor(log2(n))`) keeps "a new
+# order of magnitude speaks up" while bounding the id set.
 #
 # `isqrt` keeps the test itself from overflowing, as in `_barrett_ok`.
 @inline max_safe_dimension(n::Int) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
