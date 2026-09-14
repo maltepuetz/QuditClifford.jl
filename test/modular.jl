@@ -112,8 +112,11 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             end
         end
 
-        # What item C will depend on: every accepted tier's largest
-        # intermediate (d-1)^2 * M fits in Int32.
+        # K = 20 is chosen so that every accepted tier's largest intermediate,
+        # (d-1)^2 * M, stays inside Int32. That is what would let the tableau
+        # element type be narrowed below Int later without revisiting the
+        # Barrett constants, and it is the reason K is not simply as large as
+        # Int allows.
         @testset "accepted intermediates fit in Int32" begin
             worst = 0
             for d in _primes_upto(100_000)
@@ -268,6 +271,18 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test !QC._barrett_valid(131)
         @test QC._barrett_valid(137)
         @test QC._barrett_valid(443)
+    end
+
+    # The table read is `@inbounds`, so a non-positive `d` used to run off the
+    # front of it and return whatever was in memory -- `_barrett_valid(-7)`
+    # answered `true`, which would have selected a Barrett tier for a modulus
+    # `_barrett_mul` cannot even compute. No caller can reach it (both builders
+    # demand a prime `d`), so only a direct test pins the guard.
+    @testset "_barrett_valid rejects non-positive d without reading out of bounds" begin
+        for d in (0, -1, -7, -1024, typemin(Int))
+            @test QC._barrett_valid(d) === false
+        end
+        @test QC._barrett_valid(1) === QC._barrett_ok(QC._barrett_mul(1), 1)
     end
 
     # The invariant the whole file depends on: everything that reaches a

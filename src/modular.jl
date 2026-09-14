@@ -41,9 +41,10 @@ const _BARRETT_K = 20
     return (d - 1) <= isqrt(q)         # (d-1)^2 <= q, without forming the product
 end
 
-# `_barrett_ok` costs two divisions and an `isqrt`, and the primitives ran it on
-# every general-multiplier call.  On a length-8 column at a fallback prime that
-# is ~16-20% of the call; by length 64 it is ~1%.  It can only be true for
+# `_barrett_ok` costs two divisions and an `isqrt`, which is why the tier check
+# below is a table lookup rather than a call to it: the cost is then paid once
+# per call instead of being re-derived, and it never competes with the loop it
+# guards on a short column.  It can only be true for
 # `d <= 2^(K/2)`: `q <= 2^K - 1`, so `isqrt(q) <= 1023` and `(d-1) <= isqrt(q)`
 # fails above that -- unless `d` divides `2^K` exactly, which beyond `2^(K/2)`
 # means `d` is a power of two, and so never a prime.  Precompute that range.
@@ -55,7 +56,15 @@ end
 const _BARRETT_TABLE_MAX = 1 << (_BARRETT_K >> 1)
 const _BARRETT_VALID = Bool[_barrett_ok(_barrett_mul(d), d) for d in 1:_BARRETT_TABLE_MAX]
 
+# The lower bound on the table index is load-bearing, not decorative: the read
+# is `@inbounds`, so a non-positive `d` would read off the front of the table
+# and return whatever was there. No caller can reach that today -- both tableau
+# builders reject a non-prime `d` -- but the guard is one comparison and the
+# alternative is undefined behaviour. `false` is the right answer there anyway:
+# it routes to the fallback tier rather than claiming a Barrett constant for a
+# modulus `_barrett_mul` could not even compute.
 @inline function _barrett_valid(d::Int)
+    d < 1 && return false
     d <= _BARRETT_TABLE_MAX && return @inbounds _BARRETT_VALID[d]
     return ispow2(d) && ((1 << _BARRETT_K) % d == 0)
 end
@@ -185,8 +194,9 @@ end
 ##############################################
 # `a == 1` returns immediately: given the reduced-input invariant the loop is
 # the identity. At d = 2 that is EVERY call from `canonicalize!`, since the
-# pivot is nonzero (so 1) and inv(1, 2) = 1 -- about 2n^2 divisions per
-# canonicalize! that currently do nothing.
+# pivot is nonzero (so 1) and inv(1, 2) = 1 -- so the early return skips 2n^2
+# identity divisions per `_canonicalize_tableau!`, and 4n^2 per
+# `_canonicalize_tableau_with_destab!`, which scales `tab` and `destab` in turn.
 @inline function scale_mod!(dst::AbstractVector{Int}, a::Int, d::Int)
     a == 1 && return dst
     if a == 0
