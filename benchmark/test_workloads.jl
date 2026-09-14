@@ -181,9 +181,10 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # Choosing a prime the Barrett guard rejects is necessary but NOT
         # sufficient: a :ghz tableau holds only 0, 1 and d-1, so every
         # elimination multiplier is d-1 and it takes the multiply-free tier at
-        # any prime. The first version of this probe did exactly that and
-        # measured nothing it claimed to. So assert the tier directly.
-        d = 131
+        # any prime -- so a probe built from a constructor would measure
+        # nothing it claims to, however the prime is chosen. Assert the tier
+        # directly rather than inferring it from the prime.
+        d = FALLBACK_PRIME
         @test !QuditClifford._barrett_valid(d)
 
         # Replay the pivot scan of _canonicalize_tableau! to collect the
@@ -240,7 +241,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
 
             # the contrast that makes the point: :ghz never does, at any prime
             ghz_mults, _ = elimination_multipliers(DestabilizerTableau(d, nn; state = :ghz))
-            @test all(β -> β in (0, 1, d - 1), ghz_mults)
+            @test !isempty(ghz_mults)
             @test count(β -> β ∉ (0, 1, d - 1), ghz_mults) == 0
         end
     end

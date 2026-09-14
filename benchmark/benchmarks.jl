@@ -88,8 +88,12 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
     # them the fallback has no benchmark coverage at all and could regress
     # unseen. Small n as well as the probe size, because the fallback's
     # per-call tier dispatch is a fixed cost that only shows on short columns.
-    let d_fb = 131
-        for nn in (16, n)
+    #
+    # `unique` because the two sizes coincide if a profile ever sets
+    # probe_n = 16: both leaves would take the same key, the second would
+    # overwrite the first, and the profile would silently lose a row.
+    let d_fb = FALLBACK_PRIME
+        for nn in unique((16, n))
             # scrambled, NOT :ghz: a constructor-built tableau holds only 0, 1
             # and d-1, so all its elimination multipliers are d-1 and it takes
             # the multiply-free tiers at every prime. Scrambling puts general
