@@ -296,6 +296,26 @@ end
         @test terms * (dm - 1)^2 <= typemax(Int)
         @test terms * dm^2 > typemax(Int)
     end
+
+    # maxlog=1 budgets by the log message's id. With the default id -- the call
+    # site -- one unsafe tableau spent the budget for every dimension there will
+    # ever be, so a later, strictly worse (d, n) was silenced. The id now
+    # carries (d, n): repeats of one tableau still warn once, a new way to be
+    # unsafe still warns. Both halves are asserted, in one logger so the
+    # suppression is real rather than reset between blocks.
+    @testset "suppression is per (d, n), not per call site" begin
+        d1, n1 = over, 4
+        d2, n2 = over, 8                      # same d, different n
+        logger = Test.TestLogger(; respect_maxlog=true)
+        Base.CoreLogging.with_logger(logger) do
+            StabilizerTableau(d1, n1; state=:mixed, inversemod=jit)
+            StabilizerTableau(d1, n1; state=:mixed, inversemod=jit)   # repeat: silent
+            StabilizerTableau(d2, n2; state=:mixed, inversemod=jit)   # new pair: warns
+        end
+        warns = [r for r in logger.logs if r.level == Base.CoreLogging.Warn]
+        @test length(warns) == 2
+        @test [r.kwargs[:n] for r in warns] == [n1, n2]
+    end
 end
 
 @testset "Modular inversion strategies" begin

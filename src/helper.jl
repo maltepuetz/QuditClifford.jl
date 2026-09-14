@@ -19,17 +19,27 @@
 # Warn rather than throw: the bound is the worst case, every entry equal to
 # `d-1`, and real tableaux are sparse enough that plenty of workloads past it
 # still compute correctly. Refusing them would be wrong; saying nothing is
-# worse. `maxlog=1` keeps a construction loop from drowning the session.
+# worse.
+#
+# `maxlog=1` keeps a construction loop from drowning the session, but Julia keys
+# that budget by the log message's `id`, which defaults to the call site -- one
+# budget for every dimension there will ever be. That silenced the second and
+# later warnings even when they were for a strictly worse `(d, n)` than the one
+# that spent the budget, which defeats the point of a warning whose whole
+# subject is that the results are otherwise silently wrong. Give each `(d, n)`
+# its own `id` instead: a loop over one unsafe tableau still warns exactly once,
+# and a new way to be unsafe still gets said out loud.
 #
 # `isqrt` keeps the test itself from overflowing, as in `_barrett_ok`.
 @inline max_safe_dimension(n::Int) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
 
-@inline function _warn_if_dimension_unsafe(d::Int, n::Int)
+function _warn_if_dimension_unsafe(d::Int, n::Int)
     n == 0 && return nothing
     dmax = max_safe_dimension(n)
     d <= dmax && return nothing
+    id = Symbol("qc_dimension_unsafe_", d, "_", n)
     @warn "Qudit dimension is large enough that phase and symplectic dot products \
-           can overflow Int, giving silently incorrect results." d n max_safe_d = dmax maxlog = 1
+           can overflow Int, giving silently incorrect results." d n max_safe_d = dmax _id = id maxlog = 1
     return nothing
 end
 
