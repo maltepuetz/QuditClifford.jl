@@ -2,11 +2,13 @@
 #
 # Every routine in this file assumes its inputs are ALREADY REDUCED into
 # [0, d).  Tableau entries, destabilizer entries and the operator workspaces
-# all satisfy that: `_build_stabilizer_tableau` reduces raw input, the preset
-# fillers write reduced values, and every `set_operator!` method reduces each
-# exponent on write.  That invariant is what turns the outer reduction into a
-# single conditional add or subtract instead of a division.  Handing one of
-# these functions an unreduced value gives a WRONG answer, not a slow one.
+# all satisfy that: `_build_stabilizer_tableau` and `_build_destabilizer_tableau`
+# both reduce raw input (the latter covers `destab`, which these primitives also
+# write), the preset fillers write reduced values, and every `set_operator!`
+# method reduces each exponent on write.  That invariant is what turns the outer
+# reduction into a single conditional add or subtract instead of a division.
+# Handing one of these functions an unreduced value gives a WRONG answer, not a
+# slow one.
 #
 # `dst` and `src` must not alias.  Disjoint columns of one matrix are fine and
 # are relied on; overlapping ranges are unsupported and unchecked.

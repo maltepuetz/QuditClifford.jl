@@ -258,17 +258,17 @@ end
             end
         end
 
+        # Row-strided rather than column-strided, but the contract is the same:
+        # `rebuild_destabilizers!` fills `A` through `mod(..., d)`, so every
+        # entry is reduced into [0, d) before this runs.
         α = inversemod(A[r, c], d)
-        @turbo for j in c:ncols
-            A[r, j] = mod(A[r, j] * α, d)
-        end
+        scale_mod!(view(A, r, c:ncols), α, d)
 
         for rr in (r+1):m
             β = A[rr, c]
             β == 0 && continue
-            @turbo for j in c:ncols
-                A[rr, j] = mod(A[rr, j] - mod(β * A[r, j], d), d)
-            end
+            # rr >= r+1, so these are disjoint rows.
+            submul_mod!(view(A, rr, c:ncols), view(A, r, c:ncols), β, d)
         end
 
         pivcount += 1
@@ -313,20 +313,21 @@ function _inv_matrix_mod!(
             end
         end
 
+        # Two matrices, so this is two passes where it used to be one fused
+        # loop. Both start reduced -- `Awork` is copied from the `mod`-reduced
+        # `A`, `invA` from the identity -- and at d = 2 every α is 1, which
+        # `scale_mod!` skips outright.
         α = inversemod(Awork[c, c], d)
-        @turbo for j in 1:m
-            Awork[c, j] = mod(Awork[c, j] * α, d)
-            invA[c, j] = mod(invA[c, j] * α, d)
-        end
+        scale_mod!(view(Awork, c, 1:m), α, d)
+        scale_mod!(view(invA, c, 1:m), α, d)
 
         for rr in 1:m
             rr == c && continue
             β = Awork[rr, c]
             β == 0 && continue
-            @turbo for j in 1:m
-                Awork[rr, j] = mod(Awork[rr, j] - mod(β * Awork[c, j], d), d)
-                invA[rr, j] = mod(invA[rr, j] - mod(β * invA[c, j], d), d)
-            end
+            # rr != c (guarded above), so these are disjoint rows.
+            submul_mod!(view(Awork, rr, 1:m), view(Awork, c, 1:m), β, d)
+            submul_mod!(view(invA, rr, 1:m), view(invA, c, 1:m), β, d)
         end
     end
 
