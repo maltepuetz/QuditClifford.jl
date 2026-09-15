@@ -89,13 +89,6 @@ mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
     inversemod::T                      # inverse mod function for dimension d
 
-    # workspaces for destabilizer construction
-    destab_A::Matrix{Int}              # n × 2n
-    destab_Awork::Matrix{Int}          # n × 2n
-    destab_Ap::Matrix{Int}             # n × n
-    destab_inv::Matrix{Int}            # n × n
-    destab_pivots::Vector{Int}         # length n
-
     # workspaces
     workspace::Matrix{Int}             # 2n×n (used by entanglement_entropy)
     generator_workspace::Vector{Int}   # length 2n + storephase
@@ -213,11 +206,6 @@ function _build_destabilizer_tableau(
         storephase,
         false,
         inversemod,
-        zeros(Int, n, 2n),
-        zeros(Int, n, 2n),
-        zeros(Int, n, n),
-        zeros(Int, n, n),
-        zeros(Int, n),
         zeros(Int, 2n, n),
         zeros(Int, nrows),
         zeros(Int, 2n),
@@ -361,8 +349,19 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     fill!(destab, 0)
     m == 0 && return destab
 
+    # These five are scratch for this call and nothing else. They used to be
+    # tableau fields, which cost 6n^2 + n Ints on EVERY DestabilizerTableau --
+    # about half its footprint -- to serve a function that runs at most once
+    # per tableau, on the raw-matrix path alone. Presets reach
+    # `_preset_destabilizers!` and never come here at all, so they were paying
+    # for scratch they could not use. Locals cost one allocation on a path that
+    # is already O(n^3).
+    #
+    # `zeros` rather than `undef`: rows m+1:n of A and Awork are never written
+    # here, and this keeps them defined, as the preallocated fields did.
+
     # Build A = Sᵀ J (size m × 2n)
-    A = tab.destab_A
+    A = zeros(Int, n, 2n)
     @inbounds for k in 1:m
         for q in 1:n
             A[k, q] = mod(stab[n+q, k], d)
@@ -370,17 +369,17 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
         end
     end
 
-    Awork = tab.destab_Awork
+    Awork = zeros(Int, n, 2n)
     @turbo for j in 1:(2n), i in 1:m
         Awork[i, j] = A[i, j]
     end
 
-    pivots = tab.destab_pivots
+    pivots = zeros(Int, n)
     pivcount = _pivot_columns!(Awork, m, 2n, d, tab.inversemod, pivots)
     # If generators are not independent, destabilizers are undefined; leave destab zeroed.
     pivcount == m || return destab
 
-    A_P = tab.destab_Ap
+    A_P = zeros(Int, n, n)
     @inbounds for j in 1:m
         pj = pivots[j]
         @turbo for i in 1:m
@@ -392,7 +391,7 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
         Awork[i, j] = A_P[i, j]
     end
 
-    A_inv = tab.destab_inv
+    A_inv = zeros(Int, n, n)
     _inv_matrix_mod!(A_inv, Awork, m, d, tab.inversemod)
 
     @inbounds for i in 1:m
