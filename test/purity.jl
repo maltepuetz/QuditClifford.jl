@@ -25,8 +25,8 @@ using Random
                     @test is_pure(mk(pure_mat))
                     @test is_pure(mk(pure_mat); verify=true)
 
-                    # The invalid pair only exist behind check=false now; the
-                    # constructor rejecting them is asserted separately below.
+                    # These two are only constructible behind check=false;
+                    # that the constructor rejects them is asserted below.
                     @test !QuditClifford.is_commuting(mk(noncomm_mat; check=false))
                     @test !is_pure(mk(noncomm_mat; check=false); verify=true)
 
@@ -45,8 +45,8 @@ using Random
 end
 
 # The symplectic Gram kernel behind `is_commuting`. Tested directly on raw
-# matrices rather than through a tableau so it stays reachable once the
-# constructors start rejecting non-commuting input.
+# matrices rather than through a tableau, because the constructors reject
+# non-commuting input and most of these fixtures could not be built at all.
 #
 # `_first_noncommuting_pair` computes P = X'Z once and reads the symplectic
 # form off it as P[j,i] - P[i,j], which relies on the form being
@@ -120,10 +120,10 @@ end
 end
 
 # The generator contract -- pairwise commuting, and independent -- is stated in
-# both constructor docstrings but was never enforced, so an invalid matrix
-# produced a tableau that every later operation silently believed. It is
-# checked once at construction now, which is what lets `is_pure` trust `m == n`
-# instead of re-deriving the contract on every call.
+# both constructor docstrings and assumed by every operation, so the raw-matrix
+# constructors enforce it. Construction is the only place it can be violated,
+# which is what lets `is_pure` trust `m == n` rather than re-deriving the
+# contract on every call.
 @testset "Raw-matrix construction validates the generator contract" begin
     # X1 and Z1 anticommute.
     noncomm = zeros(Int, 5, 2); noncomm[1, 1] = 1; noncomm[3, 2] = 1

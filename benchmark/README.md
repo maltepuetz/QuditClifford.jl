@@ -145,10 +145,9 @@ Probes cover one axis at a time at a single representative configuration:
 
 `is_pure` is a probe rather than part of the spine, and the leaf measures
 `is_pure(tab; verify = true)`. The default `is_pure` tests `m == n` and nothing
-else — the generator contract it used to re-derive is checked once, at
-construction — so there is no kernel left under it to track. The verifying form
-still costs `O(n^3)` (2.5 ms at n = 256) and is the only coverage the
-commutation Gram and the rank elimination get.
+else, so there is no kernel under it to track; the verifying form costs
+`O(n^3)` (2.5 ms at n = 256) and is the only coverage the commutation Gram and
+the rank elimination get.
 
 ## Running locally
 

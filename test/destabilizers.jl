@@ -422,23 +422,18 @@ end
 end
 
 @testset "DestabilizerTableau carries no rebuild-only workspaces" begin
-    # `rebuild_destabilizers!` runs exactly once, on the raw-matrix path, but
-    # its five scratch matrices used to live on every tableau: 6n^2 + n Ints,
-    # about half a DestabilizerTableau's footprint, allocated even by the
-    # presets that reach `_preset_destabilizers!` and never call the rebuild at
-    # all. They are locals now.
-    #
-    # The dual basis itself is one 2n x n Int matrix on top of what a
-    # StabilizerTableau already holds, so the ratio belongs near 1.5. It was
-    # 2.7 at n = 16 and 3.0 at n = 256.
+    # A DestabilizerTableau is a StabilizerTableau plus its dual basis, which is
+    # one 2n x n Int matrix, so the ratio belongs near 1.5. Anything much above
+    # that means per-tableau scratch has crept back in -- `rebuild_destabilizers!`
+    # needs five n^2-sized matrices and runs at most once per tableau, so they
+    # belong to the call and not to the struct.
     for n in (16, 64, 256)
         stab_bytes = Base.summarysize(StabilizerTableau(3, n; state = :product))
         destab_bytes = Base.summarysize(DestabilizerTableau(3, n; state = :product))
         @test destab_bytes < 1.75 * stab_bytes
     end
 
-    # The rebuild still has to work, and still has to produce a dual basis --
-    # it is only its scratch space that moved.
+    # The rebuild owns that scratch, so assert it still produces a dual basis.
     for d in (2, 3), n in (2, 5)
         raw = zeros(Int, 2n + 1, n)
         for j in 1:n

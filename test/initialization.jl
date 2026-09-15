@@ -267,9 +267,9 @@ end
     @test_logs DestabilizerTableau(under, n; state=:mixed, inversemod=jit)
     @test_logs StabilizerTableau(3, 4; state=:ghz)
     @test_logs DestabilizerTableau(2, 8; state=:product, basis=:Z)
-    # Z₁, Z₂ rather than an all-zero matrix: zero columns are rank 0 and the
-    # raw-matrix constructor now rejects them, and this line is here to prove
-    # the raw path is silent, not to probe the contract.
+    # Z₁, Z₂ rather than an all-zero matrix: zero columns are rank 0, which the
+    # raw-matrix constructor rejects. This line is here to prove the raw path is
+    # silent, not to probe the generator contract.
     @test_logs StabilizerTableau(3, [0 0; 0 0; 1 0; 0 1; 0 0]; m=2, storephase=true)
 
     # The bound is on n*(d-1)^2, not on d alone: the same d is safe at n = 2

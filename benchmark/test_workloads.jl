@@ -257,9 +257,9 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    # Was 3x until the five destab_* rebuild workspaces stopped being tableau
-    # fields; a DestabilizerTableau now costs a StabilizerTableau plus its dual
-    # basis, which is one 2n x n Int matrix, and nothing else.
+    # A DestabilizerTableau is a StabilizerTableau plus its dual basis, one
+    # 2n x n Int matrix. Anything much above 1.5x means per-tableau scratch has
+    # crept back in.
     @testset "Destabilizer memory is 1.5x stabilizer" begin
         for n in (128, 512)
             rs = tableau_bytes(StabilizerTableau(2, n; state = :product))

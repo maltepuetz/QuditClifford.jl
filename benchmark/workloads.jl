@@ -22,15 +22,11 @@ tableau_bytes(tab) = Base.summarysize(tab)
 Everything a mutating operation can change about a tableau, saved so it can be
 put back. Restoring is one O(n^2) `copyto!`, ~0.3 ms at n = 256.
 
-That margin used to be the whole point: `DestabilizerTableau(3, 256; state =
-:ghz)` cost ~53 ms, hitting the worst case of the O(n^3)
-`rebuild_destabilizers!`, and setup runs inside BenchmarkTools' sample loop and
-counts against the time budget -- so rebuilding would have more than halved the
-sample count of the ~50 ms `canonicalize!` this exists to prepare. #10 put the
-GHZ duals in closed form and that construction is now 0.055 ms, so the saving
-is far smaller. Snapshot/restore stays because it is also what makes each
-sample start from the *same* state, which the measure! leaves depend on for
-their branch to be reproducible.
+Setup runs inside BenchmarkTools' sample loop and counts against the time
+budget, so restoring rather than rebuilding keeps the sample count up. More
+importantly it makes every sample start from the *same* state: the `measure!`
+leaves take a different branch depending on the tableau they are handed, so a
+leaf that drifted would stop measuring the branch it is named for.
 
 Fields mirror the mutable, semantically-meaningful state of both tableau types:
 `stab`, `destab`, `m`, `iscanonical` and the `xdotz_cache`. The remaining
@@ -204,10 +200,9 @@ function bench_entropy(mk, sub)
     return @benchmarkable entanglement_entropy($tab, $sub)
 end
 
-# `verify=true` deliberately: the default is_pure is `m == n`, which there is
-# nothing to benchmark in. The verifying form is what still runs the
-# commutation Gram and the rank elimination. One probe leaf only, at a small n.
-# See `micro_group`.
+# `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
+# nothing to benchmark in. The verifying form runs the commutation Gram and the
+# rank elimination. One probe leaf only, at a small n. See `micro_group`.
 function bench_is_pure(mk)
     tab = mk(:ghz)
     return @benchmarkable is_pure($tab; verify = true)
@@ -227,10 +222,9 @@ The eight core operations, for one `(type, d, n)` cell. The three `measure!`
 branches are separated deliberately: their costs differ substantially and a
 blended workload hides which dominates.
 
-`is_pure` is deliberately not here. It tests `m == n` and nothing else, because
-the generator contract it used to re-derive is checked once at construction --
-there is no longer a kernel behind it to measure. Its verifying form,
-`is_pure(; verify=true)`, does still do `O(n^3)` work, and gets one probe leaf.
+`is_pure` is deliberately not here: it tests `m == n` and nothing else, so there
+is no kernel behind it to measure. Its verifying form, `is_pure(; verify=true)`,
+does `O(n^3)` work and gets one probe leaf.
 """
 function micro_group(; d::Int, n::Int, T,
                      storephase::Bool = true,

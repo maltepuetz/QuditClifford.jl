@@ -349,16 +349,16 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     fill!(destab, 0)
     m == 0 && return destab
 
-    # These five are scratch for this call and nothing else. They used to be
-    # tableau fields, which cost 6n^2 + n Ints on EVERY DestabilizerTableau --
-    # about half its footprint -- to serve a function that runs at most once
-    # per tableau, on the raw-matrix path alone. Presets reach
-    # `_preset_destabilizers!` and never come here at all, so they were paying
-    # for scratch they could not use. Locals cost one allocation on a path that
-    # is already O(n^3).
+    # The five matrices below are scratch for this call alone, so they are
+    # locals rather than tableau fields: this runs at most once per tableau,
+    # only from the raw-matrix constructor, and a preset never reaches it at all
+    # (it goes to `_preset_destabilizers!`). Hoisting them onto the struct would
+    # put 6n^2 + n Ints on every tableau to save an allocation on a path that is
+    # already O(n^3).
     #
-    # `zeros` rather than `undef`: rows m+1:n of A and Awork are never written
-    # here, and this keeps them defined, as the preallocated fields did.
+    # A and Awork are allocated n rows but only 1:m are ever touched, since
+    # every row index below is bounded by m. `zeros` rather than `undef` for
+    # the unused rows: one O(n^2) fill against an O(n^3) routine.
 
     # Build A = Sᵀ J (size m × 2n)
     A = zeros(Int, n, 2n)

@@ -120,14 +120,10 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         g["pauli/expect!/GeneralPauli"] = bench_expect(mk, GeneralPauli(dense_xz, 0))
     end
 
-    # This leaf used to guard a pathology: :ghz construction cost ~30x :product
-    # on a DestabilizerTableau (51 ms vs 1.7 ms at n = 256) because it ran the
-    # O(n^3) rebuild_destabilizers! on its worst-case generator matrix. #10 put
-    # the GHZ duals in closed form and that path is gone -- :ghz is now 0.046 ms
-    # against :product's 0.030 ms at n = 256, and the rebuild is not reached at
-    # all. The leaf stays because the closed form is what replaced the rebuild
-    # and it is the only thing covering it, but it is no longer the outlier the
-    # comment above it once described.
+    # :ghz is the one preset whose duals are not a per-qudit closed form -- see
+    # _preset_destabilizers!, where D_j spans qudits 1..j-1. This leaf is the
+    # only coverage that construction has. It is not an outlier in cost: 0.046 ms
+    # against :product's 0.030 ms on a DestabilizerTableau at n = 256.
     for T in TYPES
         g["construct/ghz/$(nameof(T))"] = bench_construct(tableau_maker(T, d, n); state = :ghz)
     end
@@ -139,11 +135,9 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         g["expect!/out_of_span"] = bench_expect(mk, spread_x(n))
     end
 
-    # is_pure reads m == n and nothing else -- the generator contract it used to
-    # re-derive is enforced at construction now -- so the function itself has
-    # no cost to track. This leaf measures is_pure(; verify=true), which still
-    # does the O(n^3) work and is the only coverage the commutation and rank
-    # kernels get.
+    # is_pure reads m == n and nothing else, so there is no cost in it to track.
+    # This leaf measures is_pure(; verify=true), the O(n^3) form, which is the
+    # only coverage the commutation Gram and the rank elimination get.
     g["is_pure"] = bench_is_pure(tableau_maker(DestabilizerTableau, d, 64))
 
     SUITE["probe"] = g
