@@ -4,7 +4,10 @@
 # (the workflow passes `--script`, which pins it to the PR head), and both child
 # processes inherit QC_BENCH_PROFILE from the workflow step. Never make a size
 # or a seed depend on anything revision-specific, or the two columns stop being
-# comparable.
+# comparable. For the same reason, an API this file calls must exist on BOTH
+# revisions: a keyword the older one lacks raises a MethodError and costs it its
+# entire column. Probe with `hasmethod` when that is a risk, as `bench_is_pure`
+# does.
 #
 # The CI environment is exactly QuditClifford + BenchmarkTools + stdlibs, so
 # this file and workloads.jl may not `using` anything else. See benchmark/README.md.

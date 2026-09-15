@@ -203,9 +203,21 @@ end
 # `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
 # nothing to benchmark in. The verifying form runs the commutation Gram and the
 # rank elimination. One probe leaf only, at a small n. See `micro_group`.
+#
+# The keyword is probed rather than assumed. This file is run against BOTH
+# revisions of an A/B comparison, and a revision that predates `verify` would
+# raise a MethodError and lose its whole column -- so on those, call the
+# keyword-less `is_pure`, which does the same work there. Both forms re-derive
+# the full contract, so the two columns stay comparable either way.
+#
+# The probe is at leaf-construction time, never inside the measured body.
 function bench_is_pure(mk)
     tab = mk(:ghz)
-    return @benchmarkable is_pure($tab; verify = true)
+    return if hasmethod(is_pure, Tuple{typeof(tab)}, (:verify,))
+        @benchmarkable is_pure($tab; verify = true)
+    else
+        @benchmarkable is_pure($tab)
+    end
 end
 
 function bench_reset(mk)
