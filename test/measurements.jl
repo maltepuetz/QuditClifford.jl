@@ -278,7 +278,7 @@ end
             @test tab.m == tab.n == 2
             @test QuditClifford.is_commuting(tab)
             @test QuditClifford.is_independent(tab)
-            @test is_pure(tab)
+            @test is_pure(tab; verify=true)
             @test expect_int!(tab, op) == expected_exponent
         end
 

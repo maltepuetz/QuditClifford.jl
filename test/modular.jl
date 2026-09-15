@@ -291,7 +291,10 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
     @testset "Tableau entries are reduced on write" begin
         for d in (2, 3, 5)
             raw = fill(7 * d + 3, 2 * 3 + 1, 3)      # deliberately unreduced
-            tab = StabilizerTableau(d, raw; m=3, storephase=true)
+            # check=false: a constant-filled matrix is rank 1, so it fails the
+            # generator contract. Reduction-on-write is what is under test here
+            # and it runs before any validation.
+            tab = StabilizerTableau(d, raw; m=3, storephase=true, check=false)
             @test all(0 .<= tab.stab[1:(2 * 3), :] .< d)
 
             t2 = StabilizerTableau(d, 3; state=:product, basis=:Z)

@@ -220,7 +220,7 @@ end
         tab = DestabilizerTableau(d, copy(raw); m=2, storephase=true)
         op = copy(raw[:, 2])
         expected = expect_int!(tab, op)
-        @test QuditClifford.is_pure(tab)
+        @test is_pure(tab; verify=true)
         @test expect_int!(tab, op) == expected
 
         for i in 1:tab.m
