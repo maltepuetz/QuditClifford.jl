@@ -22,18 +22,9 @@ a dual basis.
 
 ## Installation
 
-After registration in Julia's General registry:
-
 ```julia
 using Pkg
 Pkg.add("QuditClifford")
-```
-
-Until registration is complete, install the public repository directly:
-
-```julia
-using Pkg
-Pkg.add(url="https://github.com/maltepuetz/QuditClifford.jl")
 ```
 
 QuditClifford requires Julia 1.10 or later.
