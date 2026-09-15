@@ -257,11 +257,14 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    @testset "Destabilizer memory is 3x stabilizer" begin
+    # Was 3x until the five destab_* rebuild workspaces stopped being tableau
+    # fields; a DestabilizerTableau now costs a StabilizerTableau plus its dual
+    # basis, which is one 2n x n Int matrix, and nothing else.
+    @testset "Destabilizer memory is 1.5x stabilizer" begin
         for n in (128, 512)
             rs = tableau_bytes(StabilizerTableau(2, n; state = :product))
             rd = tableau_bytes(DestabilizerTableau(2, n; state = :product))
-            @test 2.8 < rd / rs < 3.2
+            @test 1.35 < rd / rs < 1.65
         end
     end
 end
