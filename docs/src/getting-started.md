@@ -8,7 +8,7 @@ DocTestSetup = :(using QuditClifford)
 ## Installation and loading
 
 Install the registered package with `Pkg.add("QuditClifford")`, or install the
-repository directly before registration:
+repository directly to track unreleased changes:
 
 ```julia
 using Pkg

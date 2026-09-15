@@ -67,14 +67,14 @@ important than maintaining a dual basis.
 
 ## Quick start
 
-Once QuditClifford is registered in Julia's General registry, install it with:
+QuditClifford is registered in Julia's General registry, so install it with:
 
 ```julia
 using Pkg
 Pkg.add("QuditClifford")
 ```
 
-Before registration, install it from the public repository instead:
+To track unreleased changes, install it from the public repository instead:
 
 ```julia
 using Pkg

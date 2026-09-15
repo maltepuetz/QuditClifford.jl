@@ -22,14 +22,14 @@ a dual basis.
 
 ## Installation
 
-After registration in Julia's General registry:
+QuditClifford is registered in Julia's General registry:
 
 ```julia
 using Pkg
 Pkg.add("QuditClifford")
 ```
 
-Until registration is complete, install the public repository directly:
+To track unreleased changes, install the public repository directly:
 
 ```julia
 using Pkg
