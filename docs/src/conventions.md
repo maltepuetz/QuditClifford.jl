@@ -51,6 +51,35 @@ When `storephase=true`, a final row stores each generator's phase exponent.
 Raw tableau constructors accept either column-major generator layout or its
 transpose and infer the layout when it is unambiguous.
 
+## The generator contract
+
+The active columns must generate an abelian group: they must commute pairwise
+under the symplectic form, and be linearly independent over ``\mathrm{GF}(d)``.
+Both are assumed everywhere — [`measure!`](@ref) decomposes an operator against
+the generators as a basis, which means nothing if they do not span what `m`
+claims.
+
+Construction is the only place this can be violated, so it is the only place it
+is checked. The preset `(d, n)` constructors satisfy both by definition, and
+[`measure!`](@ref) and [`canonicalize!`](@ref) preserve both; the raw-matrix
+constructors validate what they are handed and throw `ArgumentError`:
+
+```jldoctest
+julia> bad = zeros(Int, 5, 2); bad[1, 1] = 1; bad[3, 2] = 1;  # X₁ and Z₁
+
+julia> StabilizerTableau(2, bad; m = 2, storephase = true)
+ERROR: ArgumentError: Stabilizer generators must commute, but generators 1 and 2 do not. Pass check=false to skip this check.
+```
+
+That validation is ``O(n^3)``. Pass `check=false` to skip it when the input is
+already known to be well formed — the tableau is then built regardless, and
+every later operation rests on a contract that may not hold.
+
+Because the contract holds by construction, [`is_pure`](@ref) tests only
+`m == n`, in constant time. `is_pure(tab; verify=true)` re-derives the full
+condition instead, which is the only way to detect a tableau built behind
+`check=false`.
+
 ## Phase exponents
 
 - For odd prime `d`, phase `k` represents ``\omega^k`` with

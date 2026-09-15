@@ -4,7 +4,10 @@
 # (the workflow passes `--script`, which pins it to the PR head), and both child
 # processes inherit QC_BENCH_PROFILE from the workflow step. Never make a size
 # or a seed depend on anything revision-specific, or the two columns stop being
-# comparable.
+# comparable. For the same reason, an API this file calls must exist on BOTH
+# revisions: a keyword the older one lacks raises a MethodError and costs it its
+# entire column. Probe with `hasmethod` when that is a risk, as `bench_is_pure`
+# does.
 #
 # The CI environment is exactly QuditClifford + BenchmarkTools + stdlibs, so
 # this file and workloads.jl may not `using` anything else. See benchmark/README.md.
@@ -120,9 +123,10 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         g["pauli/expect!/GeneralPauli"] = bench_expect(mk, GeneralPauli(dense_xz, 0))
     end
 
-    # :ghz construction is ~30x :product on a DestabilizerTableau (51 ms vs
-    # 1.7 ms at n = 256): rebuild_destabilizers! is O(n^3) and the GHZ
-    # generator matrix is its worst case. Worth watching on its own.
+    # :ghz is the one preset whose duals are not a per-qudit closed form -- see
+    # _preset_destabilizers!, where D_j spans qudits 1..j-1. This leaf is the
+    # only coverage that construction has. It is not an outlier in cost: 0.046 ms
+    # against :product's 0.030 ms on a DestabilizerTableau at n = 256.
     for T in TYPES
         g["construct/ghz/$(nameof(T))"] = bench_construct(tableau_maker(T, d, n); state = :ghz)
     end
@@ -134,8 +138,9 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         g["expect!/out_of_span"] = bench_expect(mk, spread_x(n))
     end
 
-    # is_pure is peripheral and expensive (~28 ms at n = 256), so it gets one
-    # leaf at a small size rather than a place in the spine.
+    # is_pure reads m == n and nothing else, so there is no cost in it to track.
+    # This leaf measures is_pure(; verify=true), the O(n^3) form, which is the
+    # only coverage the commutation Gram and the rank elimination get.
     g["is_pure"] = bench_is_pure(tableau_maker(DestabilizerTableau, d, 64))
 
     SUITE["probe"] = g
@@ -207,7 +212,6 @@ function _budget(profile, keypath)
         return 2.0 * scale
     end
 
-    occursin("is_pure", joined) && return 1.0 * scale
     occursin("n=64", joined) && return 0.2 * scale
     return 0.4 * scale
 end

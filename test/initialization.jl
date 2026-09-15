@@ -267,7 +267,10 @@ end
     @test_logs DestabilizerTableau(under, n; state=:mixed, inversemod=jit)
     @test_logs StabilizerTableau(3, 4; state=:ghz)
     @test_logs DestabilizerTableau(2, 8; state=:product, basis=:Z)
-    @test_logs StabilizerTableau(3, zeros(Int, 5, 2); m=2, storephase=true)
+    # Z₁, Z₂ rather than an all-zero matrix: zero columns are rank 0, which the
+    # raw-matrix constructor rejects. This line is here to prove the raw path is
+    # silent, not to probe the generator contract.
+    @test_logs StabilizerTableau(3, [0 0; 0 0; 1 0; 0 1; 0 0]; m=2, storephase=true)
 
     # The bound is on n*(d-1)^2, not on d alone: the same d is safe at n = 2
     # and not at n = 256. A check on d by itself could not express this.
@@ -350,7 +353,7 @@ end
     tab = StabilizerTableau(3, 2; state=:ghz, inversemod=just_in_time)
     canonicalize!(tab)
     @test tab.iscanonical
-    @test is_pure(tab)
+    @test is_pure(tab; verify=true)
 end
 
 @testset "Tableau metadata and display" begin

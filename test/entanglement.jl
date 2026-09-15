@@ -121,12 +121,16 @@ using Random
                     tab_prod = TT(3, tab_prod; m=2, storephase=true)
                     @test entanglement_entropy(tab_prod, [1]) == 0
 
-                    # Maximally entangled qutrit state with generators X₁X₂ and Z₁Z₂.
+                    # Maximally entangled qutrit state, generators X₁X₂ and Z₁Z₂².
+                    # The exponent d-1 on the second Z is required, not
+                    # cosmetic: ⟨X₁X₂, Z₁Z₂⟩ = 1·1 + 1·1 = 2, which vanishes
+                    # mod 2 but not mod 3, so the qubit form of this fixture
+                    # does not commute at d = 3 and generates no state at all.
                     tab_bell = zeros(Int, 5, 2)
                     tab_bell[1, 1] = 1  # X₁
                     tab_bell[2, 1] = 1  # X₂
                     tab_bell[3, 2] = 1  # Z₁
-                    tab_bell[4, 2] = 1  # Z₂
+                    tab_bell[4, 2] = 2  # Z₂²
                     tab_bell = TT(3, tab_bell; m=2, storephase=true)
                     @test entanglement_entropy(tab_bell, [1]) == 1
 

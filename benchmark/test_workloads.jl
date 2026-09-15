@@ -21,7 +21,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
         @test s1.stab == s2.stab
         @test s1.m == s2.m
         # Started from a pure product state; projective measurement keeps it pure.
-        @test is_pure(s1)
+        @test is_pure(s1; verify=true)
 
         s3 = ising_trajectory!(L = 8, depth = 16, seed = 8)
         @test s1.stab != s3.stab         # the seed actually matters
@@ -32,7 +32,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
         s4 = ising_trajectory!(L = 8, seed = 7)
         s5 = ising_trajectory!(L = 8, depth = 8 * 8, seed = 7)
         @test s4.stab == s5.stab
-        @test is_pure(s4)
+        @test is_pure(s4; verify=true)
     end
 
     @testset "Micro group builds for both tableau types" begin
@@ -133,7 +133,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
             @test a.stab == b.stab                     # deterministic
             @test a.stab != T(d, 16; state = :product).stab   # actually scrambled
             @test a.m == 16                            # stayed pure, so measure! cannot
-            @test is_pure(a)                           # hit the m == n append error
+            @test is_pure(a; verify=true)              # hit the m == n append error
             @test scrambled_state(T, d, 16; seed = 12).stab != a.stab
         end
     end
@@ -257,11 +257,14 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    @testset "Destabilizer memory is 3x stabilizer" begin
+    # A DestabilizerTableau is a StabilizerTableau plus its dual basis, one
+    # 2n x n Int matrix. Anything much above 1.5x means per-tableau scratch has
+    # crept back in.
+    @testset "Destabilizer memory is 1.5x stabilizer" begin
         for n in (128, 512)
             rs = tableau_bytes(StabilizerTableau(2, n; state = :product))
             rd = tableau_bytes(DestabilizerTableau(2, n; state = :product))
-            @test 2.8 < rd / rs < 3.2
+            @test 1.35 < rd / rs < 1.65
         end
     end
 end

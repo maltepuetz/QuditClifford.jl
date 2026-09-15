@@ -143,9 +143,11 @@ Probes cover one axis at a time at a single representative configuration:
 `DoublePauli` / `NPauli{8}` / dense `GeneralPauli`), `:ghz` construction,
 `entropy/single_site`, `expect!/out_of_span`, and `is_pure`.
 
-`is_pure` is a probe rather than part of the spine: it is peripheral to this
-package and by far the most expensive kernel (~28 ms at n = 256, against ~5 ms
-for the whole rest of the cell).
+`is_pure` is a probe rather than part of the spine, and the leaf measures
+`is_pure(tab; verify = true)`. The default `is_pure` tests `m == n` and nothing
+else, so there is no kernel under it to track; the verifying form costs
+`O(n^3)` (2.5 ms at n = 256) and is the only coverage the commutation Gram and
+the rank elimination get.
 
 ## Running locally
 

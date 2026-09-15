@@ -1,40 +1,148 @@
 """
-    is_pure(tab::AbstractTableau) -> Bool
+    is_pure(tab::AbstractTableau; verify::Bool=false) -> Bool
 
 Return `true` when the active generators define a pure stabilizer state.
 
-Purity requires exactly one independent, mutually commuting stabilizer
-generator per qudit. The check does not change the represented state and does
-not emit diagnostic output.
+A tableau is pure exactly when it carries one independent, mutually commuting
+generator per qudit. Commutativity and independence hold by construction: the
+raw-matrix constructors check them (see their `check` keyword), the presets
+satisfy them by definition, and `measure!` and [`canonicalize!`](@ref) both
+preserve them. So the default test is `m == n`, in constant time.
+
+Pass `verify=true` to re-derive the full condition instead of resting on that
+invariant. It costs `O(n^3)` and exists for debugging: it is the only form that
+can see through a tableau built behind `check=false`, or an invariant broken by
+a bug.
+
+# Arguments
+- `tab::AbstractTableau`: Tableau to test. Not modified.
+
+# Keyword Arguments
+- `verify::Bool=false`: Also confirm that the generators commute and are
+  independent, rather than relying on the construction-time guarantee.
+
+# Returns
+- `Bool`: whether the represented state is pure.
+
+# Examples
+```julia
+tab = StabilizerTableau(2, 3; state=:ghz)
+is_pure(tab)               # true, from m == n alone
+is_pure(tab; verify=true)  # true, re-derived from the generators
+```
+
+# Notes
+- Neither form changes the represented state or emits diagnostic output.
+- `is_pure(tab)` reads only `tab.m` and `tab.n`; `verify=true` additionally
+  borrows `tab.workspace`.
 """
-function is_pure(tab::AbstractTableau)
+function is_pure(tab::AbstractTableau; verify::Bool=false)
     tab.m == tab.n || return false
+    verify || return true
     is_commuting(tab) || return false
     is_independent(tab) || return false
     return true
 end
 
+# Index of the first pair of active generators that fails to commute, as
+# `(j, i)` with `j < i`, or `(0, 0)` when every pair commutes.
+#
+# The symplectic form is
+#     <g_j, g_i> = sum_q (x_j[q] * z_i[q] - z_j[q] * x_i[q]),
+# which for `P = X' * Z` is exactly `P[j,i] - P[i,j]`. The form is therefore
+# antisymmetric, and every pair can be read off the single product `P`: the
+# `i < j` half of the answer is the `j < i` half transposed, so only `P` itself
+# has to be computed, not both orientations of it.
+#
+# `P` is written over its whole `m x m` block and needs no initialization. It
+# must not alias `stab`.
+#
+# Only the scan early-exits; the product always runs in full. The one caller
+# that sees non-commuting input is construction validation, which raises as
+# soon as this returns, so there is nothing to recover by stopping sooner.
+#
+# `s` accumulates `n` terms of size up to `(d-1)^2`, so this sits inside the
+# package-wide arithmetic envelope documented on `max_safe_dimension`.
+@inline function _first_noncommuting_pair(
+    stab::AbstractMatrix{Int},
+    n::Int,
+    m::Int,
+    d::Int,
+    P::AbstractMatrix{Int},
+)
+    m <= 1 && return (0, 0)
+    @turbo for j in 1:m, i in 1:m
+        s = 0
+        for q in 1:n
+            s += stab[q, j] * stab[n+q, i]
+        end
+        P[j, i] = s
+    end
+    @inbounds for j in 1:m, i in (j+1):m
+        mod(P[j, i] - P[i, j], d) != 0 && return (j, i)
+    end
+    return (0, 0)
+end
+
 # Check if all active generators commute.
 function is_commuting(tab::AbstractTableau)
     m = tab.m
-    for j in 1:m
-        for i in (j+1):m
-            mod(commutation_colcol(tab.stab, j, i), tab.d) != 0 && return false
-        end
-    end
-    return true
+    m <= 1 && return true
+    # `workspace` is 2n x n and m <= n, so the m x m block fits. Borrowing it
+    # is safe: `is_pure` runs this to completion before `is_independent` touches
+    # the same buffer, and no other consumer holds it across this call.
+    return _first_noncommuting_pair(
+        tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m)) == (0, 0)
 end
 
-"""Check if the active stabilizer generators are linearly independent (rank m)."""
-function is_independent(tab::AbstractTableau)
+# Rank of the active generator columns over GF(d). Consumes `workspace`, which
+# `rank_fp_cols!` is free to leave in column echelon form -- nothing reads it
+# back.
+function _generator_rank(tab::AbstractTableau)
     n = tab.n
     m = tab.m
     d = tab.d
-    m == 0 && return true
+    m == 0 && return 0
     ws = tab.workspace
     @turbo for j in 1:m, i in 1:(2n)
         ws[i, j] = tab.stab[i, j]
     end
-    rank = rank_fp_cols!(view(ws, 1:2n, 1:m), d, tab.inversemod)
-    return rank == m
+    return rank_fp_cols!(view(ws, 1:2n, 1:m), d, tab.inversemod)
+end
+
+"""Check if the active stabilizer generators are linearly independent (rank m)."""
+is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
+
+# Reject generator columns that cannot represent a stabilizer group.
+#
+# Both halves are contract rather than preference: the tableau stores an abelian
+# subgroup generated by `m` INDEPENDENT Paulis, as both constructor docstrings
+# say. `measure!` decomposes an operator against those columns as a basis, which
+# means nothing if they do not span what `m` claims.
+#
+# Construction is the only door into the contract -- presets satisfy it by
+# definition, and `measure!` and `canonicalize!` both preserve it -- so checking
+# here makes it an invariant everywhere else, which is what lets `is_pure` rest
+# on `m == n`.
+#
+# Runs on the built tableau so it can borrow `workspace` rather than allocate
+# its own -- the two checks take it in turn, never at once.
+function _validate_generators!(tab::AbstractTableau)
+    m = tab.m
+    if m > 1
+        pair = _first_noncommuting_pair(
+            tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m))
+        if pair != (0, 0)
+            throw(ArgumentError(
+                "Stabilizer generators must commute, but generators $(pair[1]) and " *
+                "$(pair[2]) do not. Pass check=false to skip this check."))
+        end
+    end
+    if m > 0
+        r = _generator_rank(tab)
+        r == m || throw(ArgumentError(
+            "Stabilizer generators must be independent, but the $m active " *
+            "generators span rank $r. Pass check=false to skip this check."))
+    end
+    return nothing
 end

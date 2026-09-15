@@ -20,12 +20,13 @@ tableau_bytes(tab) = Base.summarysize(tab)
     TableauSnapshot
 
 Everything a mutating operation can change about a tableau, saved so it can be
-put back. Restoring is one O(n^2) `copyto!`, ~0.3 ms at n = 256, where building
-the tableau afresh costs ~53 ms: `DestabilizerTableau(3, 256; state = :ghz)`
-hits the worst case of `rebuild_destabilizers!`, which is O(n^3). Setup runs
-inside BenchmarkTools' sample loop and counts against the time budget, so a
-53 ms setup would more than halve the sample count of the ~50 ms
-`canonicalize!` it exists to prepare.
+put back. Restoring is one O(n^2) `copyto!`, ~0.3 ms at n = 256.
+
+Setup runs inside BenchmarkTools' sample loop and counts against the time
+budget, so restoring rather than rebuilding keeps the sample count up. More
+importantly it makes every sample start from the *same* state: the `measure!`
+leaves take a different branch depending on the tableau they are handed, so a
+leaf that drifted would stop measuring the branch it is named for.
 
 Fields mirror the mutable, semantically-meaningful state of both tableau types:
 `stab`, `destab`, `m`, `iscanonical` and the `xdotz_cache`. The remaining
@@ -199,10 +200,24 @@ function bench_entropy(mk, sub)
     return @benchmarkable entanglement_entropy($tab, $sub)
 end
 
-# Peripheral: one probe leaf only, at a small n. See `micro_group`.
+# `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
+# nothing to benchmark in. The verifying form runs the commutation Gram and the
+# rank elimination. One probe leaf only, at a small n. See `micro_group`.
+#
+# The keyword is probed rather than assumed. This file is run against BOTH
+# revisions of an A/B comparison, and a revision that predates `verify` would
+# raise a MethodError and lose its whole column -- so on those, call the
+# keyword-less `is_pure`, which does the same work there. Both forms re-derive
+# the full contract, so the two columns stay comparable either way.
+#
+# The probe is at leaf-construction time, never inside the measured body.
 function bench_is_pure(mk)
     tab = mk(:ghz)
-    return @benchmarkable is_pure($tab)
+    return if hasmethod(is_pure, Tuple{typeof(tab)}, (:verify,))
+        @benchmarkable is_pure($tab; verify = true)
+    else
+        @benchmarkable is_pure($tab)
+    end
 end
 
 function bench_reset(mk)
@@ -219,10 +234,9 @@ The eight core operations, for one `(type, d, n)` cell. The three `measure!`
 branches are separated deliberately: their costs differ substantially and a
 blended workload hides which dominates.
 
-`is_pure` is deliberately not here. It is a peripheral function in this package
-and by far the most expensive kernel (~28 ms at n = 256, where the whole rest of
-the cell costs ~5 ms), so paying for it in all eight cells buys little. It gets
-one cheap probe leaf instead.
+`is_pure` is deliberately not here: it tests `m == n` and nothing else, so there
+is no kernel behind it to measure. Its verifying form, `is_pure(; verify=true)`,
+does `O(n^3)` work and gets one probe leaf.
 """
 function micro_group(; d::Int, n::Int, T,
                      storephase::Bool = true,

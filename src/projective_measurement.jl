@@ -90,19 +90,6 @@ end
     comm
 end
 
-@inline function commutation_colcol(A::AbstractMatrix{<:Integer}, col1::Int, col2::Int)
-    N = size(A, 1) ÷ 2
-    comm = 0
-
-    @turbo for i in 1:N
-        comm += A[i, col1] * A[i+N, col2]
-    end
-    @turbo for i in 1:N
-        comm -= A[i+N, col1] * A[i, col2]
-    end
-    comm
-end
-
 #########################################################
 # Column update primitive used in noncommuting branch   #
 #########################################################

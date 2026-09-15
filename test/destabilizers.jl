@@ -220,7 +220,7 @@ end
         tab = DestabilizerTableau(d, copy(raw); m=2, storephase=true)
         op = copy(raw[:, 2])
         expected = expect_int!(tab, op)
-        @test QuditClifford.is_pure(tab)
+        @test is_pure(tab; verify=true)
         @test expect_int!(tab, op) == expected
 
         for i in 1:tab.m
@@ -418,5 +418,28 @@ end
         canonicalize!(tab)
         @test tab.iscanonical
         TT === DestabilizerTableau && _assert_duality(tab)
+    end
+end
+
+@testset "DestabilizerTableau carries no rebuild-only workspaces" begin
+    # A DestabilizerTableau is a StabilizerTableau plus its dual basis, which is
+    # one 2n x n Int matrix, so the ratio belongs near 1.5. Anything much above
+    # that means per-tableau scratch has crept back in -- `rebuild_destabilizers!`
+    # needs five n^2-sized matrices and runs at most once per tableau, so they
+    # belong to the call and not to the struct.
+    for n in (16, 64, 256)
+        stab_bytes = Base.summarysize(StabilizerTableau(3, n; state = :product))
+        destab_bytes = Base.summarysize(DestabilizerTableau(3, n; state = :product))
+        @test destab_bytes < 1.75 * stab_bytes
+    end
+
+    # The rebuild owns that scratch, so assert it still produces a dual basis.
+    for d in (2, 3), n in (2, 5)
+        raw = zeros(Int, 2n + 1, n)
+        for j in 1:n
+            raw[n+j, j] = 1          # Z_j: commuting, independent
+        end
+        tab = DestabilizerTableau(d, raw; m = n, storephase = true)
+        _assert_duality(tab)
     end
 end
