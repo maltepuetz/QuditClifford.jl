@@ -119,3 +119,141 @@ end
     @test sprint(show, CPhase(1, 3, 2)) == "CPhase(1, 3, 2)"
     @test sprint(show, SWAP(1, 3)) == "SWAP(1, 3)"
 end
+
+using LinearAlgebra
+
+# ---- independent oracle: explicit matrices, ZX = ωXZ ----
+oracle_ω(d) = cispi(2 / d)
+oracle_ζ(d) = d == 2 ? im : oracle_ω(d)
+oracle_X(d) = ComplexF64[(mod(i - j - 1, d) == 0) ? 1 : 0 for i in 0:d-1, j in 0:d-1]
+oracle_Z(d) = Matrix(Diagonal(ComplexF64[oracle_ω(d)^j for j in 0:d-1]))
+oracle_pow(M, e) = e == 0 ? Matrix{ComplexF64}(I, size(M, 1), size(M, 1)) : M^e
+
+function oracle_pauli(d, x, z)
+    M = ones(ComplexF64, 1, 1)
+    for q in eachindex(x)
+        M = kron(M, oracle_pow(oracle_X(d), mod(x[q], d)) *
+                    oracle_pow(oracle_Z(d), mod(z[q], d)))
+    end
+    return M
+end
+
+oracle_index(v, d) = foldl((acc, x) -> acc * d + x, v; init = 0)
+
+function oracle_unitary(g, d)
+    if g isa Fourier
+        return ComplexF64[oracle_ω(d)^(i * j) / sqrt(d) for i in 0:d-1, j in 0:d-1]
+    elseif g isa Phase
+        d == 2 && return ComplexF64[1 0; 0 im]
+        i2 = invmod(2, d)
+        return Matrix(Diagonal(ComplexF64[oracle_ω(d)^mod(j * (j - 1) * i2, d)
+                                          for j in 0:d-1]))
+    elseif g isa Multiplier
+        return ComplexF64[(mod(i - g.a * j, d) == 0) ? 1 : 0 for i in 0:d-1, j in 0:d-1]
+    elseif g isa PauliGate
+        return oracle_pow(oracle_X(d), mod(g.x, d)) * oracle_pow(oracle_Z(d), mod(g.z, d))
+    elseif g isa SUM
+        M = zeros(ComplexF64, d^2, d^2)
+        for u in 0:d-1, v in 0:d-1
+            M[oracle_index([u, mod(v + g.a * u, d)], d) + 1,
+              oracle_index([u, v], d) + 1] = 1
+        end
+        return M
+    elseif g isa CPhase
+        M = zeros(ComplexF64, d^2, d^2)
+        for u in 0:d-1, v in 0:d-1
+            i = oracle_index([u, v], d) + 1
+            M[i, i] = oracle_ω(d)^mod(g.a * u * v, d)
+        end
+        return M
+    else # SWAP
+        M = zeros(ComplexF64, d^2, d^2)
+        for u in 0:d-1, v in 0:d-1
+            M[oracle_index([v, u], d) + 1, oracle_index([u, v], d) + 1] = 1
+        end
+        return M
+    end
+end
+
+# ---- reference phase polynomial, spec section 3.1 ----
+function phase_reference(F, a, v, d)
+    S = length(v); K = S ÷ 2
+    p = d == 2 ? 4 : d
+    γ = d == 2 ? 2 : 1
+    colxz(col) = sum(big(col[q]) * col[K + q] for q in 1:K; init = big(0))
+    lin = sum(big(a[i]) * v[i] for i in 1:S; init = big(0))
+    quad = sum(binomial(big(v[i]), 2) * colxz(F[i]) for i in 1:S; init = big(0))
+    quad += sum(sum(big(F[i][K + r]) * F[j][r] for r in 1:K; init = big(0)) * v[i] * v[j]
+                for i in 1:S for j in (i + 1):S; init = big(0))
+    return Int(mod(lin + γ * quad, p))
+end
+
+digits_of(i, d, n) = (v = zeros(Int, n); for q in n:-1:1; v[q] = i % d; i ÷= d; end; v)
+
+catalogue(d) = begin
+    gs = Any[Fourier(1), Phase(1), PauliGate(1, 1, 1), PauliGate(1, 0, 1),
+             SUM(1, 2, 1), CPhase(1, 2, 1), SWAP(1, 2)]
+    if d > 2
+        append!(gs, Any[Multiplier(1, 2), SUM(1, 2, d - 1), CPhase(1, 2, d - 1)])
+    end
+    gs
+end
+
+@testset "Phase evaluators against polynomial and matrices" begin
+    jit = QC.JustInTimeInvMod()
+    for d in (2, 3, 5)
+        for g in catalogue(d)
+            targets, F, a = QC._clifford_data(g, d, jit)
+            K = length(targets); S = 2K
+            fast = QC.clifford_fast_dots(S, d)
+            D = QC._image_xdotz(F, K, d, fast)
+            Dsafe = QC._image_xdotz(F, K, d, false)
+            @test Dsafe == D
+            inv2 = d == 2 ? 0 : jit(2, d)
+            U = oracle_unitary(g, d)
+            for vi in 0:d^S-1
+                v = ntuple(i -> digits_of(vi, d, S)[i], S)
+                vout = ntuple(j -> mod(sum(F[i][j] * v[i] for i in 1:S), d), S)
+                φ = d == 2 ? QC._phase_qubit(v, F, a, K) :
+                             QC._phase_odd(v, vout, a, D, K, d, inv2, fast)
+                @test φ == phase_reference(F, a, v, d)
+                if d != 2
+                    @test QC._phase_odd(v, vout, a, Dsafe, K, d, inv2, false) == φ
+                end
+                lhs = U * oracle_pauli(d, v[1:K], v[K+1:S]) * U'
+                rhs = oracle_ζ(d)^φ * oracle_pauli(d, vout[1:K], vout[K+1:S])
+                @test norm(lhs - rhs) < 1e-9
+            end
+        end
+    end
+end
+
+@testset "Phase evaluation at a large dimension" begin
+    # A prime near the two-term accumulation boundary on each supported host.
+    d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
+    jit = QC.JustInTimeInvMod()
+    targets, F, a = QC._clifford_data(Phase(1), d, jit)
+    fast = QC.clifford_fast_dots(2, d)
+    @test fast                                   # k = 1 is inside the guard
+    D = QC._image_xdotz(F, 1, d, fast)
+    v = (d - 1, 0)
+    vout = ntuple(j -> mod(sum(F[i][j] * v[i] for i in 1:2), d), 2)
+    # C(d-1, 2) = 1 mod d. A triple-product evaluation wraps and returns
+    # 1073741824 instead on 64-bit hosts; Task 4 tests the four-term matvec too.
+    @test QC._phase_odd(v, vout, a, D, 1, d, jit(2, d), fast) == 1
+    @test QC._phase_odd(v, vout, a, QC._image_xdotz(F, 1, d, false),
+                       1, d, jit(2, d), false) == 1
+    @test !QC.clifford_fast_dots(4, d)
+end
+
+@testset "Qubit bitmask bound is enforced" begin
+    F = ((1, 0), (0, 1))
+    @test QC._phase_qubit((1, 1), F, (0, 0), 1) == 0
+    # The bound is a precondition of the qubit regime, enforced once when
+    # preparation resolves it -- not re-tested inside the column loop, and not
+    # reachable through the public API, where every named gate has K ≤ 2.
+    @test QC._check_qubit_bitmask_bound(0) === nothing
+    @test QC._check_qubit_bitmask_bound(64) === nothing
+    @test_throws ArgumentError QC._check_qubit_bitmask_bound(65)
+    @test_throws ArgumentError QC._check_qubit_bitmask_bound(-1)
+end

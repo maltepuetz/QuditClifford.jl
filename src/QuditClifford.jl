@@ -36,5 +36,6 @@ include("entanglement_entropy.jl")
 include("check_purity.jl")
 include("expectation_value.jl")
 include("clifford_gates.jl")
+include("apply_clifford.jl")
 
 end
