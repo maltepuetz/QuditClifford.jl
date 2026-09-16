@@ -51,10 +51,10 @@ end
 # What is QuditClifford.jl?
 
 QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
-including projective Pauli measurements, expectation values, canonicalization,
-purity checks, and entanglement-entropy calculations. It supports qubits
-(`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as well as pure and
-mixed stabilizer states.
+including Clifford unitaries, projective Pauli measurements, expectation
+values, canonicalization, purity checks, and entanglement-entropy
+calculations. It supports qubits (`d = 2`) and odd prime dimensions
+(`d = 3, 5, 7, ...`), as well as pure and mixed stabilizer states.
 
 !!! note "Development status"
     QuditClifford.jl is under active development and has not yet reached a

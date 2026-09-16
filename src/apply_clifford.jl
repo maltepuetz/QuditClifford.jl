@@ -178,6 +178,11 @@ end
         t = targets[i]
         (1 <= t <= n) || throw(ArgumentError(
             "Clifford target $t is outside the register 1:$n."))
+        for j in 1:(i - 1)
+            targets[j] == t && throw(ArgumentError(
+                "Clifford targets must be distinct; $t appears more than once " *
+                "in $targets."))
+        end
     end
     return nothing
 end
@@ -296,6 +301,10 @@ function apply!(tab::AbstractTableau, g::AbstractClifford)
 end
 
 function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) where {K,S}
+    prep.storephase == tab.storephase || throw(ArgumentError(
+        "PreparedClifford was built with storephase=$(prep.storephase), but " *
+        "the tableau has storephase=$(tab.storephase); rebuild the " *
+        "PreparedClifford for this tableau before applying it."))
     K == 0 && return tab
     n = tab.n
     stab = tab.stab

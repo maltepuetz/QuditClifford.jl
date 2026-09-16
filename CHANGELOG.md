@@ -11,8 +11,9 @@ dependency bump — carries the `skip-changelog` label instead.
 ### Added
 
 - Clifford unitaries: `apply!(tab, gate)` applies a named Clifford to a
-  stabilizer or destabilizer tableau in place, and `conjugate(gate, pauli; d)`
-  returns `U P U†`. The gate set is qudit-native — `Fourier`, `Phase`,
+  stabilizer or destabilizer tableau in place, and `conjugate(gate, pauli[, n];
+  d)` returns `U P U†` (`n` is required for a sparse Pauli and inferred for a
+  `GeneralPauli`). The gate set is qudit-native — `Fourier`, `Phase`,
   `Multiplier`, `PauliGate`, `SUM`, `CPhase`, `SWAP` — with no qubit aliases;
   `docs/src/unitaries.md` gives the `d = 2` translations. General Clifford
   operators, composition, inversion and uniform random sampling are not yet

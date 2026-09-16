@@ -9,6 +9,10 @@ A Clifford unitary maps Paulis to Paulis under conjugation, so it acts on a
 stabilizer tableau by transforming each generator's exponent vector through a
 symplectic matrix and shifting its phase. [`apply!`](@ref) does this in place.
 
+This page covers the named gates below, [`apply!`](@ref), and named-gate Pauli
+conjugation; a general `CliffordOperator` type together with inversion,
+composition, and uniform random Clifford sampling are not yet included.
+
 ## The gate set
 
 Names are qudit-native. No qubit aliases are exported; the `d = 2` equivalents
@@ -18,10 +22,10 @@ are given below for orientation.
 |---|---|---|
 | `Fourier(q)` | `X ↦ Z`, `Z ↦ X⁻¹` | Hadamard |
 | `Phase(q)` | `X ↦ XZ`, `Z ↦ Z` | `S` gate, `diag(1, i)` |
-| `Multiplier(q, a)` | `|j⟩ ↦ |aj⟩` | identity |
+| `Multiplier(q, a)` | `\|j⟩ ↦ \|aj⟩` | identity |
 | `PauliGate(q, x, z)` | conjugation by `XˣZᶻ` | Pauli conjugation |
-| `SUM(c, t, a)` | `|u,v⟩ ↦ |u, v+au⟩` | `CNOT` when `a = 1` |
-| `CPhase(q₁, q₂, a)` | `|u,v⟩ ↦ ω^{auv}|u,v⟩` | `CZ` when `a = 1` |
+| `SUM(c, t, a)` | `\|u,v⟩ ↦ \|u, v+au⟩` | `CNOT` when `a = 1` |
+| `CPhase(q₁, q₂, a)` | `\|u,v⟩ ↦ ω^{auv}\|u,v⟩` | `CZ` when `a = 1` |
 | `SWAP(q₁, q₂)` | exchange the two qudits | `SWAP` |
 
 `Multiplier` needs a coefficient invertible mod `d`; `SUM` and `CPhase` accept a
