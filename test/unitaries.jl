@@ -435,9 +435,26 @@ end
                 tab = TT(d, n; state = :mixed, storephase = storephase)
                 measure!(tab, SinglePauli(1, 0, 1); outcome = 0)
                 measure!(tab, SinglePauli(2, 0, 1); outcome = 0)
+                # Addition C (Task 7 controller ruling, fixing a near-vacuous
+                # assertion): with only the two measurements above, the active
+                # tableau is exactly Z1, Z2, so row 3 (qudit 3's X row) and the
+                # phase row are both identically zero here -- the "untouched
+                # row" and phase-range checks below would then compare zeros
+                # to zeros, which catches a gate scribbling into row 3 but not
+                # one that zeroes it. A third measurement on qudit 3, disjoint
+                # from the SUM(1, 2, 1) target qudits, with a nonzero outcome
+                # gives both row 3 and (when storephase) the phase row a
+                # nonzero entry that survives canonicalization, so the
+                # assertions have something real to preserve.
+                measure!(tab, SinglePauli(3, 1, 0); outcome = 1)
                 m_before = tab.m
                 canonicalize!(tab)
                 untouched = copy(tab.stab[3, :])      # qudit 3 X row, never a target
+                @test any(!iszero, untouched)          # confirm the seeding worked
+                if storephase
+                    phase_before = copy(tab.stab[2n + 1, 1:tab.m])
+                    @test any(!iszero, phase_before)   # ditto for the phase row
+                end
                 apply!(tab, SUM(1, 2, 1))
                 @test tab.m == m_before
                 @test !tab.iscanonical
@@ -622,4 +639,226 @@ end
     @test_throws ArgumentError conjugate(Fourier(1), SinglePauli(1, 1, 0), -1; d = 3)
     @test_throws ArgumentError conjugate(Fourier(1), SinglePauli(1, 1, 0), typemax(Int); d = 3)
     @test_throws ArgumentError conjugate(Fourier(1), GeneralPauli([1, 0], 0), 2; d = 3)
+end
+
+@testset "Conjugation-action identities" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3, 5)
+                n = 3
+                fresh() = TT(d, n; state = :ghz)
+
+                # Each of these is the identity conjugation, so the tableau must
+                # return to itself exactly -- phase row included, since a global
+                # phase is not stored.
+                tab = fresh(); ref = copy(tab.stab)
+                for _ in 1:4
+                    apply!(tab, Fourier(1))
+                end
+                @test tab.stab == ref
+
+                tab = fresh(); ref = copy(tab.stab)
+                apply!(tab, SWAP(1, 3)); apply!(tab, SWAP(1, 3))
+                @test tab.stab == ref
+
+                # Phase has order d at odd primes and order 4 at d = 2.
+                tab = fresh(); ref = copy(tab.stab)
+                for _ in 1:(d == 2 ? 4 : d)
+                    apply!(tab, Phase(2))
+                end
+                @test tab.stab == ref
+
+                # SUM and CPhase coefficients add; Multiplier coefficients multiply.
+                for a in 0:d-1, b in 0:d-1
+                    t1 = fresh(); apply!(t1, SUM(1, 2, a)); apply!(t1, SUM(1, 2, b))
+                    t2 = fresh(); apply!(t2, SUM(1, 2, mod(a + b, d)))
+                    @test t1.stab == t2.stab
+
+                    t1 = fresh(); apply!(t1, CPhase(1, 2, a)); apply!(t1, CPhase(1, 2, b))
+                    t2 = fresh(); apply!(t2, CPhase(1, 2, mod(a + b, d)))
+                    @test t1.stab == t2.stab
+                end
+
+                if d > 2
+                    for a in 1:d-1, b in 1:d-1
+                        t1 = fresh()
+                        apply!(t1, Multiplier(1, a)); apply!(t1, Multiplier(1, b))
+                        t2 = fresh(); apply!(t2, Multiplier(1, mod(a * b, d)))
+                        @test t1.stab == t2.stab
+                    end
+                end
+            end
+        end
+    end
+end
+
+function oracle_projector(P, d, outcome)
+    dim = size(P, 1)
+    projector = zeros(ComplexF64, dim, dim)
+    power = Matrix{ComplexF64}(I, dim, dim)
+    for r in 0:d-1
+        projector += oracle_ω(d)^(-outcome * r) * power
+        power = power * P
+    end
+    return projector / d
+end
+
+@testset "Measurement probabilities and post-states transform together" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3), g in (Fourier(1), SUM(1, 2, 1), Phase(2))
+                n = 3
+                P = SinglePauli(1, 0, 1)
+                initial = TT(d, n; state = :ghz)
+                Pc = conjugate(g, P, n; d = d)
+                U = oracle_embed(oracle_unitary(g, d), d, n, gate_targets(g))
+                ρ0 = oracle_density(initial)
+                Pmat = oracle_pauli(d, zeros(Int, n), [1, 0, 0])
+                Pcmat = oracle_ζ(d)^Pc.phase * oracle_pauli(d, Pc.xz[1:n], Pc.xz[n+1:2n])
+                for outcome in 0:d-1
+                    Π = oracle_projector(Pmat, d, outcome)
+                    Πc = oracle_projector(Pcmat, d, outcome)
+                    # Local Z measurement on GHZ has probability 1/d for each
+                    # outcome, both before and after simultaneous conjugation.
+                    @test isapprox(tr(Π * ρ0), 1 / d; atol = 1e-8)
+                    @test isapprox(tr(Πc * U * ρ0 * U'), 1 / d; atol = 1e-8)
+                    plain = deepcopy(initial)
+                    moved = apply!(deepcopy(initial), g)
+                    @test measure!(plain, P; outcome = outcome, phase_policy = 2) == outcome
+                    @test measure!(moved, Pc; outcome = outcome, phase_policy = 2) == outcome
+                    ρplain = oracle_density(plain)
+                    ρmoved = oracle_density(moved)
+                    @test norm(ρplain - d * Π * ρ0 * Π') < 1e-8
+                    @test norm(ρmoved - U * ρplain * U') < 1e-8
+                end
+            end
+        end
+    end
+end
+
+function clifford_apply_allocations(tab::T, g::G) where {T<:AbstractTableau,G<:AbstractClifford}
+    for _ in 1:3
+        apply!(tab, g)
+    end
+    return @allocated apply!(tab, g)
+end
+
+@testset "Named apply! is allocation-free after warm-up" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+        storephase in (false, true), inversemod in (QC.PrecomputedInvMod(d), QC.JustInTimeInvMod())
+        tab = TT(d, 12; state = :ghz, storephase = storephase, inversemod = inversemod)
+        for g in (Fourier(1), Phase(1), Multiplier(1, 1), PauliGate(1, 1, 1),
+                  SUM(1, 12), CPhase(1, 12), SWAP(1, 12))
+            clifford_apply_allocations(tab, g)
+            @test clifford_apply_allocations(tab, g) == 0
+        end
+    end
+end
+
+# ============================================================================
+# Required additions beyond the Task 7 brief (controller ruling).
+#
+# Reviews of Tasks 4 and 6 found three coverage gaps against spec 9.1/9.3.
+# They are added here, appended to the same file, because Task 7 is the
+# test-only task. See .superpowers/sdd/2026-09-16-clifford-unitaries-p1_v2/
+# task-7-brief.md, "Required additions beyond the brief", for the ruling.
+# Addition C is a fix folded into the pre-existing
+# "apply! preserves tableau invariants" testset above, rather than a new one.
+# ============================================================================
+
+@testset "Addition A: conjugate matches dense result for every supported Pauli type (spec 9.1)" begin
+    # `conjugate` is exercised elsewhere only on GeneralPauli, SinglePauli and
+    # DoublePauli. TriplePauli and NPauli -- including the empty-support
+    # NPauli{0}, which represents the identity -- get the same sparse/dense
+    # agreement check that "conjugate normalization and validation" already
+    # uses for SinglePauli. Pinned at d = 5, n = 4 under SUM(2, 4, 3): a
+    # reviewer verified this combination is already correct, so this pins
+    # behaviour rather than hunting a bug.
+    d = 5
+    n = 4
+    g = SUM(2, 4, 3)
+
+    # Build the dense GeneralPauli equivalent of a sparse (qudits, xs, zs)
+    # triple independently of the package's own sparse -> dense conversion.
+    dense_xz = (qudits, xs, zs) -> begin
+        xz = zeros(Int, 2n)
+        for (q, x, z) in zip(qudits, xs, zs)
+            xz[q] = x
+            xz[n + q] = z
+        end
+        xz
+    end
+
+    triple = TriplePauli(1, 2, 4, 2, 1, 0, 4, 3, 2, 1)
+    dense_triple = GeneralPauli(dense_xz((1, 2, 4), (2, 1, 3), (4, 0, 2)), 1)
+    ct = conjugate(g, triple, n; d = d)
+    cdt = conjugate(g, dense_triple; d = d)
+    @test ct.xz == cdt.xz
+    @test ct.phase == cdt.phase
+
+    npauli = NPauli((3, 1, 4, 2), (4, 0, 1, 2), (0, 3, 4, 1), 3)
+    dense_n = GeneralPauli(dense_xz((3, 1, 4, 2), (4, 0, 1, 2), (0, 3, 4, 1)), 3)
+    cn = conjugate(g, npauli, n; d = d)
+    cdn = conjugate(g, dense_n; d = d)
+    @test cn.xz == cdn.xz
+    @test cn.phase == cdn.phase
+
+    # NPauli{0}: empty support represents the identity. Only the phase (a
+    # global scalar) survives conjugation; every coordinate stays zero.
+    empty_op = NPauli((), (), (), 4)
+    @test empty_op isa NPauli{0}
+    dense_empty = GeneralPauli(zeros(Int, 2n), 4)
+    ce = conjugate(g, empty_op, n; d = d)
+    cde = conjugate(g, dense_empty; d = d)
+    @test ce.xz == zeros(Int, 2n)
+    @test ce.phase == 4
+    @test ce.xz == cde.xz
+    @test ce.phase == cde.phase
+end
+
+@testset "Addition B: conjugate at disjoint support, and n = 1 (spec 9.1 boundary)" begin
+    # No existing test covers a Pauli whose support misses the gate entirely,
+    # nor a one-qudit register.
+
+    # Disjoint support: a Pauli entirely on a qudit the gate does not target
+    # must come back with every coordinate, on every qudit, and its phase,
+    # all unchanged -- not only the coordinates the Pauli itself touches.
+    for d in (2, 3, 5)
+        n = 3
+        g = SUM(1, 2, 1)                     # targets qudits 1 and 2 only
+        x3, z3 = mod(1, d), mod(d - 1, d)
+        disjoint = SinglePauli(3, x3, z3, 2)
+        out = conjugate(g, disjoint, n; d = d)
+        expected = zeros(Int, 2n)
+        expected[3] = x3
+        expected[n + 3] = z3
+        @test out.xz == expected
+        @test out.phase == mod(2, phase_modulus_for(d))
+    end
+
+    # n = 1: the smallest legal register. apply! and conjugate must both work
+    # with a single qudit and a one-qudit gate.
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3, 5), g in (Fourier(1), Phase(1), PauliGate(1, 1, 1))
+                tab = TT(d, 1; state = :product, basis = :X)
+                ρ = oracle_density(tab)
+                U = oracle_unitary(g, d)
+                apply!(tab, g)
+                @test norm(U * ρ * U' - oracle_density(tab)) < 1e-8
+
+                base = TT(d, 1; state = :product, basis = :X)
+                for shift in (0, 1)
+                    P = GeneralPauli(copy(base.stab[1:2, 1]), base.stab[3, 1] + shift)
+                    Pc = conjugate(g, P; d = d)
+                    expected = oracle_ζ(d)^shift
+                    @test isapprox(expect!(deepcopy(base), P), expected; atol = 1e-8)
+                    @test isapprox(expect!(apply!(deepcopy(base), g), Pc), expected; atol = 1e-8)
+                end
+            end
+        end
+    end
 end
