@@ -316,3 +316,44 @@ function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) whe
     tab.iscanonical = false
     return tab
 end
+
+########################################
+# DestabilizerTableau hooks            #
+########################################
+
+# Patch the live cache using the OLD target entries, before the scatter
+# overwrites them. Non-target qudits contribute the same x·z as before, so the
+# delta is O(k) rather than a fresh full-length `dot_xz_col`.
+@inline function _before_clifford_scatter!(
+    tab::DestabilizerTableau,
+    prep::PreparedClifford{K,S},
+    j::Int,
+    v::NTuple{S,Int},
+    vout::NTuple{S,Int},
+) where {K,S}
+    d = prep.d
+    old = _col_xdotz(v, K, d, prep.fast)
+    new = _col_xdotz(vout, K, d, prep.fast)
+    @inbounds tab.xdotz_cache[j] =
+        add_mod(sub_mod(tab.xdotz_cache[j], old, d), new, d)
+    return nothing
+end
+
+# The dual basis gets the SAME symplectic map and no phase work: there is no
+# phase row on `destab`, and a symplectic F preserves the pairing outright,
+#     ⟨F D_j, F S_l⟩ = D_jᵀ FᵀΩF S_l = D_jᵀ Ω S_l = ⟨D_j, S_l⟩,
+# so duality survives with no re-orthogonalization. Contrast `measure!`, whose
+# hook needs an O(n·m) pass.
+function _after_clifford!(
+    tab::DestabilizerTableau,
+    prep::PreparedClifford{K,S},
+) where {K,S}
+    n = tab.n
+    destab = tab.destab
+    @inbounds for j in 1:tab.m
+        v = _gather(destab, prep.targets, n, j)
+        vout = _matvec(prep, v)
+        _scatter!(destab, prep.targets, n, j, vout)
+    end
+    return nothing
+end
