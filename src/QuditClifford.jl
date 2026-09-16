@@ -11,7 +11,8 @@ module QuditClifford
 export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     reset!, entanglement_entropy, measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
-    is_pure
+    is_pure,
+    AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP
 
 import Random, Primes
 import Random.rand!
@@ -34,5 +35,6 @@ include("projective_measurement.jl")
 include("entanglement_entropy.jl")
 include("check_purity.jl")
 include("expectation_value.jl")
+include("clifford_gates.jl")
 
 end
