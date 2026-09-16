@@ -225,6 +225,50 @@ function bench_reset(mk)
     return @benchmarkable reset!($tab; state = :product) evals = 1
 end
 
+"""
+`apply!` on a fresh-each-sample tableau. Like `bench_measure` the call mutates —
+it rewrites the target rows of every active column, patches the dual basis and
+the `xdotz_cache`, and clears `iscanonical` — so it needs `evals = 1` and a
+snapshot restore. A `:ghz` state has `m = n`, which is the full column count.
+"""
+function bench_apply(mk, state, g)
+    tab = mk(state)
+    snap = snapshot(tab)
+    return @benchmarkable(apply!($tab, $g), setup = (restore!($snap)), evals = 1)
+end
+
+"""
+The `apply!` spine: one- and two-qudit gates, on the phase-carrying path.
+
+`Fourier` has zero image `x·z`, so its odd-prime phase term is pure cross-term;
+`Phase` has a nonzero one and exercises the `D` vector. `SUM` across the chain
+is the two-qudit case with non-adjacent targets, matching how the measurement
+leaves use `spread_sites`.
+"""
+function clifford_group(; d::Int, n::Int, T,
+                        storephase::Bool = true,
+                        inversemod = QuditClifford.PrecomputedInvMod(d))
+    mk = tableau_maker(T, d, n; storephase = storephase, inversemod = inversemod)
+    s1, s2 = spread_sites(n)
+    g = BenchmarkGroup()
+    g["apply!/fourier"] = bench_apply(mk, :ghz, Fourier(s1))
+    g["apply!/phase"] = bench_apply(mk, :ghz, Phase(s1))
+    g["apply!/sum"] = bench_apply(mk, :ghz, SUM(s1, s2, 1))
+    return g
+end
+
+# The PR-head script runs against both head and the older baseline package.
+# Do not call any new gate constructor until every API this group uses exists.
+function register_clifford_group!(suite, types, ds, ns; api::Module=QuditClifford)
+    required = (:apply!, :Fourier, :Phase, :SUM)
+    all(name -> isdefined(api, name), required) || return suite
+    for T in types, d in ds, n in ns
+        suite["clifford"]["$(nameof(T))/d=$d/n=$n"] =
+            clifford_group(; d = d, n = n, T = T)
+    end
+    return suite
+end
+
 # ---------------------------------------------------------------- the spine
 
 """
