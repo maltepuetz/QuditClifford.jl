@@ -12,7 +12,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     reset!, entanglement_entropy, measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
     is_pure,
-    AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP
+    AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
+    apply!
 
 import Random, Primes
 import Random.rand!

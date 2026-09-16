@@ -330,3 +330,215 @@ end
     @test_throws ArgumentError QC._check_qubit_bitmask_bound(65)
     @test_throws ArgumentError QC._check_qubit_bitmask_bound(-1)
 end
+
+# ρ = d^(-n) ∏_j (Σ_t S_j^t)  — unit trace for every m, spec section 9.1.
+function oracle_density(tab)
+    d, n = tab.d, tab.n
+    dim = d^n
+    ρ = Matrix{ComplexF64}(I, dim, dim)
+    for j in 1:tab.m
+        x = [tab.stab[q, j] for q in 1:n]
+        z = [tab.stab[n + q, j] for q in 1:n]
+        h = tab.storephase ? tab.stab[2n + 1, j] : 0
+        Sj = oracle_ζ(d)^h * oracle_pauli(d, x, z)
+        acc = zeros(ComplexF64, dim, dim)
+        P = Matrix{ComplexF64}(I, dim, dim)
+        for _ in 1:d
+            acc += P
+            P = P * Sj
+        end
+        ρ = ρ * acc
+    end
+    return ρ / d^n
+end
+
+function oracle_embed(U, d, n, targets)
+    k = length(targets)
+    dim = d^n
+    M = zeros(ComplexF64, dim, dim)
+    for icol in 0:dim-1
+        ds = digits_of(icol, d, n)
+        jcol = oracle_index([ds[t] for t in targets], d)
+        for jrow in 0:d^k-1
+            amp = U[jrow + 1, jcol + 1]
+            amp == 0 && continue
+            tout = digits_of(jrow, d, k)
+            ds2 = copy(ds)
+            for (a, t) in enumerate(targets)
+                ds2[t] = tout[a]
+            end
+            M[oracle_index(ds2, d) + 1, icol + 1] += amp
+        end
+    end
+    return M
+end
+
+gate_targets(g) =
+    g isa Fourier ? (g.qudit,) :
+    g isa Phase ? (g.qudit,) :
+    g isa Multiplier ? (g.qudit,) :
+    g isa PauliGate ? (g.qudit,) :
+    g isa SUM ? (g.control, g.target) :
+    g isa CPhase ? (g.qudit1, g.qudit2) : (g.qudit1, g.qudit2)
+
+function placements(d, n)
+    gs = Any[Fourier(1), Fourier(n), Phase(2), PauliGate(2, 1, 1),
+             SUM(1, n, 1), SUM(n, 1, 1), CPhase(1, 2, 1), SWAP(1, n),
+             # Spec 9.1: the oracle must see zero, non-unit and negative
+             # parameters, not only unit ones. d - 1 is -1 in canonical form.
+             SUM(1, n, 0), CPhase(1, 2, d - 1), PauliGate(2, d - 1, 1)]
+    if d > 2
+        push!(gs, Multiplier(1, 2))
+        push!(gs, Multiplier(1, d - 1))
+    end
+    gs
+end
+
+function make_state(TT, d, n, kind)
+    if kind === :mixed
+        tab = TT(d, n; state = :mixed)
+        measure!(tab, SinglePauli(1, 0, 1); outcome = 0)
+        n > 2 && measure!(tab, SinglePauli(2, 0, 1); outcome = 0)
+        return tab
+    elseif kind === :ghz
+        return TT(d, n; state = :ghz)
+    else
+        return TT(d, n; state = :product, basis = kind)
+    end
+end
+
+@testset "apply! reproduces UρU† on real tableaux" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for (d, n) in ((2, 3), (3, 3), (5, 2))
+                for kind in (:mixed, :Z, :X, :Y, :ghz)
+                    for g in placements(d, n)
+                        tab = make_state(TT, d, n, kind)
+                        ρ = oracle_density(tab)
+                        U = oracle_embed(oracle_unitary(g, d), d, n, gate_targets(g))
+                        apply!(tab, g)
+                        @test norm(U * ρ * U' - oracle_density(tab)) < 1e-8
+                    end
+                end
+            end
+        end
+    end
+end
+
+@testset "apply! preserves tableau invariants" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3), storephase in (true, false)
+                n = 4
+                tab = TT(d, n; state = :mixed, storephase = storephase)
+                measure!(tab, SinglePauli(1, 0, 1); outcome = 0)
+                measure!(tab, SinglePauli(2, 0, 1); outcome = 0)
+                m_before = tab.m
+                canonicalize!(tab)
+                untouched = copy(tab.stab[3, :])      # qudit 3 X row, never a target
+                apply!(tab, SUM(1, 2, 1))
+                @test tab.m == m_before
+                @test !tab.iscanonical
+                @test tab.stab[3, :] == untouched
+                @test all(tab.stab[:, (tab.m + 1):n] .== 0)
+                @test all(0 .<= tab.stab[1:2n, 1:tab.m] .< d)
+                if storephase
+                    @test all(0 .<= tab.stab[2n + 1, 1:tab.m] .< (d == 2 ? 4 : d))
+                end
+            end
+        end
+    end
+end
+
+@testset "apply! validates targets" begin
+    tab = StabilizerTableau(3, 2; state = :product)
+    @test_throws ArgumentError apply!(tab, Fourier(3))
+    @test_throws ArgumentError apply!(tab, SUM(1, 5, 1))
+    @test_throws ArgumentError apply!(tab, Multiplier(1, 3))   # 3 ≡ 0 (mod 3)
+    # The rejected calls must not have mutated anything.
+    @test tab.stab == StabilizerTableau(3, 2; state = :product).stab
+end
+
+struct CliffordCountingInv <: QC.InverseMod
+    calls::Base.RefValue{Int}
+end
+function (counter::CliffordCountingInv)(x::Int, d::Int)
+    counter.calls[] += 1
+    return invmod(x, d)
+end
+
+@testset "Invalid calls do not invert or mutate" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), storephase in (false, true)
+        counter = CliffordCountingInv(Ref(0))
+        tab = TT(3, 2; state = :product, storephase = storephase, inversemod = counter)
+        before = deepcopy(tab)
+        counter.calls[] = 0
+        for g in (Fourier(3), Phase(3), Multiplier(3, 2), SUM(1, 3), Multiplier(1, 3))
+            @test_throws ArgumentError apply!(tab, g)
+            @test counter.calls[] == 0
+            @test tab.stab == before.stab
+            @test tab.xdotz_cache == before.xdotz_cache
+            @test tab.iscanonical == before.iscanonical
+            @test tab.m == before.m
+            if TT === DestabilizerTableau
+                @test tab.destab == before.destab
+            end
+        end
+    end
+end
+
+@testset "Qubit preparation smoke test" begin
+    jit2 = QC.JustInTimeInvMod()
+    @test QC._prepare(SWAP(1, 2), 2, jit2, true) isa QC.PreparedClifford
+end
+
+@testset "Matvec and phase tiers against BigInt" begin
+    jit = QC.JustInTimeInvMod()
+    dims = Sys.WORD_SIZE == 64 ? (3, 5, 2147483647, 9223372036854775783) :
+                               (3, 5, 32749, 2147483647)
+    for d in dims
+        gates = (Fourier(1), Phase(1), Multiplier(1, d - 1),
+                 PauliGate(1, typemin(Int), typemin(Int)),
+                 SUM(1, 2, d - 1), CPhase(1, 2, d - 1), SWAP(1, 2))
+        for g in gates
+            prep = QC._prepare(g, d, jit, true)
+            safe = QC._prepare(g, d, jit, true; force_safe = true)
+            @test !safe.fast
+            S = length(prep.a)
+            K = S ÷ 2
+            Dref = ntuple(i -> Int(mod(sum(big(prep.F[i][q]) * prep.F[i][K+q]
+                                           for q in 1:K), d)), S)
+            @test prep.D == safe.D == Dref
+            for v in (ntuple(_ -> 0, S), ntuple(_ -> d - 1, S),
+                      ntuple(i -> isodd(i) ? d - 1 : 1, S))
+                outref = ntuple(i -> Int(mod(sum(big(prep.F[j][i]) * v[j]
+                                                 for j in 1:S), d)), S)
+                phaseref = phase_reference(prep.F, prep.a, v, d)
+                # The default preparation chooses fast only when admissible.
+                @test QC._matvec(prep, v) == outref
+                @test QC._matvec(safe, v) == outref
+                @test QC._phase(prep, v, outref) == phaseref
+                @test QC._phase(safe, v, outref) == phaseref
+            end
+        end
+    end
+
+    # The spec's symplectic counterexample F = [A A; 0 A^(-T)]. This is
+    # internal kernel data, not a premature public P2 CliffordOperator API.
+    d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
+    M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
+    F = ntuple(j -> ntuple(i -> M[i, j], 4), 4)
+    Ω = [0 0 1 0; 0 0 0 1; -1 0 0 0; 0 -1 0 0]
+    @test mod.(big.(M)' * Ω * big.(M), d) == mod.(Ω, d)
+    @test !QC.clifford_fast_dots(4, d)
+    D = QC._image_xdotz(F, 2, d, false)
+    prep = QC.PreparedClifford{2,4}((1, 2), F, (0, 0, 0, 0), D,
+                                   d, d, jit(2, d), false, true)
+    v = ntuple(_ -> d - 1, 4)
+    outref = Tuple(Int.(mod.(big.(M) * big.(collect(v)), d)))
+    @test outref[1] == 4
+    @test QC._matvec(prep, v) == outref
+    @test QC._phase(prep, v, outref) == phase_reference(F, prep.a, v, d)
+end
