@@ -58,8 +58,9 @@ mixed stabilizer states.
 
 !!! note "Development status"
     QuditClifford.jl is under active development and has not yet reached a
-    stable release. Additional functionality is planned, including support
-    for Clifford unitaries. APIs may change before version 1.0.
+    stable release. Additional functionality is planned, including general
+    Clifford operators and uniform random Clifford sampling. APIs may change
+    before version 1.0.
 
 Use [`DestabilizerTableau`](@ref) for repeated measurement and expectation
 workflows, or [`StabilizerTableau`](@ref) when compact storage is more
