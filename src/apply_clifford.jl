@@ -357,3 +357,133 @@ function _after_clifford!(
     end
     return nothing
 end
+
+########################################
+# Pauli conjugation                    #
+########################################
+
+# All support/shape checks are read-only and precede preparation/allocation.
+# Register-size validation in _conjugate guarantees that 2n is representable.
+function _validate_pauli(op::GeneralPauli, n::Int)
+    len = length(op.xz)
+    len == 2n || throw(ArgumentError(
+        "GeneralPauli has length $len, expected 2n = $(2n)."))
+    return nothing
+end
+
+function _validate_pauli(op::FewQuditPauli, n::Int)
+    qudits, _, _, _ = _few_qudit_pauli_data(op)
+    @inbounds for i in eachindex(qudits)
+        q = qudits[i]
+        (1 <= q <= n) || throw(ArgumentError(
+            "Pauli qudit index $q is outside the register 1:$n."))
+        for r in 1:(i - 1)
+            qudits[r] == q && throw(ArgumentError(
+                "Pauli has a repeated qudit index $q; that has no product interpretation here."))
+        end
+    end
+    return nothing
+end
+
+# Internal precondition: dimension, register size, and support were validated.
+# Normalize into independent storage; the caller's object is never mutated.
+function _dense_pauli(op::GeneralPauli, n::Int, d::Int, p::Int)
+    xz = Vector{Int}(undef, 2n)
+    @inbounds for i in 1:(2n)
+        xz[i] = mod(op.xz[i], d)
+    end
+    return GeneralPauli(xz, mod(op.phase, p))
+end
+
+function _dense_pauli(op::FewQuditPauli, n::Int, d::Int, p::Int)
+    qudits, xs, zs, phase = _few_qudit_pauli_data(op)
+    xz = zeros(Int, 2n)
+    @inbounds for i in eachindex(qudits)
+        q = qudits[i]
+        xz[q] = mod(xs[i], d)
+        xz[n + q] = mod(zs[i], d)
+    end
+    return GeneralPauli(xz, mod(phase, p))
+end
+
+function _conjugate(g::AbstractClifford, op::AbstractPauli, n::Int, d::Union{Int,Nothing})
+    d === nothing && throw(ArgumentError(
+        "conjugate with a named gate needs an explicit dimension: pass d = <prime>."))
+    dd = d::Int
+    Primes.isprime(dd) || throw(ArgumentError("Qudit dimension d must be a prime number."))
+    n >= 0 || throw(ArgumentError("Register size n must be nonnegative, got $n."))
+    n <= typemax(Int) ÷ 2 || throw(ArgumentError("Register size 2n must fit in Int."))
+    _validate_pauli(op, n)
+    _validate_targets(_clifford_targets(g), n)
+    p = phase_modulus(dd)
+    # Modulus-dependent gate validation precedes inversion inside _clifford_data.
+    # Standalone preparation never builds a d-1 lookup table.
+    prep = _prepare(g, dd, JustInTimeInvMod(), true)
+    out = _dense_pauli(op, n, dd, p)
+    K = length(prep.targets)
+    xz = out.xz
+    v = ntuple(Val(2K)) do i
+        @inbounds i <= K ? xz[prep.targets[i]] : xz[n + prep.targets[i - K]]
+    end
+    vout = _matvec(prep, v)
+    δ = _phase(prep, v, vout)
+    @inbounds for i in 1:K
+        xz[prep.targets[i]] = vout[i]
+        xz[n + prep.targets[i]] = vout[K + i]
+    end
+    out.phase = add_mod(out.phase, δ, p)
+    return out
+end
+
+"""
+    conjugate(g::AbstractClifford, op::GeneralPauli; d)
+    conjugate(g::AbstractClifford, op::AbstractPauli, n::Int; d)
+
+Return `U op U†` as a new [`GeneralPauli`](@ref), where `U` is the Clifford `g`.
+
+This is the active conjugation, matching [`apply!`](@ref): applying `g` to a
+state and conjugating an observable by `g` transform expectation values
+consistently.
+
+# Arguments
+- `g::AbstractClifford`: the Clifford unitary.
+- `op`: the Pauli to conjugate. A dense [`GeneralPauli`](@ref) carries its own
+  register size; a sparse `FewQuditPauli` does not, so `n` must be given.
+- `n::Int`: register size, required for sparse Paulis and checked against a
+  dense one.
+
+# Keyword Arguments
+- `d`: qudit dimension. Named gates are dimension-agnostic, so this is required.
+
+# Returns
+A new `GeneralPauli` on the full `n`-qudit register, fully normalized. The
+input is not mutated, and non-target coordinates are preserved.
+
+# Throws
+`ArgumentError` for a missing or non-prime `d`, a malformed dense length, a
+sparse index outside `1:n` or repeated, or a gate target outside `1:n`.
+
+# Examples
+```julia
+conjugate(Fourier(1), SinglePauli(1, 1, 0), 2; d = 3)   # X₁ ↦ Z₁
+conjugate(SUM(1, 2), GeneralPauli([1, 0, 0, 0], 0); d = 2)
+```
+
+# Notes
+Heisenberg evolution of an observable under state evolution by `U` is `U† P U`;
+build that from the inverse Clifford, which arrives with general operators.
+
+See also [`apply!`](@ref).
+"""
+function conjugate(g::AbstractClifford, op::GeneralPauli;
+                   d::Union{Int,Nothing}=nothing)
+    len = length(op.xz)
+    iseven(len) || throw(ArgumentError(
+        "GeneralPauli xz must have even length, got $len."))
+    return _conjugate(g, op, len ÷ 2, d)
+end
+
+function conjugate(g::AbstractClifford, op::AbstractPauli, n::Int;
+                   d::Union{Int,Nothing}=nothing)
+    return _conjugate(g, op, n, d)
+end

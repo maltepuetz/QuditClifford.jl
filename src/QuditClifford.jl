@@ -13,7 +13,7 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
     is_pure,
     AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
-    apply!
+    apply!, conjugate
 
 import Random, Primes
 import Random.rand!

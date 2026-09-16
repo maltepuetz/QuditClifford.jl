@@ -542,3 +542,84 @@ end
     @test QC._matvec(prep, v) == outref
     @test QC._phase(prep, v, outref) == phase_reference(F, prep.a, v, d)
 end
+
+@testset "conjugate preserves nonzero, phase-sensitive expectations" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3, 5), g in placements(d, 3)
+                base = TT(d, 3; state = :ghz)
+                for j in 1:base.m, shift in (0, 1)
+                    # A stabilizer generator has expectation 1. Adding a
+                    # scalar phase gives a known nonzero complex expectation.
+                    P = GeneralPauli(copy(base.stab[1:6, j]),
+                                     base.stab[7, j] + shift)
+                    expected = oracle_ζ(d)^shift
+                    Pc = conjugate(g, P; d = d)
+                    explicit = conjugate(g, P, 3; d = d)
+                    @test Pc.xz == explicit.xz && Pc.phase == explicit.phase
+                    @test isapprox(expect!(deepcopy(base), P), expected; atol = 1e-8)
+                    @test isapprox(expect!(apply!(deepcopy(base), g), Pc), expected; atol = 1e-8)
+                end
+            end
+        end
+    end
+end
+
+@testset "conjugate normalization and validation" begin
+    d = 3
+    # Sparse input needs n; dense input infers it.
+    dense = conjugate(Fourier(1), GeneralPauli([1, 0, 0, 0], 0); d = d)
+    sparse = conjugate(Fourier(1), SinglePauli(1, 1, 0), 2; d = d)
+    @test dense.xz == sparse.xz
+    @test dense.phase == sparse.phase
+
+    # Unreduced and negative input coordinates are normalized, not rejected.
+    messy = conjugate(Fourier(1), GeneralPauli([1 + d, -1, 0, 0], -1); d = d)
+    tidy = conjugate(Fourier(1), GeneralPauli([1, d - 1, 0, 0], d - 1); d = d)
+    @test messy.xz == tidy.xz && messy.phase == tidy.phase
+
+    # The input is never mutated.
+    op = GeneralPauli([1, 0, 0, 0], 0)
+    snapshot = copy(op.xz)
+    conjugate(Fourier(1), op; d = d)
+    @test op.xz == snapshot
+    @test op.phase == 0
+
+    @test_throws ArgumentError conjugate(Fourier(1), GeneralPauli([1, 0, 0, 0], 0))
+    @test_throws ArgumentError conjugate(Fourier(1), GeneralPauli([1, 0, 0], 0); d = d)
+    @test_throws ArgumentError conjugate(Fourier(5), GeneralPauli([1, 0, 0, 0], 0); d = d)
+    @test_throws ArgumentError conjugate(Fourier(1), SinglePauli(4, 1, 0), 2; d = d)
+    @test_throws ArgumentError conjugate(Fourier(1), DoublePauli(1, 1, 0, 1, 0, 1), 2; d = d)
+    @test_throws ArgumentError conjugate(Fourier(1), GeneralPauli([1, 0, 0, 0], 0); d = 4)
+end
+
+# Warm the exception path in function scope. The loose ceiling allows exception
+# bookkeeping but catches constructing a full 2n-element result before rejection.
+function rejected_conjugation_allocations(g, op, n)
+    function attempt()
+        try
+            conjugate(g, op, n; d = 3)
+        catch err
+            err isa ArgumentError || rethrow()
+        end
+        return nothing
+    end
+    attempt()
+    return @allocated attempt()
+end
+
+@testset "Conjugation validates before allocating the dense result" begin
+    n = 100_000
+    for (g, op) in ((Fourier(1), SinglePauli(0, 0, 0)),
+                    (Fourier(1), DoublePauli(1, 0, 0, 1, 0, 0)),
+                    (Fourier(n + 1), SinglePauli(1, 1, 0)),
+                    (Multiplier(1, 3), SinglePauli(1, 1, 0)))
+        @test_throws ArgumentError conjugate(g, op, n; d = 3)
+        rejected_conjugation_allocations(g, op, n)
+        @test rejected_conjugation_allocations(g, op, n) < 64_000
+    end
+    @test_throws ArgumentError conjugate(Fourier(1), SinglePauli(1, 1, 0), -1; d = 3)
+    @test_throws ArgumentError conjugate(Fourier(1), SinglePauli(1, 1, 0), typemax(Int); d = 3)
+    @test_throws ArgumentError conjugate(Fourier(1), GeneralPauli([1, 0], 0), 2; d = 3)
+end
