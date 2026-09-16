@@ -228,6 +228,76 @@ end
     end
 end
 
+@testset "Exhaustive one-qudit Clifford enumeration" begin
+    # Spec 9.2: enumerate every admissible one-qudit (F, a) at d = 2, 3
+    # (24 and 216 Cliffords), rather than spot-checking only the named
+    # catalogue -- of the seven shipped gates only Phase has a nonzero D,
+    # so this is what actually exercises the D·v term and the qubit
+    # ordered-product accumulation order broadly.
+
+    # d = 2: brute force over all 16 candidate column pairs, keep the
+    # symplectic ones (Sp(2, Z_2) = SL(2, Z_2), order 6), then every
+    # admissible raw phase (a_i ≡ D_i mod 2, spec 3.3): 2 choices per
+    # generator, 4 per F, 24 Cliffords total.
+    symplectics2 = NTuple{2,NTuple{2,Int}}[]
+    for x1 in 0:1, z1 in 0:1, x2 in 0:1, z2 in 0:1
+        F = ((x1, z1), (x2, z2))
+        is_symplectic(F, 2) && push!(symplectics2, F)
+    end
+    @test length(symplectics2) == 6
+
+    total2 = 0
+    for F in symplectics2
+        D = QC._image_xdotz(F, 1, 2, QC.clifford_fast_dots(2, 2))
+        admissible2 = NTuple{2,Int}[]
+        for a1 in 0:3, a2 in 0:3
+            (mod(a1, 2) == mod(D[1], 2) && mod(a2, 2) == mod(D[2], 2)) &&
+                push!(admissible2, (a1, a2))
+        end
+        @test length(admissible2) == 4
+        for a in admissible2
+            total2 += 1
+            for v1 in 0:1, v2 in 0:1
+                v = (v1, v2)
+                @test QC._phase_qubit(v, F, a, 1) == phase_reference(F, a, v, 2)
+            end
+        end
+    end
+    @test total2 == 24
+
+    # d = 3: every F with FᵀΩF = Ω mod 3 (SL(2, Z_3), order 24); every raw
+    # phase a ∈ {0,1,2}² is admissible at odd d (no Hermiticity constraint),
+    # so 24 × 9 = 216 Cliffords.
+    symplectics3 = NTuple{2,NTuple{2,Int}}[]
+    for x1 in 0:2, z1 in 0:2, x2 in 0:2, z2 in 0:2
+        F = ((x1, z1), (x2, z2))
+        is_symplectic(F, 3) && push!(symplectics3, F)
+    end
+    @test length(symplectics3) == 24
+
+    jit = QC.JustInTimeInvMod()
+    inv2_3 = jit(2, 3)
+    fast3 = QC.clifford_fast_dots(2, 3)
+    total3 = 0
+    for F in symplectics3
+        D = QC._image_xdotz(F, 1, 3, fast3)
+        Dsafe = QC._image_xdotz(F, 1, 3, false)
+        @test Dsafe == D
+        for a1 in 0:2, a2 in 0:2
+            a = (a1, a2)
+            total3 += 1
+            for v1 in 0:2, v2 in 0:2
+                v = (v1, v2)
+                vout = ntuple(j -> mod(sum(F[i][j] * v[i] for i in 1:2), 3), 2)
+                φ = QC._phase_odd(v, vout, a, D, 1, 3, inv2_3, fast3)
+                @test φ == phase_reference(F, a, v, 3)
+                @test QC._phase_odd(v, vout, a, Dsafe, 1, 3, inv2_3, false) == φ
+            end
+        end
+    end
+    @test total3 == 216
+end
+
 @testset "Phase evaluation at a large dimension" begin
     # A prime near the two-term accumulation boundary on each supported host.
     d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
@@ -238,8 +308,11 @@ end
     D = QC._image_xdotz(F, 1, d, fast)
     v = (d - 1, 0)
     vout = ntuple(j -> mod(sum(F[i][j] * v[i] for i in 1:2), d), 2)
-    # C(d-1, 2) = 1 mod d. A triple-product evaluation wraps and returns
-    # 1073741824 instead on 64-bit hosts; Task 4 tests the four-term matvec too.
+    # C(d-1, 2) = 1 mod d. Multiplying the unreduced bracket by inv2 before
+    # reducing -- instead of reducing at each step, as `_phase_odd` does --
+    # overflows Int and returns 1073741828 instead on 64-bit hosts (not
+    # 1073741824, which is just inv2 itself); Task 4 tests the four-term
+    # matvec too.
     @test QC._phase_odd(v, vout, a, D, 1, d, jit(2, d), fast) == 1
     @test QC._phase_odd(v, vout, a, QC._image_xdotz(F, 1, d, false),
                        1, d, jit(2, d), false) == 1

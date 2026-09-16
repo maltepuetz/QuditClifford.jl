@@ -49,6 +49,14 @@ end
 # Every dot is at most 2k terms and no triple product is formed, so the tier
 # guard in `clifford_fast_dots` covers the whole expression. Given `Fv`, which
 # the action has already computed, this is O(k).
+#
+# Precondition: `v` and `vout` are canonical, every entry already reduced
+# mod `d` (Task 4 is what supplies `vout`). The final `mod`s only fix up the
+# returned phase; they do not rescue an out-of-range input upstream of them.
+# In particular the fast tier's accumulators (`_col_xdotz`, `_dot_mod`) sum
+# entries assumed `< d`, which is exactly the bound `clifford_fast_dots`
+# sizes its overflow guard against -- an unreduced entry can silently
+# overflow there with no error.
 @inline function _phase_odd(
     v::NTuple{S,Int},
     vout::NTuple{S,Int},
@@ -88,8 +96,14 @@ end
     return nothing
 end
 
-# Precondition: `_check_qubit_bitmask_bound(K)` has already passed, and the
-# tuples are sized `S = 2K`. Do not call this with an unvalidated `K`.
+# Precondition: `_check_qubit_bitmask_bound(K)` has already passed, the
+# tuples are sized `S = 2K`, `v` is canonical (every `v[i] ∈ {0,1}`), and
+# every entry of `F` is reduced mod 2 (`F[i][q] ∈ {0,1}`). Do not call this
+# with an unvalidated `K` or a non-canonical `v`/`F`: the `v[i] == 0 &&
+# continue` test and the `F[i][q] == 1` bit tests both assume canonical
+# input and give a silent wrong answer otherwise -- e.g. `v[i] == 2` fails
+# the `== 0` test, so generator `i` is (wrongly) treated as active, exactly
+# as `v[i] == 1` would be, instead of erroring.
 @inline function _phase_qubit(
     v::NTuple{S,Int},
     F::NTuple{S,NTuple{S,Int}},
