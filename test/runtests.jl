@@ -18,4 +18,5 @@ using Aqua
     include("entanglement.jl")
     include("purity.jl")
     include("initialization.jl")
+    include("unitaries.jl")
 end

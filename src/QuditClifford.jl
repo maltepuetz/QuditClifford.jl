@@ -22,6 +22,7 @@ import LoopVectorization.@turbo
 # include the sub files
 include("modular.jl")
 include("helper.jl")
+include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("abstract_tableau.jl")
 include("stabilizer_tableau.jl")
