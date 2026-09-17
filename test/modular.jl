@@ -273,11 +273,12 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test QC._barrett_valid(443)
     end
 
-    # The table read is `@inbounds`, so a non-positive `d` used to run off the
-    # front of it and return whatever was in memory -- `_barrett_valid(-7)`
-    # answered `true`, which would have selected a Barrett tier for a modulus
-    # `_barrett_mul` cannot even compute. No caller can reach it (both builders
-    # demand a prime `d`), so only a direct test pins the guard.
+    # The table read is `@inbounds`, so without the explicit non-positive
+    # guard a `d <= 0` would index off the front of the table and return
+    # whatever lies in memory. Answering `true` there would select a Barrett
+    # tier for a modulus `_barrett_mul` cannot even compute. No caller can
+    # reach it (both builders demand a prime `d`), so only a direct test pins
+    # the guard.
     @testset "_barrett_valid rejects non-positive d without reading out of bounds" begin
         for d in (0, -1, -7, -1024, typemin(Int))
             @test QC._barrett_valid(d) === false

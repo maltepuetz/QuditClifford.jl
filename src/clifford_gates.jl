@@ -11,6 +11,26 @@ operators at different `d`, and may be invalid at some of them. Dimension is
 supplied when the gate meets a tableau in [`apply!`](@ref), or explicitly in
 [`conjugate`](@ref).
 
+# The named gates
+
+The complete set of concrete subtypes. Names are qudit-native; no qubit
+aliases are exported, and the `d = 2` column is for orientation only.
+
+| Constructor | Action | At `d = 2` |
+|:---|:---|:---|
+| [`Fourier(qudit)`](@ref Fourier) | `X ↦ Z`, `Z ↦ X⁻¹` | Hadamard |
+| [`Phase(qudit)`](@ref Phase) | `X ↦ XZ`, `Z ↦ Z` | `S` gate, `diag(1, i)` |
+| [`Multiplier(qudit, a)`](@ref Multiplier) | `\\|j⟩ ↦ \\|aj⟩`, needs `a` invertible mod `d` | identity |
+| [`PauliGate(qudit, x, z)`](@ref PauliGate) | conjugation by `XˣZᶻ` | Pauli conjugation |
+| [`SUM(control, target, a = 1)`](@ref SUM) | `\\|u,v⟩ ↦ \\|u, v+au⟩` | `CNOT` when `a = 1` |
+| [`CPhase(qudit1, qudit2, a = 1)`](@ref CPhase) | `\\|u,v⟩ ↦ ω^{auv}\\|u,v⟩` | `CZ` when `a = 1` |
+| [`SWAP(qudit1, qudit2)`](@ref SWAP) | exchange the two qudits | `SWAP` |
+
+`SUM` and `CPhase` accept a coefficient congruent to zero, which is the
+identity; `Multiplier` rejects one, since it would not be invertible. Two-qudit
+gates require distinct qudits. A general `CliffordOperator`, along with
+composition, inversion and uniform random sampling, is not yet implemented.
+
 # Examples
 ```julia
 g = Fourier(1)

@@ -37,24 +37,27 @@ coefficient congruent to zero, which is the identity. In `SUM` it is the second
 Gates are dimension-agnostic values, like the Pauli types: the dimension comes
 from the tableau.
 
-```jldoctest
+```jldoctest clifford-bell
 julia> tab = StabilizerTableau(2, 2; state = :product, basis = :Z);
 
 julia> apply!(tab, Fourier(1));
 
 julia> apply!(tab, SUM(1, 2));
 
-julia> is_pure(tab)
-true
+julia> tab
+Stabilizer Tableau:
+    Qudit dimension:  d = 2
+    Number of Qudits: n = 2
+    Generators:       m = 2
+    Tableau:
+      X     Z 
+     1 1 | 0 0 | 0
+     0 0 | 1 1 | 0
 ```
 
 That circuit prepares a Bell state, so the two qubits are maximally entangled:
 
-```jldoctest
-julia> tab = StabilizerTableau(2, 2; state = :product, basis = :Z);
-
-julia> apply!(tab, Fourier(1)); apply!(tab, SUM(1, 2));
-
+```jldoctest clifford-bell
 julia> entanglement_entropy(tab, [1])
 1
 ```

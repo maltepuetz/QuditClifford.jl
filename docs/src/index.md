@@ -174,6 +174,7 @@ Pages = [
     "examples.md",
     "conventions.md",
     "measurements.md",
+    "unitaries.md",
     "api.md",
 ]
 Depth = 2

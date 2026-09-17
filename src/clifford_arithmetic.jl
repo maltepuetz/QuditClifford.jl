@@ -1,9 +1,11 @@
 ##### overflow-safe scalar arithmetic for Clifford data #####
 #
-# `src/modular.jl`'s vector primitives are NOT a general fallback here. Their
-# non-Barrett tier evaluates `mod(a * src[i], d)` with an unguarded `Int`
-# product, and the `a == 1` tier adds two residues; both are exact only inside
-# the package's documented envelope `max(n, 2)(d-1)^2 <= typemax(Int)`.
+# `src/modular.jl`'s vector primitives are NOT a general fallback here. Both
+# of their multiplying tiers -- Barrett and divide-twice -- form `a * src[i]`
+# as an unguarded `Int` product, so they are exact only inside the package's
+# documented envelope `max(n, 2)(d-1)^2 <= typemax(Int)`. (The multiply-free
+# tiers are not the problem: the add-two-residues form is exact to
+# `d <= 2^62`, far outside that envelope, and the subtract form always.)
 #
 # A Clifford dot sums `2k` terms rather than `n`, so it can leave that envelope
 # even at n = 2: with A = [-1 -1; 0 -1] and the symplectic F = [A A; 0 A^-T] at

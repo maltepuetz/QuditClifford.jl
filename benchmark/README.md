@@ -85,7 +85,7 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 | --- | --- | --- | --- | --- | --- |
 | `smoke` | n = 8 | 2, 3 | 89 | seconds | local sanity check |
 | `ci` | n ∈ {64, 256} | 2, 3, 5 | 189 | ~83 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 339 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 339 | ~7 min | `workflow_dispatch`; adds the Ising and purification circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the

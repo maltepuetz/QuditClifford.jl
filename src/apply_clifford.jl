@@ -18,9 +18,10 @@
     return s
 end
 
-# D[i] = x(F[:,i]) · z(F[:,i]) mod d. This is the ONLY derived phase data the
-# design stores: it replaces v5's folded coefficient vector and quadratic
-# matrix, dropping preparation from O(k^3) to O(k^2).
+# D[i] = x(F[:,i]) · z(F[:,i]) mod d. This is the ONLY derived phase data
+# stored, and it is what holds preparation to O(k^2): both evaluators
+# reconstruct the quadratic part of the phase from `D` and the gathered
+# column, so no per-gate coefficient vector or quadratic matrix is built.
 @inline _image_xdotz(F::NTuple{S,NTuple{S,Int}}, K::Int, d::Int, fast::Bool) where {S} =
     ntuple(i -> _col_xdotz(F[i], K, d, fast), Val(S))
 
@@ -43,7 +44,7 @@ end
 # Phase evaluation                     #
 ########################################
 
-# Odd primes (spec 3.2):
+# Odd primes:
 #     φ_U(v) = a·v + inv2 [ x_out·z_out − x·z − D·v ]   (mod d)
 #
 # Every dot is at most 2k terms and no triple product is formed, so the tier
@@ -51,8 +52,9 @@ end
 # the action has already computed, this is O(k).
 #
 # Precondition: `v` and `vout` are canonical, every entry already reduced
-# mod `d` (Task 4 is what supplies `vout`). The final `mod`s only fix up the
-# returned phase; they do not rescue an out-of-range input upstream of them.
+# mod `d` (the caller's matvec is what supplies `vout`). The final `mod`s
+# only fix up the returned phase; they do not rescue an out-of-range input
+# upstream of them.
 # In particular the fast tier's accumulators (`_col_xdotz`, `_dot_mod`) sum
 # entries assumed `< d`, which is exactly the bound `clifford_fast_dots`
 # sizes its overflow guard against -- an unreduced entry can silently
@@ -75,9 +77,9 @@ end
     return add_mod(av, mul_mod(inv2, t, d), d)
 end
 
-# Qubits (spec 3.3): multiply the generator images in order, carrying a running
-# Z prefix. Canonical coefficients are bits, so binomial(v_i, 2) vanishes and
-# the whole quadratic part is the cross terms.
+# Qubits: multiply the generator images in order, carrying a running Z prefix.
+# Canonical coefficients are bits, so binomial(v_i, 2) vanishes and the whole
+# quadratic part is the cross terms.
 #
 # The prefix is a bitmask rather than a vector: at d = 2 every coordinate is a
 # bit, so no heap scratch is needed and `apply!` stays allocation-free. This
@@ -271,7 +273,10 @@ generator contract are all preserved. `tab.iscanonical` is cleared.
 
 # Arguments
 - `tab::AbstractTableau`: tableau to update (`StabilizerTableau` or `DestabilizerTableau`).
-- `g::AbstractClifford`: a named gate such as [`Fourier`](@ref) or [`SUM`](@ref).
+- `g::AbstractClifford`: one of the named gates [`Fourier`](@ref),
+  [`Phase`](@ref), [`Multiplier`](@ref), [`PauliGate`](@ref), [`SUM`](@ref),
+  [`CPhase`](@ref) or [`SWAP`](@ref). [`AbstractClifford`](@ref) tabulates
+  their actions.
 
 # Throws
 `ArgumentError` if a target lies outside `1:tab.n`, or if a gate parameter is
@@ -292,7 +297,7 @@ and `xdotz_cache` is patched by a local delta.
 
 With `storephase=false` no phase work is done and only the exponents move.
 
-See also [`conjugate`](@ref), [`measure!`](@ref).
+See also [`AbstractClifford`](@ref), [`conjugate`](@ref), [`measure!`](@ref).
 """
 function apply!(tab::AbstractTableau, g::AbstractClifford)
     _validate_targets(_clifford_targets(g), tab.n)
@@ -300,12 +305,24 @@ function apply!(tab::AbstractTableau, g::AbstractClifford)
     return _apply_prepared!(tab, prep)
 end
 
+# A `PreparedClifford` carries its own dimension, phase regime and target list,
+# so this entry point cannot assume `apply!` built it for this tableau. All
+# three are re-checked here in O(1)/O(k^2) at function entry, never per column:
+# a mismatched `d` would silently reduce exponents and phases against the wrong
+# modulus, a mismatched `storephase` would write past the end of `stab`, and an
+# out-of-range target would index out of bounds -- the column loop below runs
+# under `@inbounds`, so none of the three would raise on its own.
 function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) where {K,S}
+    prep.d == tab.d || throw(ArgumentError(
+        "PreparedClifford was built for d=$(prep.d), but the tableau has " *
+        "d=$(tab.d); rebuild the PreparedClifford for this tableau before " *
+        "applying it."))
     prep.storephase == tab.storephase || throw(ArgumentError(
         "PreparedClifford was built with storephase=$(prep.storephase), but " *
         "the tableau has storephase=$(tab.storephase); rebuild the " *
         "PreparedClifford for this tableau before applying it."))
     K == 0 && return tab
+    _validate_targets(prep.targets, tab.n)
     n = tab.n
     stab = tab.stab
     phase_row = 2n + 1
@@ -455,7 +472,10 @@ state and conjugating an observable by `g` transform expectation values
 consistently.
 
 # Arguments
-- `g::AbstractClifford`: the Clifford unitary.
+- `g::AbstractClifford`: the Clifford unitary — one of [`Fourier`](@ref),
+  [`Phase`](@ref), [`Multiplier`](@ref), [`PauliGate`](@ref), [`SUM`](@ref),
+  [`CPhase`](@ref) or [`SWAP`](@ref), tabulated in
+  [`AbstractClifford`](@ref).
 - `op`: the Pauli to conjugate. A dense [`GeneralPauli`](@ref) carries its own
   register size; a sparse `FewQuditPauli` does not, so `n` must be given.
 - `n::Int`: register size, required for sparse Paulis and checked against a
@@ -482,7 +502,7 @@ conjugate(SUM(1, 2), GeneralPauli([1, 0, 0, 0], 0); d = 2)
 Heisenberg evolution of an observable under state evolution by `U` is `U† P U`;
 build that from the inverse Clifford, which arrives with general operators.
 
-See also [`apply!`](@ref).
+See also [`AbstractClifford`](@ref), [`apply!`](@ref).
 """
 function conjugate(g::AbstractClifford, op::GeneralPauli;
                    d::Union{Int,Nothing}=nothing)

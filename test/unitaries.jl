@@ -62,7 +62,7 @@ end
         end
     end
 
-    # Catalogue spot checks, spec section 4.
+    # Catalogue spot checks against the gate table.
     targets, F, a = QC._clifford_data(Fourier(3), 5, jit)
     @test targets == (3,)
     @test QC._clifford_targets(Fourier(3)) == (3,)
@@ -175,7 +175,7 @@ function oracle_unitary(g, d)
     end
 end
 
-# ---- reference phase polynomial, spec section 3.1 ----
+# ---- reference phase polynomial ----
 function phase_reference(F, a, v, d)
     S = length(v); K = S ÷ 2
     p = d == 2 ? 4 : d
@@ -229,16 +229,16 @@ end
 end
 
 @testset "Exhaustive one-qudit Clifford enumeration" begin
-    # Spec 9.2: enumerate every admissible one-qudit (F, a) at d = 2, 3
-    # (24 and 216 Cliffords), rather than spot-checking only the named
-    # catalogue -- of the seven shipped gates only Phase has a nonzero D,
-    # so this is what actually exercises the D·v term and the qubit
-    # ordered-product accumulation order broadly.
+    # Enumerate every admissible one-qudit (F, a) at d = 2, 3 (24 and 216
+    # Cliffords), rather than spot-checking only the named catalogue -- of
+    # the seven shipped gates only Phase has a nonzero D, so this is what
+    # actually exercises the D·v term and the qubit ordered-product
+    # accumulation order broadly.
 
     # d = 2: brute force over all 16 candidate column pairs, keep the
     # symplectic ones (Sp(2, Z_2) = SL(2, Z_2), order 6), then every
-    # admissible raw phase (a_i ≡ D_i mod 2, spec 3.3): 2 choices per
-    # generator, 4 per F, 24 Cliffords total.
+    # admissible raw phase (a_i ≡ D_i mod 2): 2 choices per generator,
+    # 4 per F, 24 Cliffords total.
     symplectics2 = NTuple{2,NTuple{2,Int}}[]
     for x1 in 0:1, z1 in 0:1, x2 in 0:1, z2 in 0:1
         F = ((x1, z1), (x2, z2))
@@ -311,8 +311,7 @@ end
     # C(d-1, 2) = 1 mod d. Multiplying the unreduced bracket by inv2 before
     # reducing -- instead of reducing at each step, as `_phase_odd` does --
     # overflows Int and returns 1073741828 instead on 64-bit hosts (not
-    # 1073741824, which is just inv2 itself); Task 4 tests the four-term
-    # matvec too.
+    # 1073741824, which is just inv2 itself).
     @test QC._phase_odd(v, vout, a, D, 1, d, jit(2, d), fast) == 1
     @test QC._phase_odd(v, vout, a, QC._image_xdotz(F, 1, d, false),
                        1, d, jit(2, d), false) == 1
@@ -331,7 +330,7 @@ end
     @test_throws ArgumentError QC._check_qubit_bitmask_bound(-1)
 end
 
-# ρ = d^(-n) ∏_j (Σ_t S_j^t)  — unit trace for every m, spec section 9.1.
+# ρ = d^(-n) ∏_j (Σ_t S_j^t)  — unit trace for every m.
 function oracle_density(tab)
     d, n = tab.d, tab.n
     dim = d^n
@@ -384,8 +383,8 @@ gate_targets(g) =
 function placements(d, n)
     gs = Any[Fourier(1), Fourier(n), Phase(2), PauliGate(2, 1, 1),
              SUM(1, n, 1), SUM(n, 1, 1), CPhase(1, 2, 1), SWAP(1, n),
-             # Spec 9.1: the oracle must see zero, non-unit and negative
-             # parameters, not only unit ones. d - 1 is -1 in canonical form.
+             # The oracle must see zero, non-unit and negative parameters,
+             # not only unit ones. d - 1 is -1 in canonical form.
              SUM(1, n, 0), CPhase(1, 2, d - 1), PauliGate(2, d - 1, 1)]
     if d > 2
         push!(gs, Multiplier(1, 2))
@@ -435,17 +434,16 @@ end
                 tab = TT(d, n; state = :mixed, storephase = storephase)
                 measure!(tab, SinglePauli(1, 0, 1); outcome = 0)
                 measure!(tab, SinglePauli(2, 0, 1); outcome = 0)
-                # Addition C (Task 7 controller ruling, fixing a near-vacuous
-                # assertion): with only the two measurements above, the active
-                # tableau is exactly Z1, Z2, so row 3 (qudit 3's X row) and the
-                # phase row are both identically zero here -- the "untouched
-                # row" and phase-range checks below would then compare zeros
-                # to zeros, which catches a gate scribbling into row 3 but not
-                # one that zeroes it. A third measurement on qudit 3, disjoint
-                # from the SUM(1, 2, 1) target qudits, with a nonzero outcome
-                # gives both row 3 and (when storephase) the phase row a
-                # nonzero entry that survives canonicalization, so the
-                # assertions have something real to preserve.
+                # With only the two measurements above, the active tableau is
+                # exactly Z1, Z2, so row 3 (qudit 3's X row) and the phase row
+                # are both identically zero -- the "untouched row" and phase
+                # checks below would then compare zeros to zeros, which catches
+                # a gate scribbling into row 3 but not one that zeroes it. A
+                # third measurement on qudit 3, disjoint from every target
+                # qudit used here, with a nonzero outcome gives both row 3 and
+                # (when storephase) the phase row a nonzero entry that survives
+                # canonicalization, so the assertions have something real to
+                # preserve.
                 measure!(tab, SinglePauli(3, 1, 0); outcome = 1)
                 m_before = tab.m
                 canonicalize!(tab)
@@ -462,7 +460,64 @@ end
                 @test all(tab.stab[:, (tab.m + 1):n] .== 0)
                 @test all(0 .<= tab.stab[1:2n, 1:tab.m] .< d)
                 if storephase
+                    # SUM's phase delta is identically zero on this fixture at
+                    # both d, so equality is the assertion with content here; a
+                    # range check alone would pass against a phase row that
+                    # `apply!` never touched.
+                    @test tab.stab[2n + 1, 1:tab.m] == phase_before
+                end
+                # A gate that does move the phase row, so the range check below
+                # is inspecting `apply!`'s output rather than `measure!`'s.
+                # PauliGate has an identity symplectic part, which is why row 3
+                # and the exponent bounds still hold after it.
+                apply!(tab, PauliGate(1, 1, 1))
+                @test tab.m == m_before
+                @test tab.stab[3, :] == untouched
+                @test all(tab.stab[:, (tab.m + 1):n] .== 0)
+                @test all(0 .<= tab.stab[1:2n, 1:tab.m] .< d)
+                if storephase
+                    @test tab.stab[2n + 1, 1:tab.m] != phase_before
                     @test all(0 .<= tab.stab[2n + 1, 1:tab.m] .< (d == 2 ? 4 : d))
+                end
+            end
+        end
+    end
+end
+
+# `storephase` must change nothing but the phase row. A phase-free tableau's
+# `stab` is 2n x n, so there is no row 2n+1 to write: a gate that wrote it
+# anyway would land in a neighbouring column under `@inbounds` rather than
+# raising a BoundsError. Comparing the exponent blocks of two otherwise
+# identical runs catches that for a StabilizerTableau, which -- unlike a
+# DestabilizerTableau -- carries no dual basis to cross-check against.
+@testset "apply! moves the same exponents with and without phases" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3)
+                n = 4
+                gates = (Fourier(1), Phase(1), Multiplier(1, d - 1),
+                         PauliGate(1, 1, 1), SUM(1, 2, 1), CPhase(1, 2, 1),
+                         SWAP(1, 3))
+                for g in gates
+                    function seeded(storephase)
+                        tab = TT(d, n; state = :mixed, storephase = storephase)
+                        measure!(tab, SinglePauli(1, 0, 1); outcome = 0)
+                        measure!(tab, SinglePauli(2, 0, 1); outcome = 0)
+                        measure!(tab, SinglePauli(3, 1, 0); outcome = 1)
+                        canonicalize!(tab)
+                        tab
+                    end
+                    with = seeded(true)
+                    without = seeded(false)
+                    # The fixture itself must agree before the gate, or the
+                    # comparison afterwards would be meaningless.
+                    @test with.stab[1:2n, :] == without.stab[1:2n, :]
+                    apply!(with, g)
+                    apply!(without, g)
+                    @test with.stab[1:2n, :] == without.stab[1:2n, :]
+                    @test size(without.stab, 1) == 2n
+                    @test without.m == with.m
                 end
             end
         end
@@ -476,6 +531,61 @@ end
     @test_throws ArgumentError apply!(tab, Multiplier(1, 3))   # 3 ≡ 0 (mod 3)
     # The rejected calls must not have mutated anything.
     @test tab.stab == StabilizerTableau(3, 2; state = :product).stab
+end
+
+# `_apply_prepared!` is the reuse point for stored Clifford operators, which
+# carry their own dimension and target list rather than deriving them from the
+# tableau. Its own preconditions therefore have to hold at its own boundary,
+# not only at `apply!`'s: a wrong `d` or `storephase` would otherwise be a
+# silent wrong answer, and an out-of-range target an out-of-bounds write,
+# because the column loop runs under `@inbounds`.
+@testset "_apply_prepared! guards its own preconditions" begin
+    jit = QC.JustInTimeInvMod()
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for d in (2, 3)
+                other = d == 2 ? 3 : 2
+                tab = TT(d, 3; state = :product)
+                before = copy(tab.stab)
+
+                # Dimension mismatch: the exponents would be reduced mod the
+                # prepared `d` and the phase mod the prepared modulus.
+                @test_throws ArgumentError QC._apply_prepared!(
+                    tab, QC._prepare(Fourier(1), other, jit, true))
+
+                # storephase mismatch: `stab` has no phase row to write to.
+                @test_throws ArgumentError QC._apply_prepared!(
+                    tab, QC._prepare(Fourier(1), d, jit, false))
+
+                # Out-of-range target: `_gather`/`_scatter!` index rows
+                # `t` and `n + t` under `@inbounds`. Repeated targets cannot
+                # be built from a named gate -- `_check_pair` rejects them at
+                # construction -- so `_validate_targets`' other branch is
+                # exercised directly in the testset below instead.
+                @test_throws ArgumentError QC._apply_prepared!(
+                    tab, QC._prepare(Fourier(4), d, jit, true))
+                @test_throws ArgumentError QC._apply_prepared!(
+                    tab, QC._prepare(SUM(1, 5), d, jit, true))
+
+                @test tab.stab == before
+            end
+        end
+    end
+
+    # Phase-free tableaux reject a phase-carrying preparation symmetrically.
+    tab = StabilizerTableau(3, 3; state = :product, storephase = false)
+    before = copy(tab.stab)
+    @test_throws ArgumentError QC._apply_prepared!(
+        tab, QC._prepare(Fourier(1), 3, jit, true))
+    @test tab.stab == before
+end
+
+@testset "_validate_targets rejects repeated indices" begin
+    @test QC._validate_targets((1, 3), 3) === nothing
+    @test_throws ArgumentError QC._validate_targets((2, 2), 4)
+    @test_throws ArgumentError QC._validate_targets((1, 3, 1), 4)
+    @test_throws ArgumentError QC._validate_targets((4, 4), 4)
 end
 
 struct CliffordCountingInv <: QC.InverseMod
@@ -757,18 +867,7 @@ end
     end
 end
 
-# ============================================================================
-# Required additions beyond the Task 7 brief (controller ruling).
-#
-# Reviews of Tasks 4 and 6 found three coverage gaps against spec 9.1/9.3.
-# They are added here, appended to the same file, because Task 7 is the
-# test-only task. See .superpowers/sdd/2026-09-16-clifford-unitaries-p1_v2/
-# task-7-brief.md, "Required additions beyond the brief", for the ruling.
-# Addition C is a fix folded into the pre-existing
-# "apply! preserves tableau invariants" testset above, rather than a new one.
-# ============================================================================
-
-@testset "Addition A: conjugate matches dense result for every supported Pauli type (spec 9.1)" begin
+@testset "conjugate matches the dense result for every Pauli type" begin
     # `conjugate` is exercised elsewhere only on GeneralPauli, SinglePauli and
     # DoublePauli. TriplePauli and NPauli -- including the empty-support
     # NPauli{0}, which represents the identity -- get the same sparse/dense
@@ -818,7 +917,7 @@ end
     @test ce.phase == cde.phase
 end
 
-@testset "Addition B: conjugate at disjoint support, and n = 1 (spec 9.1 boundary)" begin
+@testset "conjugate at disjoint support, and at the n = 1 boundary" begin
     # No existing test covers a Pauli whose support misses the gate entirely,
     # nor a one-qudit register.
 
