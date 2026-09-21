@@ -7,6 +7,10 @@ hero:
   name: "QuditClifford.jl"
   text: "Stabilizer tableaux for prime-dimensional qudits"
   tagline: Simulate qubits and qudits with measurements, expectations, and entanglement workflows in pure Julia.
+  image:
+    light: /logo-light.svg
+    dark: /logo-dark.svg
+    alt: QuditClifford.jl
   actions:
     - theme: brand
       text: Getting Started

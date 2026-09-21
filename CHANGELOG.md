@@ -18,6 +18,10 @@ dependency bump — carries the `skip-changelog` label instead.
   `docs/src/unitaries.md` gives the `d = 2` translations. General Clifford
   operators, composition, inversion and uniform random sampling are not yet
   included.
+- Logo and favicon for the documentation site — three dots in the Julia colours
+  at the cube roots of unity, the three levels of a qutrit, swept by an arrow for
+  the cyclic shift. Each ships as a light/dark pair and follows the reader's
+  theme.
 
 ## 0.2.0 - 2026-09-15
 
