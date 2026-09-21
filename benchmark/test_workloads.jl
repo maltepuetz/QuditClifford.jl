@@ -267,4 +267,42 @@ include(joinpath(@__DIR__, "workloads.jl"))
             @test 1.35 < rd / rs < 1.65
         end
     end
+
+    @testset "Clifford registration preserves an older baseline" begin
+        suite = BenchmarkGroup()
+        existing = BenchmarkGroup()
+        suite["existing"] = existing
+        legacy = Module(:CliffordAPINotYetPresent)
+        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = legacy) === suite
+        @test Set(keys(suite)) == Set(["existing"])
+        @test suite["existing"] === existing
+
+        # In this checkout the new APIs exist, so normal registration adds the
+        # group alongside the old one, rather than replacing the whole suite.
+        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,)) === suite
+        @test haskey(suite, "clifford")
+        @test suite["existing"] === existing
+    end
+
+    @testset "Clifford group builds, runs, and its gates act" begin
+        for T in (StabilizerTableau, DestabilizerTableau)
+            g = clifford_group(d = 3, n = 16, T = T)
+            @test length(keys(g)) == 3
+            # @benchmarkable bodies are quoted, so a broken leaf is invisible
+            # until something runs it.
+            run(g; samples = 1, evals = 1, seconds = 0.05)
+        end
+
+        # A microbenchmark that times a no-op would look like a speedup. Check
+        # the benchmarked gates genuinely act and preserve physical purity.
+        # Duality and live caches are checked explicitly in test/destabilizers.jl.
+        for T in (StabilizerTableau, DestabilizerTableau)
+            tab = T(3, 16; state = :ghz)
+            before = copy(tab.stab)
+            apply!(tab, Fourier(4))
+            @test tab.stab != before
+            apply!(tab, SUM(4, 12, 1))
+            @test is_pure(tab; verify = true)
+        end
+    end
 end

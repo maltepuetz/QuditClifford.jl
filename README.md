@@ -7,14 +7,15 @@
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
-including projective Pauli measurements, expectation values, canonicalization,
-purity checks, and entanglement-entropy calculations. It supports qubits
-(`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as well as pure and
-mixed stabilizer states.
+including Clifford unitaries, projective Pauli measurements, expectation
+values, canonicalization, purity checks, and entanglement-entropy
+calculations. It supports qubits (`d = 2`) and odd prime dimensions
+(`d = 3, 5, 7, ...`), as well as pure and mixed stabilizer states.
 
 > **Development status:** QuditClifford.jl is under active development and has
 > not yet reached a stable release. APIs may change before version 1.0, and
-> planned functionality includes support for Clifford unitaries.
+> planned functionality includes general Clifford operators and uniform random
+> Clifford sampling.
 
 Use `DestabilizerTableau` for repeated measurement and expectation workflows,
 or `StabilizerTableau` when compact storage is more important than maintaining

@@ -2,16 +2,18 @@
     QuditClifford
 
 Tools for prime-dimensional qudit stabilizer states represented by stabilizer
-and destabilizer tableaux. The package supports pure and mixed states, Pauli
-measurements, expectation values, canonicalization, and stabilizer
-entanglement entropy.
+and destabilizer tableaux. The package supports pure and mixed states, Clifford
+unitaries, Pauli measurements, expectation values, canonicalization, and
+stabilizer entanglement entropy.
 """
 module QuditClifford
 
 export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     reset!, entanglement_entropy, measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
-    is_pure
+    is_pure,
+    AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
+    apply!, conjugate
 
 import Random, Primes
 import Random.rand!
@@ -22,6 +24,7 @@ import LoopVectorization.@turbo
 # include the sub files
 include("modular.jl")
 include("helper.jl")
+include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("abstract_tableau.jl")
 include("stabilizer_tableau.jl")
@@ -33,5 +36,7 @@ include("projective_measurement.jl")
 include("entanglement_entropy.jl")
 include("check_purity.jl")
 include("expectation_value.jl")
+include("clifford_gates.jl")
+include("apply_clifford.jl")
 
 end

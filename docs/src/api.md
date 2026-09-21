@@ -32,6 +32,21 @@ NPauli
 GeneralPauli
 ```
 
+## Clifford unitaries
+
+```@docs
+AbstractClifford
+Fourier
+Phase
+Multiplier
+PauliGate
+SUM
+CPhase
+SWAP
+apply!
+conjugate
+```
+
 ## Measurements
 
 ```@docs

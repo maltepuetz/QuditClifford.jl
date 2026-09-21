@@ -58,6 +58,13 @@ for T in TYPES, d in CONFIG.ds
     SUITE["midcircuit"]["$(nameof(T))/d=$d/n=$n"] = midcircuit_group(; d = d, n = n, T = T)
 end
 
+# ---------------------------------------------------------------- clifford
+# Gate application across dimension, size and representation. Unlike measure!,
+# the cost per gate is O(k^2 * m) with k <= 2, so this is a linear-in-m probe
+# rather than a branch-sensitive one.
+
+register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns)
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in

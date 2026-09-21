@@ -443,3 +443,45 @@ end
         _assert_duality(tab)
     end
 end
+
+@testset "Duality and cache after Clifford gates" begin
+    n = 3
+    for d in (2, 3, 5), storephase in (true, false), kind in (:ghz, :mixed)
+        tab = if kind === :ghz
+            DestabilizerTableau(d, n; state = :ghz, storephase = storephase)
+        else
+            t = DestabilizerTableau(d, n; state = :mixed, storephase = storephase)
+            measure!(t, SinglePauli(1, 0, 1); outcome = 0)
+            t
+        end
+        # Phase(2) and CPhase leave a nonzero target x·z behind, which is what
+        # makes the cache delta non-trivial.
+        for g in (Fourier(1), Phase(2), SUM(1, 3, 1), SWAP(1, 3), CPhase(1, 2, 1))
+            apply!(tab, g)
+
+            for a in 1:tab.m, b in 1:tab.m
+                s = sum(tab.destab[q, a] * tab.stab[n + q, b] -
+                        tab.destab[n + q, a] * tab.stab[q, b] for q in 1:n)
+                @test mod(s, d) == (a == b ? 1 : 0)
+            end
+
+            for j in 1:tab.m
+                @test tab.xdotz_cache[j] ==
+                      QuditClifford.dot_xz_col(tab.stab, n, j, d)
+            end
+            @test all(tab.xdotz_cache[(tab.m + 1):n] .== 0)
+            @test all(tab.destab[:, (tab.m + 1):n] .== 0)
+        end
+
+        # A deterministic odd-prime query that actually consumes the cache:
+        # measuring a generator of the state is in-span and must not move it.
+        if d != 2 && storephase && tab.m > 0
+            x = [tab.stab[q, 1] for q in 1:n]
+            z = [tab.stab[n + q, 1] for q in 1:n]
+            op = GeneralPauli(vcat(x, z), 0)
+            before = copy(tab.stab)
+            @test measure!(tab, op) == mod(-tab.stab[2n + 1, 1], d)
+            @test tab.stab == before
+        end
+    end
+end

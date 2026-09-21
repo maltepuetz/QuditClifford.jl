@@ -83,9 +83,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 77 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 153 | ~85 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 267 | ~6 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `smoke` | n = 8 | 2, 3 | 89 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 189 | ~83 s | the pull-request job |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 339 | ~7 min | `workflow_dispatch`; adds the Ising and purification circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -137,6 +137,19 @@ is not cosmetic — at n = 256, d = 3 on a `DestabilizerTableau`,
 go the other way, because the fresh state is the *worst* case there:
 `canonicalize!` 49 ms → 2.1 ms, and `entropy/half` 3.0 ms → 99 µs (`:ghz` has
 one fully delocalised generator, which makes the subsystem elimination dense).
+
+A separate `clifford` group benchmarks `apply!` itself, as its own top-level
+group alongside the spine and `midcircuit` above: `Fourier` and `Phase` (one
+target) and `SUM` (two non-adjacent targets, the same `spread_sites` qudits
+the `measure!` leaves use) applied to a freshly restored `:ghz` state, across
+both tableau types and every `d` and `n` in the profile — three leaves per
+`(type, d, n)` cell. `storephase = true` throughout, so both the `d = 2`
+bitmask phase evaluator and the odd-prime one run: `Fourier` has zero image
+`x·z`, so its phase term is a pure cross-term, while `Phase` has a nonzero one
+and exercises the `D` vector. Gate application costs `O(k²·m)` for `k ≤ 2`
+targets — linear in the generator count rather than branch-sensitive the way
+`measure!` is — so one leaf per gate is enough; there is no separate
+deterministic/append/non-commuting split here.
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /

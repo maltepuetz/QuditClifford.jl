@@ -318,10 +318,11 @@ function _inv_matrix_mod!(
             end
         end
 
-        # Two matrices, so this is two passes where it used to be one fused
-        # loop. Both start reduced -- `Awork` is copied from the `mod`-reduced
-        # `A`, `invA` from the identity -- and at d = 2 every α is 1, which
-        # `scale_mod!` skips outright.
+        # `Awork` and `invA` are separate matrices, so scaling row `c` takes
+        # one `scale_mod!` pass over each. Both operands start reduced --
+        # `Awork` is copied from the `mod`-reduced `A`, `invA` from the
+        # identity -- and at d = 2 every α is 1, which `scale_mod!` skips
+        # outright.
         α = inversemod(Awork[c, c], d)
         scale_mod!(view(Awork, c, 1:m), α, d)
         scale_mod!(view(invA, c, 1:m), α, d)

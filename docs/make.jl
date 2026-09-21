@@ -22,6 +22,7 @@ makedocs(;
             "Examples" => "examples.md",
             "Representation and Conventions" => "conventions.md",
             "Measurements and Expectations" => "measurements.md",
+            "Clifford Unitaries" => "unitaries.md",
         ],
         "API Reference" => "api.md",
     ],
