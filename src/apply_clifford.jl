@@ -305,6 +305,194 @@ end
 end
 
 ########################################
+# Dense backing                        #
+########################################
+#
+# Owns NOTHING. Its semantic arrays and its scratch may come from different
+# owners: `apply!` borrows both from the operator, while the allocating APIs
+# pair the operand's semantic arrays with result-owned or call-local scratch.
+#
+# Two aliasing invariants, both free on the tuple backing and both violable here:
+#   * `v !== vout` -- the old gather stays live through phase evaluation and the
+#     pre-scatter `xdotz_cache` delta;
+#   * `_phase` never mutates `v` or `vout`; the qubit evaluator writes `zpref`.
+struct PreparedDenseClifford <: AbstractPreparedClifford
+    targets::Vector{Int}
+    F::Matrix{Int}
+    a::Vector{Int}
+    D::Vector{Int}
+    v::Vector{Int}
+    vout::Vector{Int}
+    zpref::Vector{Int}
+    k::Int
+    d::Int
+    p::Int
+    inv2::Int
+    fast::Bool
+    storephase::Bool
+end
+
+@inline function _gather_prepared!(prep::PreparedDenseClifford, A::Matrix{Int},
+                                   n::Int, j::Int)
+    t = prep.targets; k = prep.k; v = prep.v
+    @inbounds for i in 1:k
+        v[i] = A[t[i], j]
+        v[k + i] = A[n + t[i], j]
+    end
+    return v
+end
+
+@inline function _scatter_prepared!(prep::PreparedDenseClifford, A::Matrix{Int},
+                                    n::Int, j::Int, vout::Vector{Int})
+    t = prep.targets; k = prep.k
+    @inbounds for i in 1:k
+        A[t[i], j] = vout[i]
+        A[n + t[i], j] = vout[k + i]
+    end
+    return nothing
+end
+
+@inline function _gather_vec_prepared!(prep::PreparedDenseClifford,
+                                       xz::Vector{Int}, n::Int)
+    t = prep.targets; k = prep.k; v = prep.v
+    @inbounds for i in 1:k
+        v[i] = xz[t[i]]
+        v[k + i] = xz[n + t[i]]
+    end
+    return v
+end
+
+@inline function _scatter_vec_prepared!(prep::PreparedDenseClifford,
+                                        xz::Vector{Int}, n::Int,
+                                        vout::Vector{Int})
+    t = prep.targets; k = prep.k
+    @inbounds for i in 1:k
+        xz[t[i]] = vout[i]
+        xz[n + t[i]] = vout[k + i]
+    end
+    return nothing
+end
+
+# (Fv)_i = sum_j F[i,j] v[j]. Column j is the image of generator j.
+@inline function _matvec_prepared!(prep::PreparedDenseClifford, v::Vector{Int})
+    F = prep.F; d = prep.d; S = 2 * prep.k; out = prep.vout
+    if prep.fast
+        @inbounds for i in 1:S
+            s = 0
+            for j in 1:S
+                s += F[i, j] * v[j]
+            end
+            out[i] = mod(s, d)
+        end
+    else
+        @inbounds for i in 1:S
+            s = 0
+            for j in 1:S
+                s = add_mod(s, mul_mod(F[i, j], v[j], d), d)
+            end
+            out[i] = s
+        end
+    end
+    return out
+end
+
+@inline function _col_xdotz_dense(col::Vector{Int}, k::Int, d::Int, fast::Bool)
+    if fast
+        s = 0
+        @inbounds for q in 1:k
+            s += col[q] * col[k + q]
+        end
+        return mod(s, d)
+    end
+    s = 0
+    @inbounds for q in 1:k
+        s = add_mod(s, mul_mod(col[q], col[k + q], d), d)
+    end
+    return s
+end
+
+@inline _col_xdotz_prepared(prep::PreparedDenseClifford, v::Vector{Int}) =
+    _col_xdotz_dense(v, prep.k, prep.d, prep.fast)
+
+@inline function _dot_mod_dense(u::Vector{Int}, v::Vector{Int}, S::Int, M::Int,
+                                fast::Bool)
+    if fast
+        s = 0
+        @inbounds for i in 1:S
+            s += u[i] * v[i]
+        end
+        return mod(s, M)
+    end
+    s = 0
+    @inbounds for i in 1:S
+        s = add_mod(s, mul_mod(u[i], v[i], M), M)
+    end
+    return s
+end
+
+# v6 §3.2, verbatim: φ = a·v + inv2 [ x_out·z_out − x·z − D·v ].
+@inline function _phase_odd_dense(v::Vector{Int}, vout::Vector{Int},
+                                  a::Vector{Int}, D::Vector{Int}, k::Int,
+                                  d::Int, inv2::Int, fast::Bool)
+    S = 2k
+    av    = _dot_mod_dense(a, v, S, d, fast)
+    Dv    = _dot_mod_dense(D, v, S, d, fast)
+    xz    = _col_xdotz_dense(v, k, d, fast)
+    xzout = _col_xdotz_dense(vout, k, d, fast)
+    t = sub_mod(sub_mod(xzout, xz, d), Dv, d)
+    return add_mod(av, mul_mod(inv2, t, d), d)
+end
+
+# v6 §3.3 with the VECTOR prefix the spec mandates, not the named path's UInt64
+# bitmask. That bitmask is why `_phase_qubit` is bounded to K <= 64; using a
+# vector here keeps the bound an internal property of the named path and never a
+# public Clifford arity limit. `UInt64(1) << 64 == 0` in Julia, so a bitmask
+# would silently drop coordinate 65 rather than erroring.
+@inline function _phase_qubit_dense(v::Vector{Int}, F::Matrix{Int},
+                                    a::Vector{Int}, k::Int, zpref::Vector{Int})
+    S = 2k
+    @inbounds for q in 1:k
+        zpref[q] = 0
+    end
+    phase = 0
+    @inbounds for i in 1:S
+        v[i] == 0 && continue
+        phase = add_mod(phase, a[i], 4)
+        cross = 0
+        for q in 1:k
+            (F[q, i] == 1 && zpref[q] == 1) && (cross ⊻= 1)
+        end
+        # Reducing the prefix mod 2 is valid because it is multiplied by 2 in
+        # phase modulus 4.
+        phase = add_mod(phase, 2 * cross, 4)
+        for q in 1:k
+            F[k + q, i] == 1 && (zpref[q] ⊻= 1)
+        end
+    end
+    return phase
+end
+
+@inline function _phase(prep::PreparedDenseClifford, v::Vector{Int},
+                        vout::Vector{Int})
+    if prep.d == 2
+        return _phase_qubit_dense(v, prep.F, prep.a, prep.k, prep.zpref)
+    else
+        return _phase_odd_dense(v, vout, prep.a, prep.D, prep.k, prep.d,
+                                prep.inv2, prep.fast)
+    end
+end
+
+# Bounds only: distinctness is proven by the stored operator's constructor.
+@inline function _validate_clifford_targets(prep::PreparedDenseClifford, n::Int)
+    @inbounds for i in 1:prep.k
+        t = prep.targets[i]
+        (1 <= t <= n) || throw(ArgumentError(
+            "Clifford target $t is outside the register 1:$n."))
+    end
+    return nothing
+end
+
+########################################
 # Type-specific hooks                  #
 ########################################
 
