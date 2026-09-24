@@ -430,3 +430,75 @@ end
         @test tableau_snapshot(tab) == before
     end
 end
+
+@testset "Stored conjugate matches named conjugate" begin
+    for d in (2, 3, 5)
+        gates = Any[Fourier(2), Phase(2), PauliGate(2, 1, 1),
+                    SUM(2, 4, 1), CPhase(2, 4, 1), SWAP(2, 4)]
+        push!(gates, Multiplier(2, d == 2 ? 1 : 2))
+        n = 5
+        for g in gates
+            U = CliffordOperator(g, d)
+            for xz in ([1, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+                       [0, 1, 1, 0, 1, 1, 1, 0, 0, 1],
+                       zeros(Int, 2n))
+                op = GeneralPauli(copy(xz), 1)
+                named  = conjugate(g, GeneralPauli(copy(xz), 1); d = d)
+                stored = conjugate(U, op)
+                @test stored.xz == named.xz && stored.phase == named.phase
+                explicit = conjugate(U, op, n; d)
+                @test explicit.xz == stored.xz && explicit.phase == stored.phase
+                @test stored.xz !== op.xz
+                # The sparse arity includes phase and inferred/matching dimensions.
+                sp = SinglePauli(2, 1, 1)
+                a, b = conjugate(U, sp, n), conjugate(g, sp, n; d)
+                @test a.xz == b.xz && a.phase == b.phase
+                c = conjugate(U, sp, n; d)
+                @test c.xz == a.xz && c.phase == a.phase
+                @test op.xz == xz && op.phase == 1
+            end
+        end
+    end
+end
+
+@testset "Stored conjugate resolves dimension and leaves scratch untouched" begin
+    U = CliffordOperator(Fourier(1), 3)
+    op = GeneralPauli([1, 0, 0, 0], 0)
+    @test conjugate(U, op).xz == conjugate(U, op; d = 3).xz
+    @test_throws ArgumentError conjugate(U, op; d = 5)
+    # Named gates still require the keyword.
+    @test_throws ArgumentError conjugate(Fourier(1), op)
+
+    # Sentinel scratch must survive conjugation bit-identically.
+    fill!(U.v, -7); fill!(U.vout, -8); fill!(U.zpref, -9)
+    snap = operator_snapshot(U)
+    conjugate(U, GeneralPauli([1, 1, 0, 1], 2))
+    @test operator_snapshot(U) == snap
+    for f in (() -> conjugate(U, GeneralPauli([1, 0, 0], 0)),
+              () -> conjugate(U, op, 1),
+              () -> conjugate(U, SinglePauli(0, 0, 0), 2),
+              () -> conjugate(U, DoublePauli(1, 0, 0, 1, 0, 0), 2),
+              () -> conjugate(U, SinglePauli(1, 1, 0), -1),
+              () -> conjugate(U, SinglePauli(1, 1, 0), typemax(Int)),
+              () -> conjugate(U, SinglePauli(1, 1, 0), 2; d = 5))
+        @test_throws ArgumentError f()
+        @test operator_snapshot(U) == snap
+    end
+    badtarget = CliffordOperator(Fourier(9), 3)
+    @test_throws ArgumentError conjugate(badtarget, op)
+    raw = GeneralPauli([typemin(Int), 8, -7, 10], -5)
+    oldraw = (copy(raw.xz), raw.phase)
+    normalized = GeneralPauli(mod.(raw.xz, 3), mod(raw.phase, 3))
+    a, b = conjugate(U, raw), conjugate(Fourier(1), normalized; d = 3)
+    @test a.xz == b.xz && a.phase == b.phase
+    @test (raw.xz, raw.phase) == oldraw
+
+    # Empty Clifford support still validates the whole Pauli input.
+    E = CliffordOperator(3, Int[], zeros(Int, 0, 0), Int[])
+    rawempty = GeneralPauli([-1, 5, 3, -2], -1)
+    normalizedempty = conjugate(E, rawempty)
+    @test normalizedempty.xz == [2, 2, 0, 1] && normalizedempty.phase == 2
+    @test normalizedempty !== rawempty && normalizedempty.xz !== rawempty.xz
+    @test rawempty.xz == [-1, 5, 3, -2] && rawempty.phase == -1
+    @test_throws ArgumentError conjugate(E, SinglePauli(9, 1, 0), 2)
+end

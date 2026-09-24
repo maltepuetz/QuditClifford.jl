@@ -336,3 +336,23 @@ function _prepare(U::CliffordOperator, d::Int, ::InverseMod, storephase::Bool;
     return _dense_view(U, storephase, U.v, U.vout, U.zpref;
                        force_safe = force_safe)
 end
+
+# Same second-argument type as the `AbstractClifford` method, for the dispatch
+# reason documented on `_prepare` above. A stored operator's `d` was already
+# proven prime at construction, so this does not retest primality.
+function _resolve_clifford_dimension(U::CliffordOperator, d::Union{Int,Nothing})
+    d === nothing && return U.d
+    dd = d::Int
+    dd == U.d || throw(ArgumentError(
+        "CliffordOperator was built for d=$(U.d), but d=$dd was supplied."))
+    return U.d
+end
+
+# Allocating API: fresh call-local scratch, never `U`'s buffers. That is what
+# leaves the operand untouched and makes nested allocating calls safe.
+function _prepare_for_conjugation(U::CliffordOperator, d::Int)
+    U.d == d || throw(ArgumentError(
+        "CliffordOperator was built for d=$(U.d), but d=$d was supplied."))
+    k = length(U.targets); S = 2k
+    return _dense_view(U, true, zeros(Int, S), zeros(Int, S), zeros(Int, k))
+end
