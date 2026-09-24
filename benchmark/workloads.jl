@@ -257,6 +257,19 @@ function clifford_group(; d::Int, n::Int, T,
     return g
 end
 
+"""
+    stored_clifford_fixture(d, k)
+
+A nontrivial `k`-qudit `CliffordOperator` at dimension `d`, built by
+conjugating each basis Pauli through a fixed sequence of named gates
+(`Fourier` and `Phase` on every qudit, `SUM` chaining adjacent qudits).
+Construction runs outside any measured benchmark, and tests use this SAME
+builder, so a benchmark fixture and a correctness fixture never drift apart.
+
+Returns `(; U, gates, targets, F, a)`: `U` is the stored operator, `gates` the
+named-gate sequence it was built from, and `targets`, `F`, `a` its raw
+constructor arguments.
+"""
 function stored_clifford_fixture(d::Int, k::Int)
     k > 0 || throw(ArgumentError("benchmark support must be positive"))
     # Construct a nontrivial k-qudit action from named basis-image conjugation.
@@ -284,6 +297,17 @@ function stored_clifford_fixture(d::Int, k::Int)
     return (; U, gates, targets, F, a)
 end
 
+"""
+    stored_clifford_group(; d, n, T, ks = (1, 2, 8), storephase = true, inversemod = QuditClifford.PrecomputedInvMod(d))
+
+Stored `CliffordOperator` `apply!`, for one `(type, d, n)` cell and each
+support size `k` in `ks`. Every `k` gets both a `:product`-state leaf and an
+`m = 0` leaf, the latter making validation-path scaling visible.
+
+Construction cost is not in here: see
+[`stored_clifford_construct_group`](@ref), registered once per `d` rather
+than once per `(T, n)` cell, because construction touches no tableau.
+"""
 function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
                                storephase::Bool = true,
                                inversemod = QuditClifford.PrecomputedInvMod(d))
@@ -292,13 +316,32 @@ function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
     for k in unique(collect(ks))
         1 <= k <= n || continue
         fixture = stored_clifford_fixture(d, k)
-        U, t, F, a = fixture.U, fixture.targets, fixture.F, fixture.a
+        U = fixture.U
         group["apply!/stored/k=$k"] = bench_apply(mk, :product, U)
         # Every k also has an m=0 leaf, making validation scaling visible.
         group["apply!/stored/m=0/k=$k"] = bench_apply(mk, :mixed, U)
-        group["construct/k=$k/checked"] =
+    end
+    return group
+end
+
+"""
+    stored_clifford_construct_group(d; ks = (1, 2, 8))
+
+`CliffordOperator` construction, checked and unchecked, for each support size
+`k` in `ks` at dimension `d`. Construction takes no tableau or register size,
+so unlike [`stored_clifford_group`](@ref) this group depends only on `d` and
+is registered once per `d` by `register_clifford_group!`, not once per
+`(T, n)` cell -- registering it per cell would duplicate the same `(d, k)`
+measurement across every tableau type and register size.
+"""
+function stored_clifford_construct_group(d::Int; ks = (1, 2, 8))
+    group = BenchmarkGroup()
+    for k in unique(collect(ks))
+        fixture = stored_clifford_fixture(d, k)
+        t, F, a = fixture.targets, fixture.F, fixture.a
+        group["k=$k/checked"] =
             @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a)
-        group["construct/k=$k/unchecked"] =
+        group["k=$k/unchecked"] =
             @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a; check = false)
     end
     return group
@@ -317,6 +360,11 @@ function register_clifford_group!(suite, types, ds, ns; api::Module = QuditCliff
     for T in types, d in ds, n in ns
         suite["clifford"]["stored/$(nameof(T))/d=$d/n=$n"] =
             stored_clifford_group(; d, n, T)
+    end
+    # Construction depends only on d and k, not on T or n, so it is registered
+    # once per d here rather than once per (T, n) cell inside the loop above.
+    for d in ds
+        suite["clifford"]["stored/construct/d=$d"] = stored_clifford_construct_group(d)
     end
     return suite
 end

@@ -335,6 +335,32 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
+    @testset "Stored construct group is registered once per d and all its leaves run" begin
+        for d in (2, 3, 5)
+            group = stored_clifford_construct_group(d)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            for k in (1, 2, 8)
+                fixture = stored_clifford_fixture(d, k)
+                @test CliffordOperator(d, fixture.targets, fixture.F, fixture.a) == fixture.U
+                @test CliffordOperator(d, fixture.targets, fixture.F, fixture.a;
+                                       check = false) == fixture.U
+            end
+        end
+
+        # register_clifford_group! must add exactly one construct cell per d,
+        # regardless of how many (T, n) cells share that d -- the duplication
+        # F6 fixed (construct leaves used to live inside stored_clifford_group,
+        # once per (T, n) cell).
+        suite = BenchmarkGroup()
+        register_clifford_group!(suite, (StabilizerTableau, DestabilizerTableau), (3,), (8, 16))
+        construct_keys = [k for k in keys(suite["clifford"]) if startswith(k, "stored/construct/")]
+        @test Set(construct_keys) == Set(["stored/construct/d=3"])
+    end
+
     @testset "Registration preserves a baseline without CliffordOperator" begin
         # The actual workload functions remain qualified to QuditClifford; this
         # module controls feature detection and models an API surface without

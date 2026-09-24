@@ -83,9 +83,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 89 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 189 | ~83 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 339 | ~7 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `smoke` | n = 8 | 2, 3 | 125 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 279 | ~78 s | the pull-request job |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 507 | ~8 min | `workflow_dispatch`; adds the Ising and purification circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -142,14 +142,24 @@ A separate `clifford` group benchmarks `apply!` itself, as its own top-level
 group alongside the spine and `midcircuit` above: `Fourier` and `Phase` (one
 target) and `SUM` (two non-adjacent targets, the same `spread_sites` qudits
 the `measure!` leaves use) applied to a freshly restored `:ghz` state, across
-both tableau types and every `d` and `n` in the profile — three leaves per
-`(type, d, n)` cell. `storephase = true` throughout, so both the `d = 2`
-bitmask phase evaluator and the odd-prime one run: `Fourier` has zero image
-`x·z`, so its phase term is a pure cross-term, while `Phase` has a nonzero one
-and exercises the `D` vector. Gate application costs `O(k²·m)` for `k ≤ 2`
-targets — linear in the generator count rather than branch-sensitive the way
-`measure!` is — so one leaf per gate is enough; there is no separate
-deterministic/append/non-commuting split here.
+both tableau types and every `d` and `n` in the profile — three named-gate
+leaves per `(type, d, n)` cell. `storephase = true` throughout, so both the
+`d = 2` bitmask phase evaluator and the odd-prime one run: `Fourier` has zero
+image `x·z`, so its phase term is a pure cross-term, while `Phase` has a
+nonzero one and exercises the `D` vector. Gate application costs `O(k²·m)`
+for `k ≤ 2` targets — linear in the generator count rather than
+branch-sensitive the way `measure!` is — so one leaf per gate is enough;
+there is no separate deterministic/append/non-commuting split here.
+
+Each `(type, d, n)` cell also gets a `stored/...` sibling exercising the same
+`apply!` path through a stored `CliffordOperator`, at support sizes
+`k ∈ {1, 2, 8}` (clipped to `k ≤ n`): one leaf applies to a freshly restored
+`:product` state, and a second — `m = 0` — applies to the maximally mixed
+state, making the validation-path cost `apply!` pays before any generator
+exists visible on its own. `CliffordOperator` construction, checked and
+unchecked, is timed separately again: it takes no tableau, so it depends only
+on `d` and `k`, never on the type or `n`, and is registered once per `d`
+rather than once per `(type, d, n)` cell.
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /
