@@ -382,10 +382,12 @@ const _DENSE_MATVEC_ROWWISE_MAX_S = 24
 
 # (Fv)_i = sum_j F[i,j] v[j]. Column j is the image of generator j. Below
 # `_DENSE_MATVEC_ROWWISE_MAX_S` this is a row-wise dot product; above it, the
-# accumulation is column-wise instead (see the constant above), but each
-# out[i] still sums the same S nonnegative products as the row form, just in
-# a different order, so `clifford_fast_dots(S, d)` bounds the unreduced fast-
-# tier accumulator exactly as it does for the row form.
+# accumulation is column-wise instead (see the constant above) and skips a
+# zero v[j] outright, so out[i] sums only a SUBSET of the row form's S
+# nonnegative products, in a different order -- never more of them, and each
+# one it does sum is the same product the row form would also add in, so
+# `clifford_fast_dots(S, d)` still bounds the unreduced fast-tier accumulator
+# exactly as it does for the row form.
 # Precondition: v and F canonical (every entry already reduced mod d), and
 # v !== prep.vout.
 @inline function _matvec_prepared!(prep::PreparedDenseClifford, v::Vector{Int})
