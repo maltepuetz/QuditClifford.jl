@@ -351,7 +351,7 @@ drives `measure!` for the mid-circuit group: that one always builds
 its non-commuting outcomes are only as scrambled as a measurement-only circuit
 gets. This one exists to give the stored-operator benchmarks DENSE local
 coordinates. A `:product` or `:mixed` tableau's active rows are mostly zero or
-one-hot; above `S = 24` the dense matvec in `_dense_matvec!`
+one-hot; above `S = 24` the dense matvec in `_matvec_prepared!`
 (`src/apply_clifford.jl`) skips a zero column outright, so those leaves
 measure a sparse fast path rather than the general case. Repeatedly coupling
 every qudit to a random partner via `SUM` spreads support across the whole

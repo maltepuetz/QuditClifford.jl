@@ -162,7 +162,7 @@ pure state reached by seeded rounds of `apply!`-ing named gates (`Fourier` or
 constructor. Its target rows are therefore dense and mostly nonzero, unlike a
 freshly built `:product` or `:mixed` tableau's mostly-zero, mostly-one-hot
 rows. That distinction is not cosmetic: the dense matvec behind a stored
-operator's `apply!` (`_dense_matvec!`, `src/apply_clifford.jl`) skips a zero
+operator's `apply!` (`_matvec_prepared!`, `src/apply_clifford.jl`) skips a zero
 column outright above `S = 2k = 24`, so a `:product`-state leaf at `k = 32` or
 `128` would measure that sparse fast path rather than the general case a
 scrambled circuit actually produces. The `full` profile only
