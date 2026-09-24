@@ -28,11 +28,14 @@ const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 # in src/modular.jl. Without it no pull-request benchmark executes that tier at
 # all, and a guard that started rejecting every d would look like no change.
 const CONFIG = if PROFILE == "smoke"
-    (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false)
+    (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false,
+     stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "ci"
-    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false)
+    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false,
+     stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "full"
-    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true)
+    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true,
+     stored_ks = (1, 2, 8, 32, 128), stored_product = true)
 else
     error("Unknown QC_BENCH_PROFILE = $(repr(PROFILE)); expected \"smoke\", \"ci\" or \"full\".")
 end
@@ -60,9 +63,16 @@ end
 
 # ---------------------------------------------------------------- clifford
 # Named gate application has k <= 2; stored fixtures also vary runtime support
-# size. Stored construction and m=0 validation are timed in separate leaves.
-# The registration function omits unsupported APIs on older baselines.
-register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns)
+# size, k in CONFIG.stored_ks -- (1, 2, 8) in smoke/ci, plus 32 and 128 in
+# full. The stored apply! leaf runs on a seeded, dense scrambled_tableau; full
+# also adds a :product-state leaf per k (CONFIG.stored_product), the sparse
+# input the dense matvec's zero-skip fast path was added for. Stored
+# construction, the algebra ops (conjugate/inv/compose) and m=0 validation are
+# timed in separate leaves; a fixed large-d leaf gives the overflow-safe
+# arithmetic tier its own coverage regardless of profile. The registration
+# function omits unsupported APIs on older baselines.
+register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
+                         ks = CONFIG.stored_ks, product = CONFIG.stored_product)
 
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own

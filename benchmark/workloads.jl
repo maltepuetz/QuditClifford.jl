@@ -226,15 +226,29 @@ function bench_reset(mk)
 end
 
 """
-`apply!` on a fresh-each-sample tableau. Like `bench_measure` the call mutates —
-it rewrites the target rows of every active column, patches the dual basis and
-the `xdotz_cache`, and clears `iscanonical` — so it needs `evals = 1` and a
-snapshot restore. A `:ghz` state has `m = n`, which is the full column count.
+`apply!` on an already-built tableau, restored from a snapshot before every
+sample. Like `bench_measure` the call mutates — it rewrites the target rows of
+every active column, patches the dual basis and the `xdotz_cache`, and clears
+`iscanonical` — so it needs `evals = 1` and a snapshot restore.
+
+Take this one directly, instead of `bench_apply`, when the tableau is shared
+across several leaves rather than built fresh per leaf — e.g. one
+[`scrambled_tableau`](@ref), built once outside any timed body, reused by
+every `k` in [`stored_clifford_group`](@ref).
+"""
+function bench_apply_on(tab, g)
+    snap = snapshot(tab)
+    return @benchmarkable(apply!($tab, $g), setup = (restore!($snap)), evals = 1)
+end
+
+"""
+`apply!` on a fresh-each-sample tableau: `mk(state)`, then
+[`bench_apply_on`](@ref). A `:ghz` state has `m = n`, which is the full
+column count.
 """
 function bench_apply(mk, state, g)
     tab = mk(state)
-    snap = snapshot(tab)
-    return @benchmarkable(apply!($tab, $g), setup = (restore!($snap)), evals = 1)
+    return bench_apply_on(tab, g)
 end
 
 """
@@ -298,28 +312,100 @@ function stored_clifford_fixture(d::Int, k::Int)
 end
 
 """
-    stored_clifford_group(; d, n, T, ks = (1, 2, 8), storephase = true, inversemod = QuditClifford.PrecomputedInvMod(d))
+    scrambled_tableau(mk, d, n; seed, depth = 4)
+
+A pure state produced by `depth` seeded rounds of *unitary* Clifford action on
+`mk(:product)`, rather than by measurement: each round, for every qudit `q` in
+`1:n`, applies `Fourier(q)` or `Phase(q)` (a seeded coin) and then `SUM(q, q2,
+c)` to a seeded partner `q2 != q` with coefficient `c in 1:(d-1)`. Only named
+P1 gates are used, so `apply!` keeps a `DestabilizerTableau`'s dual basis and
+`xdotz_cache` consistent with no extra bookkeeping here, and the result stays
+physical: `is_pure(tab; verify = true)`.
+
+Deterministic given `(mk, d, n, seed)` -- the RNG is seeded once and driven in
+a fixed order, so two calls with the same arguments return bit-identical
+tableaux and a different `seed` gives a different one.
+
+This is a different kind of scrambling from [`scrambled_state`](@ref), which
+drives `measure!` for the mid-circuit group: that one always builds
+`T(d, n; state = :product)` directly, ignoring `storephase`/`inversemod`, and
+its non-commuting outcomes are only as scrambled as a measurement-only circuit
+gets. This one exists to give the stored-operator benchmarks DENSE local
+coordinates. A `:product` or `:mixed` tableau's active rows are mostly zero or
+one-hot; above `S = 24` the dense matvec in `_dense_matvec!`
+(`src/apply_clifford.jl`) skips a zero column outright, so those leaves
+measure a sparse fast path rather than the general case. Repeatedly coupling
+every qudit to a random partner via `SUM` spreads support across the whole
+register, so a small-`k` stored operator's target rows see mostly-nonzero
+entries instead.
+"""
+function scrambled_tableau(mk, d::Int, n::Int; seed::Int, depth::Int = 4)
+    n >= 2 || throw(ArgumentError(
+        "scrambled_tableau needs at least 2 qudits for SUM, got n = $n."))
+    rng = Random.MersenneTwister(seed)
+    tab = mk(:product)
+    for _ in 1:depth
+        for q in 1:n
+            if rand(rng, Bool)
+                apply!(tab, Fourier(q))
+            else
+                apply!(tab, Phase(q))
+            end
+            q2 = rand(rng, 1:(n - 1))
+            q2 >= q && (q2 += 1)
+            c = rand(rng, 1:(d - 1))
+            apply!(tab, SUM(q, q2, c))
+        end
+    end
+    return tab
+end
+
+"""
+    stored_clifford_group(; d, n, T, ks = (1, 2, 8), product = false,
+                           storephase = true,
+                           inversemod = QuditClifford.PrecomputedInvMod(d),
+                           seed = 20260910)
 
 Stored `CliffordOperator` `apply!`, for one `(type, d, n)` cell and each
-support size `k` in `ks`. Every `k` gets both a `:product`-state leaf and an
-`m = 0` leaf, the latter making validation-path scaling visible.
+support size `k` in `ks`. Every `k` gets:
+
+- `"apply!/stored/k=\$k"`, applying to a [`scrambled_tableau`](@ref) built ONCE
+  for the cell and shared across every `k` -- dense, non-one-hot local
+  coordinates, so this measures the general dense matvec rather than the
+  zero-skip fast path (see `scrambled_tableau`'s docstring).
+- `"apply!/stored/m=0/k=\$k"`, applying to the maximally mixed state, making
+  the validation-path cost `apply!` pays before any generator exists visible
+  on its own. Unchanged from before.
+
+When `product`, also `"apply!/stored/product/k=\$k"` on a freshly restored
+`:product` state -- the sparse, mostly-zero/one-hot input the dense matvec's
+fast path was added for, and what the scrambled leaf above deliberately no
+longer measures. Meant for the `full` profile only (see `CONFIG` in
+`benchmark/benchmarks.jl`), so this demonstration leaf never costs the
+PR-blocking `ci` job any samples.
 
 Construction cost is not in here: see
 [`stored_clifford_construct_group`](@ref), registered once per `d` rather
 than once per `(T, n)` cell, because construction touches no tableau.
 """
 function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
+                               product::Bool = false,
                                storephase::Bool = true,
-                               inversemod = QuditClifford.PrecomputedInvMod(d))
+                               inversemod = QuditClifford.PrecomputedInvMod(d),
+                               seed::Int = 20260910)
     mk = tableau_maker(T, d, n; storephase, inversemod)
+    scrambled = scrambled_tableau(mk, d, n; seed)
     group = BenchmarkGroup()
     for k in unique(collect(ks))
         1 <= k <= n || continue
         fixture = stored_clifford_fixture(d, k)
         U = fixture.U
-        group["apply!/stored/k=$k"] = bench_apply(mk, :product, U)
+        group["apply!/stored/k=$k"] = bench_apply_on(scrambled, U)
         # Every k also has an m=0 leaf, making validation scaling visible.
         group["apply!/stored/m=0/k=$k"] = bench_apply(mk, :mixed, U)
+        if product
+            group["apply!/stored/product/k=$k"] = bench_apply(mk, :product, U)
+        end
     end
     return group
 end
@@ -347,9 +433,108 @@ function stored_clifford_construct_group(d::Int; ks = (1, 2, 8))
     return group
 end
 
+"""
+    stored_clifford_algebra_group(d; ks = (1, 2, 8), seed = 20260910)
+
+`conjugate`, `inv` and composition (`∘`) on a stored [`CliffordOperator`](@ref),
+for each support size `k` in `ks` at dimension `d`. Like
+[`stored_clifford_construct_group`](@ref), these touch no tableau, so this is
+registered once per `d` by `register_clifford_group!` rather than once per
+`(T, n)` cell.
+
+`U = stored_clifford_fixture(d, k).U`, built outside any timed body:
+
+- `"conjugate/k=\$k"` conjugates a seeded, dense `GeneralPauli` on `U`'s own
+  `2k`-qudit register with a random phase -- exercising the general Heisenberg
+  path rather than a single weight-1 basis generator. `test_workloads.jl`
+  checks it against sequential named conjugation through `fixture.gates`.
+- `"inv/k=\$k"` and `"compose/k=\$k"` (`U ∘ U`) are allocating calls that leave
+  `U` and its scratch untouched, so neither needs `evals = 1` or a snapshot
+  restore.
+"""
+function stored_clifford_algebra_group(d::Int; ks = (1, 2, 8), seed::Int = 20260910)
+    group = BenchmarkGroup()
+    rng = Random.MersenneTwister(seed)
+    for k in unique(collect(ks))
+        fixture = stored_clifford_fixture(d, k)
+        U = fixture.U
+        S = 2k
+        xz = [rand(rng, 0:(d - 1)) for _ in 1:S]
+        phase = rand(rng, 0:(QuditClifford.phase_modulus(d) - 1))
+        op = QuditClifford.GeneralPauli(xz, phase)
+        group["conjugate/k=$k"] = @benchmarkable QuditClifford.conjugate($U, $op)
+        group["inv/k=$k"] = @benchmarkable inv($U)
+        group["compose/k=$k"] = @benchmarkable $U ∘ $U
+    end
+    return group
+end
+
+"""
+    stored_clifford_safe_group(types)
+
+The overflow-safe tier's only timed coverage, at one fixed, large prime:
+`d = 1_000_000_007`, `n = 8`, `k = 8`.
+
+Every `d` elsewhere in the suite (2, 3, 5, 7) is small enough that
+`clifford_fast_dots` (`src/clifford_arithmetic.jl`) takes the unguarded `Int`
+fast path for a `2k`-term Clifford dot, so without this group the
+`add_mod`/`mul_mod`/`widemul` safe tier those dots fall back to would never
+run under a timer. `n*(d-1)^2 ≈ 8.0e18` stays under `typemax(Int) ≈ 9.22e18`,
+so the tableau itself is inside the package-wide envelope
+(`max_safe_dimension`, `src/helper.jl`) and raises no overflow warning; but a
+Clifford dot sums `2k` rather than `n` terms, so `clifford_fast_dots(2k, d) =
+clifford_fast_dots(16, d)` is false regardless of that headroom -- exactly the
+gap `src/clifford_arithmetic.jl`'s header comment describes.
+`test_workloads.jl` asserts both facts directly rather than trusting this
+arithmetic.
+
+`JustInTimeInvMod()` throughout: `PrecomputedInvMod` allocates a `d - 1`-entry
+table, which would be gigabytes at this `d`.
+
+Leaves: `"apply!/\$(nameof(T))/k=8"` on a [`scrambled_tableau`](@ref) for each
+`T` in `types`, plus the same `"conjugate/k=8"`, `"inv/k=8"` and
+`"compose/k=8"` leaves [`stored_clifford_algebra_group`](@ref) builds at this
+`k`, so the two groups share a naming convention even though this one is keyed
+by `d` alone and registered unconditionally rather than once per `d in ds`.
+
+Registered as `suite["clifford"]["stored/safe/d=1000000007"]`, in every
+profile: it is cheap (one `n = 8` tableau per type, one `k = 8` fixture) and
+none of `CONFIG`'s own `ds` ever reaches this `d`.
+"""
+function stored_clifford_safe_group(types)
+    d = 1_000_000_007
+    n = 8
+    k = 8
+    S = 2k
+    group = BenchmarkGroup()
+    fixture = stored_clifford_fixture(d, k)
+    U = fixture.U
+    for T in types
+        mk = tableau_maker(T, d, n; inversemod = QuditClifford.JustInTimeInvMod())
+        scrambled = scrambled_tableau(mk, d, n; seed = 20260910)
+        group["apply!/$(nameof(T))/k=$k"] = bench_apply_on(scrambled, U)
+    end
+    rng = Random.MersenneTwister(20260910)
+    xz = [rand(rng, 0:(d - 1)) for _ in 1:S]
+    phase = rand(rng, 0:(QuditClifford.phase_modulus(d) - 1))
+    op = QuditClifford.GeneralPauli(xz, phase)
+    group["conjugate/k=$k"] = @benchmarkable QuditClifford.conjugate($U, $op)
+    group["inv/k=$k"] = @benchmarkable inv($U)
+    group["compose/k=$k"] = @benchmarkable $U ∘ $U
+    return group
+end
+
 # The PR-head script runs against both head and the older baseline package.
 # Do not call any new gate constructor until every API this group uses exists.
-function register_clifford_group!(suite, types, ds, ns; api::Module = QuditClifford)
+#
+# `ks` and `product` thread straight through to `stored_clifford_group`.
+# `stored_clifford_construct_group` and `stored_clifford_algebra_group` reuse
+# the same `ks`, once per `d` rather than once per `(T, n)` cell, since
+# neither touches a tableau. `stored_clifford_safe_group` takes no `ks`: it is
+# pinned to one fixed, large `d` and registered unconditionally, in every
+# profile.
+function register_clifford_group!(suite, types, ds, ns; ks = (1, 2, 8),
+                                  product::Bool = false, api::Module = QuditClifford)
     required = (:apply!, :Fourier, :Phase, :SUM)
     all(name -> isdefined(api, name), required) || return suite
     for T in types, d in ds, n in ns
@@ -359,13 +544,18 @@ function register_clifford_group!(suite, types, ds, ns; api::Module = QuditCliff
     isdefined(api, :CliffordOperator) || return suite
     for T in types, d in ds, n in ns
         suite["clifford"]["stored/$(nameof(T))/d=$d/n=$n"] =
-            stored_clifford_group(; d, n, T)
+            stored_clifford_group(; d, n, T, ks, product)
     end
-    # Construction depends only on d and k, not on T or n, so it is registered
-    # once per d here rather than once per (T, n) cell inside the loop above.
+    # Construction and the algebra ops (conjugate/inv/compose) depend only on
+    # d and k, not on T or n, so both are registered once per d here rather
+    # than once per (T, n) cell inside the loop above.
     for d in ds
-        suite["clifford"]["stored/construct/d=$d"] = stored_clifford_construct_group(d)
+        suite["clifford"]["stored/construct/d=$d"] = stored_clifford_construct_group(d; ks)
+        suite["clifford"]["stored/algebra/d=$d"] = stored_clifford_algebra_group(d; ks)
     end
+    # The overflow-safe tier, once, regardless of profile or ds: see
+    # stored_clifford_safe_group for why none of CONFIG's own ds reaches it.
+    suite["clifford"]["stored/safe/d=1000000007"] = stored_clifford_safe_group(types)
     return suite
 end
 

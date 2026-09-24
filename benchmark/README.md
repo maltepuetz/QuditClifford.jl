@@ -83,9 +83,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 125 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 279 | ~78 s | the pull-request job |
-| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 507 | ~8 min | `workflow_dispatch`; adds the Ising and purification circuits |
+| `smoke` | n = 8 | 2, 3 | 148 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 311 | ~95 s (measured) | the pull-request job |
+| `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 780 | ~14 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising and purification circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -152,14 +152,47 @@ branch-sensitive the way `measure!` is — so one leaf per gate is enough;
 there is no separate deterministic/append/non-commuting split here.
 
 Each `(type, d, n)` cell also gets a `stored/...` sibling exercising the same
-`apply!` path through a stored `CliffordOperator`, at support sizes
-`k ∈ {1, 2, 8}` (clipped to `k ≤ n`): one leaf applies to a freshly restored
-`:product` state, and a second — `m = 0` — applies to the maximally mixed
-state, making the validation-path cost `apply!` pays before any generator
-exists visible on its own. `CliffordOperator` construction, checked and
-unchecked, is timed separately again: it takes no tableau, so it depends only
-on `d` and `k`, never on the type or `n`, and is registered once per `d`
-rather than once per `(type, d, n)` cell.
+`apply!` path through a stored `CliffordOperator`, at support sizes `k` set by
+`CONFIG.stored_ks` (clipped to `k ≤ n`): `{1, 2, 8}` in `smoke` and `ci`, plus
+`32` and `128` in `full`.
+
+The base leaf, `"apply!/stored/k=$k"`, applies to a `scrambled_tableau`: a
+pure state reached by seeded rounds of `apply!`-ing named gates (`Fourier` or
+`Phase` on every qudit, then a `SUM` to a random partner), rather than by a
+constructor. Its target rows are therefore dense and mostly nonzero, unlike a
+freshly built `:product` or `:mixed` tableau's mostly-zero, mostly-one-hot
+rows. That distinction is not cosmetic: the dense matvec behind a stored
+operator's `apply!` (`_dense_matvec!`, `src/apply_clifford.jl`) skips a zero
+column outright above `S = 2k = 24`, so a `:product`-state leaf at `k = 32` or
+`128` would measure that sparse fast path rather than the general case a
+scrambled circuit actually produces. The `full` profile only
+(`CONFIG.stored_product`) therefore keeps a second, `"apply!/stored/product/k=$k"`
+leaf on a freshly restored `:product` state — deliberately the sparse input,
+so the fast path itself stays under coverage rather than going untested. A
+third leaf, `"apply!/stored/m=0/k=$k"`, applies to the maximally mixed state,
+making the validation-path cost `apply!` pays before any generator exists
+visible on its own.
+
+`CliffordOperator` construction, checked and unchecked, is timed separately
+again: it takes no tableau, so it depends only on `d` and `k`, never on the
+type or `n`, and is registered once per `d` rather than once per
+`(type, d, n)` cell. The algebra operations — `conjugate` (against a seeded,
+dense `GeneralPauli` observable, not a single sparse generator), `inv`, and
+composition (`"compose/k=$k"`, `U ∘ U`) — are timed the same way, once per
+`(d, k)` in a `stored/algebra/d=$d` group, since none of them touch a tableau
+either.
+
+One more cell, `stored/safe/d=1000000007` (`n = k = 8`), is registered once,
+regardless of profile and outside any `d` in `CONFIG.ds`. Every `d` elsewhere
+in the suite is small enough that a `2k`-term Clifford dot
+(`clifford_fast_dots`, `src/clifford_arithmetic.jl`) takes the unguarded `Int`
+fast path; `d = 1000000007` is chosen so that dot does not, while
+`n(d-1)^2` still stays inside the tableau's own overflow envelope
+(`max_safe_dimension`, `src/helper.jl`) — so this cell is the only place in
+the suite that times the `add_mod`/`mul_mod`/`widemul` safe arithmetic tier
+`src/clifford_arithmetic.jl` falls back to. It uses `JustInTimeInvMod`
+throughout, since `PrecomputedInvMod`'s lookup table would be gigabytes at
+this `d`.
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /
