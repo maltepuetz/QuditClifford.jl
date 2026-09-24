@@ -165,6 +165,19 @@ function _clifford_size(k::Int)
     end
 end
 
+# Check the i-th target for positivity and against the targets already stored in
+# t[1:i-1], then store it. The O(k^2) distinctness scan runs at construction
+# only; consumption re-checks bounds alone.
+@inline function _store_target!(t::Vector{Int}, i::Int, ti::Int)
+    ti > 0 || throw(ArgumentError("Clifford target indices must be positive, got $ti."))
+    @inbounds for r in 1:(i - 1)
+        t[r] == ti && throw(ArgumentError(
+            "Clifford targets must be distinct; $ti appears more than once."))
+    end
+    t[i] = ti
+    return nothing
+end
+
 function CliffordOperator(d::Int, targets::AbstractVector{<:Integer},
                           F::AbstractMatrix{<:Integer},
                           a::AbstractVector{<:Integer}; check::Bool = true)
@@ -191,13 +204,7 @@ function CliffordOperator(d::Int, targets::AbstractVector{<:Integer},
         ti = targets[i]
         (ti isa Integer && typemin(Int) <= ti <= typemax(Int)) ||
             throw(ArgumentError("Clifford target $ti is not representable as Int."))
-        tI = Int(ti)
-        tI > 0 || throw(ArgumentError("Clifford target indices must be positive, got $tI."))
-        for r in 1:(i - 1)
-            t[r] == tI && throw(ArgumentError(
-                "Clifford targets must be distinct; $tI appears more than once."))
-        end
-        t[i] = tI
+        _store_target!(t, i, Int(ti))
     end
     p = phase_modulus(d)
     Fc = Matrix{Int}(undef, S, S)
@@ -238,13 +245,7 @@ function CliffordOperator(g::AbstractClifford, d::Int)
     k = length(raw)
     t = Vector{Int}(undef, k)
     @inbounds for i in 1:k
-        ti = Int(raw[i])
-        ti > 0 || throw(ArgumentError("Clifford target indices must be positive, got $ti."))
-        for r in 1:(i - 1)
-            t[r] == ti && throw(ArgumentError(
-                "Clifford targets must be distinct; $ti appears more than once."))
-        end
-        t[i] = ti
+        _store_target!(t, i, Int(raw[i]))
     end
     _, tF, ta = _clifford_data(g, d, JustInTimeInvMod())
     S = 2k
