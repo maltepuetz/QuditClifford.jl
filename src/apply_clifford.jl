@@ -135,10 +135,15 @@ end
 # Preparation                          #
 ########################################
 
+# Backing-agnostic tag. `PreparedClifford` is the compile-time tuple backing;
+# `PreparedDenseClifford` (Task 2) is the runtime-k dense one. The pipeline
+# below is written once against this tag and specialized by Julia per backing.
+abstract type AbstractPreparedClifford end
+
 # Resolved once per `apply!`, never per column: the gate's raw data, the image
 # dot products, the arithmetic tier, and the phase regime. Immutable and
 # built from tuples, so a named-gate application allocates nothing.
-struct PreparedClifford{K,S}
+struct PreparedClifford{K,S} <: AbstractPreparedClifford
     targets::NTuple{K,Int}
     F::NTuple{S,NTuple{S,Int}}
     a::NTuple{S,Int}
@@ -189,6 +194,15 @@ end
     return nothing
 end
 
+# Distinctness is O(k^2) and is a CONSTRUCTOR invariant for a stored operator,
+# so consumption re-derives only the O(k) bounds for backings that carry that
+# proof. Directly built tuple preparations keep the full defense.
+@inline _validate_clifford_targets(g::AbstractClifford, n::Int) =
+    _validate_targets(_clifford_targets(g), n)
+
+@inline _validate_clifford_targets(prep::PreparedClifford, n::Int) =
+    _validate_targets(prep.targets, n)
+
 ########################################
 # Gather / matvec / scatter            #
 ########################################
@@ -210,6 +224,48 @@ end
     @inbounds for i in 1:K
         A[targets[i], j] = vout[i]
         A[n + targets[i], j] = vout[K + i]
+    end
+    return nothing
+end
+
+########################################
+# Prepared-operation protocol          #
+########################################
+#
+# Seven operations carry the backing difference; everything above them is
+# written once. The tuple methods delegate to P1's primitives unchanged, so
+# their existing direct tests stay valid. The bang marks that a backing MAY
+# mutate borrowed scratch -- the tuple backing does not need to.
+
+@inline _gather_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
+                          j::Int) where {K,S} = _gather(A, prep.targets, n, j)
+
+@inline _matvec_prepared!(prep::PreparedClifford{K,S},
+                          v::NTuple{S,Int}) where {K,S} = _matvec(prep, v)
+
+@inline _scatter_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
+                           j::Int, vout::NTuple{S,Int}) where {K,S} =
+    _scatter!(A, prep.targets, n, j, vout)
+
+@inline _col_xdotz_prepared(prep::PreparedClifford{K,S},
+                            v::NTuple{S,Int}) where {K,S} =
+    _col_xdotz(v, K, prep.d, prep.fast)
+
+@inline function _gather_vec_prepared!(prep::PreparedClifford{K,S},
+                                       xz::Vector{Int}, n::Int) where {K,S}
+    t = prep.targets
+    return ntuple(Val(S)) do i
+        @inbounds i <= K ? xz[t[i]] : xz[n + t[i - K]]
+    end
+end
+
+@inline function _scatter_vec_prepared!(prep::PreparedClifford{K,S},
+                                        xz::Vector{Int}, n::Int,
+                                        vout::NTuple{S,Int}) where {K,S}
+    t = prep.targets
+    @inbounds for i in 1:K
+        xz[t[i]] = vout[i]
+        xz[n + t[i]] = vout[K + i]
     end
     return nothing
 end
@@ -300,7 +356,7 @@ With `storephase=false` no phase work is done and only the exponents move.
 See also [`AbstractClifford`](@ref), [`conjugate`](@ref), [`measure!`](@ref).
 """
 function apply!(tab::AbstractTableau, g::AbstractClifford)
-    _validate_targets(_clifford_targets(g), tab.n)
+    _validate_clifford_targets(g, tab.n)
     prep = _prepare(g, tab.d, tab.inversemod, tab.storephase)
     return _apply_prepared!(tab, prep)
 end
@@ -312,7 +368,11 @@ end
 # modulus, a mismatched `storephase` would write past the end of `stab`, and an
 # out-of-range target would index out of bounds -- the column loop below runs
 # under `@inbounds`, so none of the three would raise on its own.
-function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) where {K,S}
+# The dense backing re-checks target BOUNDS but trusts its constructor for
+# distinctness, so a hand-built `PreparedDenseClifford` with duplicate targets
+# is outside this boundary's guarantee. That is the accepted cost of keeping
+# stored application off an O(k^2) prelude when `m` is small or zero.
+function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
     prep.d == tab.d || throw(ArgumentError(
         "PreparedClifford was built for d=$(prep.d), but the tableau has " *
         "d=$(tab.d); rebuild the PreparedClifford for this tableau before " *
@@ -321,14 +381,14 @@ function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) whe
         "PreparedClifford was built with storephase=$(prep.storephase), but " *
         "the tableau has storephase=$(tab.storephase); rebuild the " *
         "PreparedClifford for this tableau before applying it."))
-    K == 0 && return tab
-    _validate_targets(prep.targets, tab.n)
+    length(prep.targets) == 0 && return tab
+    _validate_clifford_targets(prep, tab.n)
     n = tab.n
     stab = tab.stab
     phase_row = 2n + 1
     @inbounds for j in 1:tab.m
-        v = _gather(stab, prep.targets, n, j)
-        vout = _matvec(prep, v)
+        v = _gather_prepared!(prep, stab, n, j)
+        vout = _matvec_prepared!(prep, v)
         if prep.storephase
             δ = _phase(prep, v, vout)
             stab[phase_row, j] = add_mod(stab[phase_row, j], δ, prep.p)
@@ -336,7 +396,7 @@ function _apply_prepared!(tab::AbstractTableau, prep::PreparedClifford{K,S}) whe
         # The cache delta needs the OLD target entries, so it runs before the
         # scatter overwrites them.
         _before_clifford_scatter!(tab, prep, j, v, vout)
-        _scatter!(stab, prep.targets, n, j, vout)
+        _scatter_prepared!(prep, stab, n, j, vout)
     end
     _after_clifford!(tab, prep)
     tab.iscanonical = false
@@ -347,39 +407,28 @@ end
 # DestabilizerTableau hooks            #
 ########################################
 
-# Patch the live cache using the OLD target entries, before the scatter
-# overwrites them. Non-target qudits contribute the same x·z as before, so the
-# delta is O(k) rather than a fresh full-length `dot_xz_col`.
-@inline function _before_clifford_scatter!(
-    tab::DestabilizerTableau,
-    prep::PreparedClifford{K,S},
-    j::Int,
-    v::NTuple{S,Int},
-    vout::NTuple{S,Int},
-) where {K,S}
+@inline function _before_clifford_scatter!(tab::DestabilizerTableau,
+                                           prep::AbstractPreparedClifford,
+                                           j::Int, v, vout)
     d = prep.d
-    old = _col_xdotz(v, K, d, prep.fast)
-    new = _col_xdotz(vout, K, d, prep.fast)
+    old = _col_xdotz_prepared(prep, v)
+    new = _col_xdotz_prepared(prep, vout)
     @inbounds tab.xdotz_cache[j] =
         add_mod(sub_mod(tab.xdotz_cache[j], old, d), new, d)
     return nothing
 end
 
-# The dual basis gets the SAME symplectic map and no phase work: there is no
-# phase row on `destab`, and a symplectic F preserves the pairing outright,
-#     ⟨F D_j, F S_l⟩ = D_jᵀ FᵀΩF S_l = D_jᵀ Ω S_l = ⟨D_j, S_l⟩,
-# so duality survives with no re-orthogonalization. Contrast `measure!`, whose
-# hook needs an O(n·m) pass.
-function _after_clifford!(
-    tab::DestabilizerTableau,
-    prep::PreparedClifford{K,S},
-) where {K,S}
+# The dual basis gets the SAME symplectic map and no phase work. This pass
+# deliberately REUSES the main loop's `v`/`vout` buffers on the dense backing:
+# it runs strictly after that loop, nothing from it stays live, and this is not
+# an instance of the allocating-API scratch rule. Do not give it own buffers.
+function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford)
     n = tab.n
     destab = tab.destab
     @inbounds for j in 1:tab.m
-        v = _gather(destab, prep.targets, n, j)
-        vout = _matvec(prep, v)
-        _scatter!(destab, prep.targets, n, j, vout)
+        v = _gather_prepared!(prep, destab, n, j)
+        vout = _matvec_prepared!(prep, v)
+        _scatter_prepared!(prep, destab, n, j, vout)
     end
     return nothing
 end
@@ -432,33 +481,46 @@ function _dense_pauli(op::FewQuditPauli, n::Int, d::Int, p::Int)
     return GeneralPauli(xz, mod(phase, p))
 end
 
-function _conjugate(g::AbstractClifford, op::AbstractPauli, n::Int, d::Union{Int,Nothing})
+# Named gates carry no dimension; a stored operator supplies its own. The
+# second argument type is IDENTICAL on every method of this hook -- see the
+# dispatch note on `_prepare` in `src/clifford_operator.jl`.
+function _resolve_clifford_dimension(::AbstractClifford, d::Union{Int,Nothing})
     d === nothing && throw(ArgumentError(
         "conjugate with a named gate needs an explicit dimension: pass d = <prime>."))
     dd = d::Int
     Primes.isprime(dd) || throw(ArgumentError("Qudit dimension d must be a prime number."))
+    return dd
+end
+
+# Standalone preparation never builds a d-1 lookup table. For a named gate this
+# also completes modulus-dependent validation (e.g. a zero-residue Multiplier)
+# BEFORE the caller allocates any dense result.
+_prepare_for_conjugation(g::AbstractClifford, d::Int) =
+    _prepare(g, d, JustInTimeInvMod(), true)
+
+# Transformation only: every check and allocation has already happened.
+function _conjugate_prepared!(out::GeneralPauli, prep::AbstractPreparedClifford,
+                              n::Int)
+    xz = out.xz
+    v = _gather_vec_prepared!(prep, xz, n)
+    vout = _matvec_prepared!(prep, v)
+    δ = _phase(prep, v, vout)
+    _scatter_vec_prepared!(prep, xz, n, vout)
+    out.phase = add_mod(out.phase, δ, prep.p)
+    return out
+end
+
+function _conjugate(g::AbstractClifford, op::AbstractPauli, n::Int,
+                    d::Union{Int,Nothing})
+    dd = _resolve_clifford_dimension(g, d)
     n >= 0 || throw(ArgumentError("Register size n must be nonnegative, got $n."))
     n <= typemax(Int) ÷ 2 || throw(ArgumentError("Register size 2n must fit in Int."))
     _validate_pauli(op, n)
-    _validate_targets(_clifford_targets(g), n)
+    _validate_clifford_targets(g, n)
     p = phase_modulus(dd)
-    # Modulus-dependent gate validation precedes inversion inside _clifford_data.
-    # Standalone preparation never builds a d-1 lookup table.
-    prep = _prepare(g, dd, JustInTimeInvMod(), true)
+    prep = _prepare_for_conjugation(g, dd)
     out = _dense_pauli(op, n, dd, p)
-    K = length(prep.targets)
-    xz = out.xz
-    v = ntuple(Val(2K)) do i
-        @inbounds i <= K ? xz[prep.targets[i]] : xz[n + prep.targets[i - K]]
-    end
-    vout = _matvec(prep, v)
-    δ = _phase(prep, v, vout)
-    @inbounds for i in 1:K
-        xz[prep.targets[i]] = vout[i]
-        xz[n + prep.targets[i]] = vout[K + i]
-    end
-    out.phase = add_mod(out.phase, δ, p)
-    return out
+    return _conjugate_prepared!(out, prep, n)
 end
 
 """
