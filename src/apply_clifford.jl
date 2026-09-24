@@ -372,24 +372,65 @@ end
     return nothing
 end
 
-# (Fv)_i = sum_j F[i,j] v[j]. Column j is the image of generator j.
+# Size (S = 2k) up to which the dense matvec keeps the row-wise dot product.
+# Row-wise sums stay in a register and win for small supports; above this size
+# the stride-S row reads lose to a column pass over contiguous columns, which
+# also skips zero inputs (a product-state or single-site input costs O(S), not
+# O(S^2)). Measured crossover for inputs without zeros is S ≈ 32; inputs with
+# zeros favour the column pass earlier. Correctness does not depend on the value.
+const _DENSE_MATVEC_ROWWISE_MAX_S = 24
+
+# (Fv)_i = sum_j F[i,j] v[j]. Column j is the image of generator j. Below
+# `_DENSE_MATVEC_ROWWISE_MAX_S` this is a row-wise dot product; above it, the
+# accumulation is column-wise instead (see the constant above), but each
+# out[i] still sums the same S nonnegative products as the row form, just in
+# a different order, so `clifford_fast_dots(S, d)` bounds the unreduced fast-
+# tier accumulator exactly as it does for the row form.
+# Precondition: v and F canonical (every entry already reduced mod d), and
+# v !== prep.vout.
 @inline function _matvec_prepared!(prep::PreparedDenseClifford, v::Vector{Int})
     F = prep.F; d = prep.d; S = 2 * prep.k; out = prep.vout
-    if prep.fast
-        @inbounds for i in 1:S
-            s = 0
-            for j in 1:S
-                s += F[i, j] * v[j]
+    if S <= _DENSE_MATVEC_ROWWISE_MAX_S
+        if prep.fast
+            @inbounds for i in 1:S
+                s = 0
+                for j in 1:S
+                    s += F[i, j] * v[j]
+                end
+                out[i] = mod(s, d)
             end
-            out[i] = mod(s, d)
+        else
+            @inbounds for i in 1:S
+                s = 0
+                for j in 1:S
+                    s = add_mod(s, mul_mod(F[i, j], v[j], d), d)
+                end
+                out[i] = s
+            end
         end
     else
         @inbounds for i in 1:S
-            s = 0
-            for j in 1:S
-                s = add_mod(s, mul_mod(F[i, j], v[j], d), d)
+            out[i] = 0
+        end
+        if prep.fast
+            @inbounds for j in 1:S
+                x = v[j]
+                x == 0 && continue
+                @simd for i in 1:S
+                    out[i] += F[i, j] * x
+                end
             end
-            out[i] = s
+            @inbounds for i in 1:S
+                out[i] = mod(out[i], d)
+            end
+        else
+            @inbounds for j in 1:S
+                x = v[j]
+                x == 0 && continue
+                for i in 1:S
+                    out[i] = add_mod(out[i], mul_mod(F[i, j], x, d), d)
+                end
+            end
         end
     end
     return out
@@ -462,15 +503,20 @@ end
     @inbounds for i in 1:S
         v[i] == 0 && continue
         phase = add_mod(phase, a[i], 4)
-        cross = 0
-        for q in 1:k
-            (F[q, i] == 1 && zpref[q] == 1) && (cross ⊻= 1)
+        # Under the precondition every F entry and zpref entry is 0 or 1, so
+        # `F[q,i] & zpref[q]` is exactly the bit product, and the parity of
+        # their sum over q equals the old chain of conditional XORs (each
+        # true `F[q,i] == 1 && zpref[q] == 1` flipped `cross` once). c <= k,
+        # so the accumulator cannot overflow.
+        c = 0
+        @simd for q in 1:k
+            c += F[q, i] & zpref[q]
         end
         # Reducing the prefix mod 2 is valid because it is multiplied by 2 in
         # phase modulus 4.
-        phase = add_mod(phase, 2 * cross, 4)
-        for q in 1:k
-            F[k + q, i] == 1 && (zpref[q] ⊻= 1)
+        phase = add_mod(phase, 2 * (c & 1), 4)
+        @simd for q in 1:k
+            zpref[q] ⊻= F[k + q, i]
         end
     end
     return phase

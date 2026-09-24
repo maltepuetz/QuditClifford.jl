@@ -974,3 +974,76 @@ end
         @test stored_apply_allocations(tab, U) == 0
     end
 end
+
+# Straddles the dense matvec's row/column switch (`_DENSE_MATVEC_ROWWISE_MAX_S`,
+# introduced alongside these tests) from both directions, in both arithmetic
+# tiers, so neither branch of the restructured kernel silently diverges from
+# `mod(F * v, d)`. Symplecticity is irrelevant to a matvec, so `F` is just a
+# random canonical matrix -- built directly from `PreparedDenseClifford`,
+# matching how the following testset builds it too.
+@testset "Dense matvec matches BigInt on both sides of the row/column switch" begin
+    rng = Random.MersenneTwister(20260924)
+    Smax = QC._DENSE_MATVEC_ROWWISE_MAX_S
+    for k in unique([1, 2, Smax ÷ 2 - 1, Smax ÷ 2, Smax ÷ 2 + 1, Smax, 65])
+        S = 2k
+        for d in (2, 3, 5, 1000000007), force_safe in (false, true)
+            fast = !force_safe && QC.clifford_fast_dots(S, d)
+            F = rand(rng, 0:(d - 1), S, S)
+            v = zeros(Int, S)
+            vout = zeros(Int, S)
+            zpref = zeros(Int, k)
+            prep = QC.PreparedDenseClifford(collect(1:k), F, zeros(Int, S),
+                zeros(Int, S), v, vout, zpref, k, d, QC.phase_modulus(d), 0,
+                fast, true)
+            inputs = Vector{Int}[zeros(Int, S)]
+            onehot = zeros(Int, S)
+            onehot[rand(rng, 1:S)] = rand(rng, 1:(d - 1))
+            push!(inputs, onehot)
+            for _ in 1:3
+                push!(inputs, rand(rng, 0:(d - 1), S))
+            end
+            for vv in inputs
+                copyto!(prep.v, vv)
+                beforev = copy(prep.v)
+                out = QC._matvec_prepared!(prep, prep.v)
+                @test out === prep.vout
+                @test collect(out) == Int.(mod.(big.(F) * vv, d))
+                @test prep.v == beforev
+            end
+        end
+    end
+end
+
+# The ordered-product BigInt oracle (`phase_reference_dense`, defined above)
+# holds for ANY F, symplectic or not, so it doubles as a direct check on the
+# branch-free rewrite -- independent of whatever internal form
+# `_phase_qubit_dense` uses to reach the same parity.
+@testset "Dense qubit phase matches the ordered-product oracle on dense inputs" begin
+    rng = Random.MersenneTwister(20260925)
+    for k in (1, 2, 3, 8, 33, 100)
+        S = 2k
+        for _ in 1:5
+            F = rand(rng, 0:1, S, S)
+            a = rand(rng, 0:3, S)
+            v = rand(rng, 0:1, S)
+            zpref = fill(1, k)   # stale on purpose: proves the kernel clears it
+            beforev = copy(v)
+            phase = QC._phase_qubit_dense(v, F, a, k, zpref)
+            @test phase == phase_reference_dense(F, a, v, 2)
+            @test v == beforev
+        end
+    end
+end
+
+@testset "Stored apply! stays allocation-free just above the row/column switch" begin
+    k = QC._DENSE_MATVEC_ROWWISE_MAX_S ÷ 2 + 1   # S = 2k is just past the switch
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), sp in (false, true)
+        tab = TT(d, k; state = :product, storephase = sp)
+        U = embed_named_on(Fourier(k), d, collect(1:k))
+        stored_apply_allocations(tab, U)
+        @test stored_apply_allocations(tab, U) == 0
+        prep = QC._prepare(U, d, tab.inversemod, sp; force_safe = true)
+        prepared_apply_allocations(tab, prep)
+        @test prepared_apply_allocations(tab, prep) == 0
+    end
+end
