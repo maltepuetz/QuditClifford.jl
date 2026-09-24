@@ -502,3 +502,46 @@ end
     @test rawempty.xz == [-1, 5, 3, -2] && rawempty.phase == -1
     @test_throws ArgumentError conjugate(E, SinglePauli(9, 1, 0), 2)
 end
+
+# F_inv must be the actual matrix inverse mod d, independent of the block formula.
+function is_matrix_inverse(F::Matrix{Int}, G::Matrix{Int}, d::Int)
+    S = size(F, 1)
+    P = [mod(sum(big(F[i, r]) * G[r, j] for r in 1:S), d) for i in 1:S, j in 1:S]
+    return P == [i == j ? 1 : 0 for i in 1:S, j in 1:S]
+end
+
+@testset "inv is the group inverse" begin
+    for d in (2, 3, 5)
+        gates = Any[Fourier(1), Phase(1), PauliGate(1, 1, 1),
+                    SUM(1, 2, 1), CPhase(1, 2, 1), SWAP(1, 2)]
+        push!(gates, Multiplier(1, d == 2 ? 1 : 2))
+        for g in gates
+            U = CliffordOperator(g, d)
+            W = inv(U)
+            @test W.d == d && W.targets == U.targets
+            @test is_matrix_inverse(U.F, W.F, d)
+            @test inv(W) == U
+            assert_independent(W, U)
+            # inv(U) must itself pass the public constructor's algebraic checks.
+            @test CliffordOperator(d, W.targets, W.F, W.a) == W
+            # Applying U then inv(U) is the identity on a tableau, phases included.
+            for TT in (StabilizerTableau, DestabilizerTableau)
+                tab = TT(d, 4; state = :ghz)
+                before = copy(tab.stab)
+                apply!(tab, U); apply!(tab, W)
+                @test tab.stab == before
+            end
+            # Operand and its scratch are untouched.
+            fill!(U.v, -1); fill!(U.vout, -2); fill!(U.zpref, -3)
+            snap = operator_snapshot(U)
+            inv(U)
+            @test operator_snapshot(U) == snap
+        end
+    end
+    # v6 §6.1's worked qubit case.
+    P2, F2 = CliffordOperator(Phase(1), 2), CliffordOperator(Fourier(1), 2)
+    @test P2.a == [1, 0] && F2.a == [0, 0]
+    # Empty support inverts to itself.
+    E = CliffordOperator(3, Int[], zeros(Int, 0, 0), Int[])
+    @test inv(E) == E
+end

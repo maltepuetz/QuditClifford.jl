@@ -356,3 +356,56 @@ function _prepare_for_conjugation(U::CliffordOperator, d::Int)
     k = length(U.targets); S = 2k
     return _dense_view(U, true, zeros(Int, S), zeros(Int, S), zeros(Int, k))
 end
+
+"""
+    inv(U::CliffordOperator) -> CliffordOperator
+
+The inverse Clifford, on the same dimension and the same ordered support.
+
+Uses the symplectic block form rather than a matrix inversion: for
+`F = [A B; C E]` in `k × k` blocks, `F_inv = −Ω Fᵀ Ω = [Eᵀ −Bᵀ; −Cᵀ Aᵀ] (mod d)`,
+formed in `O(k²)`. Raw phases are recovered as `a_inv[i] = −φ_U(F_inv[:,i])`,
+evaluated with the already-known output `e_i` — never by negating `U`'s raw
+phase vector componentwise. Phase recovery is `O(k²)` at odd primes and `O(k³)`
+at `d = 2`, whose ordered-product evaluator is `O(k²)` per column.
+
+`U` and its scratch are left untouched. Heisenberg evolution of an observable
+under state evolution by `U` is `conjugate(inv(U), op)`.
+
+# Examples
+```julia
+W = inv(CliffordOperator(Fourier(1), 3))
+```
+"""
+function Base.inv(U::CliffordOperator)
+    d = U.d
+    k = length(U.targets)
+    S = 2k
+    p = phase_modulus(d)
+    Finv = Matrix{Int}(undef, S, S)
+    # F = [A B; C E] with A = F[1:k, 1:k] etc, so −Ω Fᵀ Ω = [Eᵀ −Bᵀ; −Cᵀ Aᵀ].
+    @inbounds for i in 1:k, j in 1:k
+        Finv[i, j]         = U.F[k + j, k + i]
+        Finv[i, k + j]     = mod(-U.F[j, k + i], d)
+        Finv[k + i, j]     = mod(-U.F[k + j, i], d)
+        Finv[k + i, k + j] = U.F[j, i]
+    end
+    # Allocate the result's own scratch FIRST, then evaluate `U`'s phase
+    # function through a view that pairs U's semantic arrays with that scratch.
+    # Borrowing U.v/U.vout here would mutate the operand.
+    v, vout, zpref = zeros(Int, S), zeros(Int, S), zeros(Int, k)
+    view = _dense_view(U, true, v, vout, zpref)
+    ainv = Vector{Int}(undef, S)
+    @inbounds for i in 1:S
+        for r in 1:S
+            v[r] = Finv[r, i]
+            vout[r] = 0
+        end
+        # F * F_inv[:,i] = e_i, so the output is known without a matvec.
+        vout[i] = 1
+        ainv[i] = mod(-_phase(view, v, vout), p)
+    end
+    D = _image_xdotz_dense(Finv, k, d, U.fast)
+    return _owned_clifford_operator(d, copy(U.targets), Finv, ainv, D, U.inv2,
+                                    U.fast, v, vout, zpref)
+end
