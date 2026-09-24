@@ -545,3 +545,63 @@ end
     E = CliffordOperator(3, Int[], zeros(Int, 0, 0), Int[])
     @test inv(E) == E
 end
+
+@testset "Composition applies its right operand first" begin
+    for d in (2, 3, 5)
+        pairs = Any[(Fourier(1), Phase(1)), (Phase(1), Fourier(1)),
+                    (PauliGate(1, 1, 1), Fourier(1))]
+        for (gu, gv) in pairs
+            U, V = CliffordOperator(gu, d), CliffordOperator(gv, d)
+            UV = U ∘ V
+            @test UV.d == d && UV.targets == U.targets
+            # The composite must pass the public constructor's algebraic checks.
+            @test CliffordOperator(d, UV.targets, UV.F, UV.a) == UV
+            for TT in (StabilizerTableau, DestabilizerTableau)
+                seq = TT(d, 4; state = :ghz)
+                one = TT(d, 4; state = :ghz)
+                apply!(seq, V); apply!(seq, U)     # V first
+                apply!(one, UV)
+                @test one.stab == seq.stab
+                TT === DestabilizerTableau && @test one.destab == seq.destab
+            end
+            # Group laws.
+            @test U ∘ inv(U) == CliffordOperator(d, U.targets,
+                                                 Matrix{Int}(eye_int(2 * length(U.targets))),
+                                                 zeros(Int, 2 * length(U.targets)))
+            # Associativity and self-composition.
+            W1 = CliffordOperator(d, U.targets, U.F, U.a)   # same support as U
+            @test (U ∘ V) ∘ W1 == U ∘ (V ∘ W1)
+            @test U ∘ U isa CliffordOperator
+            assert_independent(UV, U)
+            assert_independent(UV, V)
+            # Chained `∘` is left-associative binary and stays in the type.
+            @test (U ∘ V ∘ W1) isa CliffordOperator
+            # Operands and their scratch survive bit-identically.
+            for (i, f) in enumerate((:v, :vout, :zpref))
+                fill!(getfield(U, f), -i)
+                fill!(getfield(V, f), -i - 3)
+            end
+            usnap, vsnap = operator_snapshot(U), operator_snapshot(V)
+            U ∘ V
+            U ∘ U
+            @test operator_snapshot(U) == usnap
+            @test operator_snapshot(V) == vsnap
+        end
+    end
+    # Mismatches are rejected.
+    A = CliffordOperator(Fourier(1), 3)
+    @test_throws ArgumentError A ∘ CliffordOperator(Fourier(1), 5)
+    @test_throws ArgumentError A ∘ CliffordOperator(Fourier(2), 3)
+    @test_throws ArgumentError CliffordOperator(SUM(1, 2, 1), 3) ∘
+                               CliffordOperator(SUM(2, 1, 1), 3)
+    # v6 §6.1's worked qubit case: Phase ∘ Fourier has raw phases (0, 1) and its
+    # inverse has (1, 0).
+    PF = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
+    @test PF.a == [0, 1]
+    @test inv(PF).a == [1, 0]
+    for d in (2, 3, 5)
+        E = CliffordOperator(d, Int[], zeros(Int, 0, 0), Int[])
+        @test inv(E) == E && E ∘ E == E
+        assert_independent(E ∘ E, E)
+    end
+end

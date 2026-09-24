@@ -409,3 +409,57 @@ function Base.inv(U::CliffordOperator)
     return _owned_clifford_operator(d, copy(U.targets), Finv, ainv, D, U.inv2,
                                     U.fast, v, vout, zpref)
 end
+
+"""
+    ∘(U::CliffordOperator, V::CliffordOperator) -> CliffordOperator
+
+The composite that applies `V` first, then `U`.
+
+Requires equal dimensions and **identically ordered** targets — equal support
+sets in a different order are rejected, because automatic support reordering is
+deferred with the circuit layer. Computes `F_UV = F_U F_V (mod d)` and
+`a_UV[i] = a_V[i] + φ_U(F_V[:,i]) (mod p)` in `O(k³)`, using `F_UV[:,i]` as the
+phase evaluator's already-known output.
+
+Both operands, including their scratch, are left untouched, so `U ∘ U` and
+nested composition need no aliasing special case. `U ∘ V ∘ W` is left-associative
+and stays a `CliffordOperator`.
+
+# Examples
+```julia
+U = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
+apply!(tab, U)        # same as apply!(tab, Fourier(1)); apply!(tab, Phase(1))
+```
+"""
+function Base.:∘(U::CliffordOperator, V::CliffordOperator)
+    U.d == V.d || throw(ArgumentError(
+        "Composition requires equal dimensions, got d=$(U.d) and d=$(V.d)."))
+    U.targets == V.targets || throw(ArgumentError(
+        "Composition requires identical ordered targets, got $(U.targets) and " *
+        "$(V.targets); equal support in a different order is not accepted."))
+    d = U.d
+    k = length(U.targets)
+    S = 2k
+    p = phase_modulus(d)
+    FUV = Matrix{Int}(undef, S, S)
+    aUV = Vector{Int}(undef, S)
+    # Result-owned scratch, so both operands stay untouched and `U ∘ U` works.
+    v, vout, zpref = zeros(Int, S), zeros(Int, S), zeros(Int, k)
+    view = _dense_view(U, true, v, vout, zpref)
+    @inbounds for i in 1:S
+        for r in 1:S
+            v[r] = V.F[r, i]
+        end
+        # Fills `vout` = F_U * V.F[:,i], which is both the new column and the
+        # phase evaluator's known output. Copying into `v` first establishes the
+        # evaluator's canonical-input and nonaliasing preconditions directly.
+        _matvec_prepared!(view, v)
+        aUV[i] = add_mod(V.a[i], _phase(view, v, vout), p)
+        for r in 1:S
+            FUV[r, i] = vout[r]
+        end
+    end
+    D = _image_xdotz_dense(FUV, k, d, U.fast)
+    return _owned_clifford_operator(d, copy(U.targets), FUV, aUV, D, U.inv2,
+                                    U.fast, v, vout, zpref)
+end
