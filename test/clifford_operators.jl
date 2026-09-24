@@ -605,3 +605,369 @@ end
         assert_independent(E ∘ E, E)
     end
 end
+
+# Exact BigInt ordered-product oracle, the dense twin of `phase_reference` in
+# test/unitaries.jl. Independent of the production evaluators: it forms the
+# quadratic part directly instead of reconstructing it from the D cache.
+function phase_reference_dense(F::Matrix{Int}, a::Vector{Int}, v::Vector{Int}, d::Int)
+    S = length(v); K = S ÷ 2
+    p = d == 2 ? 4 : d
+    γ = d == 2 ? 2 : 1
+    colxz(i) = sum(big(F[q, i]) * F[K + q, i] for q in 1:K; init = big(0))
+    lin = sum(big(a[i]) * v[i] for i in 1:S; init = big(0))
+    quad = sum(binomial(big(v[i]), 2) * colxz(i) for i in 1:S; init = big(0))
+    quad += sum(sum(big(F[K + r, i]) * F[r, j] for r in 1:K; init = big(0)) *
+                v[i] * v[j] for i in 1:S for j in (i + 1):S; init = big(0))
+    return Int(mod(lin + γ * quad, p))
+end
+
+# Every 2x2 matrix over Z_d with determinant 1: Sp(2, Z_d) = SL(2, Z_d),
+# of order d(d^2 - 1) -- 6 at d = 2, 24 at d = 3.
+function sl2_matrices(d::Int)
+    out = Matrix{Int}[]
+    for a in 0:(d - 1), b in 0:(d - 1), c in 0:(d - 1), e in 0:(d - 1)
+        mod(a * e - b * c, d) == 1 && push!(out, [a b; c e])
+    end
+    return out
+end
+
+@testset "Every one-qudit Clifford through the actual dense path" begin
+    for (d, expected) in ((2, 24), (3, 216))
+        mats = sl2_matrices(d)
+        @test length(mats) == d * (d^2 - 1)
+        built = 0
+        for F in mats
+            D = [mod(F[1, i] * F[2, i], d) for i in 1:2]
+            # Valid raw phases: all of Z_d at odd d; parity-constrained at d = 2.
+            phasesets = d == 2 ? [[D[1] + 2s1, D[2] + 2s2] for s1 in 0:1 for s2 in 0:1] :
+                                 [[a1, a2] for a1 in 0:(d - 1) for a2 in 0:(d - 1)]
+            for a in phasesets
+                U = CliffordOperator(d, [1], copy(F), copy(a))
+                built += 1
+                # Compare the production dense evaluator to the exact oracle on
+                # EVERY local Pauli exponent vector.
+                prep = QC._prepare(U, d, QC.JustInTimeInvMod(), true)
+                for x in 0:(d - 1), z in 0:(d - 1)
+                    v = [x, z]
+                    out = QC._matvec_prepared!(prep, copyto!(prep.v, v))
+                    @test collect(out) == [mod(sum(big(F[i, j]) * v[j] for j in 1:2), d)
+                                           for i in 1:2]
+                    @test QC._phase(prep, prep.v, prep.vout) ==
+                          phase_reference_dense(U.F, U.a, v, d)
+                end
+                # Basis images recover the raw phases: φ(e_i) == a[i], since
+                # the quadratic part vanishes on a basis vector.
+                for i in 1:2
+                    e = zeros(Int, 2); e[i] = 1
+                    QC._matvec_prepared!(prep, copyto!(prep.v, e))
+                    @test QC._phase(prep, prep.v, prep.vout) == U.a[i]
+                end
+                # The safe tier must agree with the default one.
+                safe = QC._prepare(U, d, QC.JustInTimeInvMod(), true; force_safe = true)
+                copyto!(safe.v, [d - 1, d - 1]); QC._matvec_prepared!(safe, safe.v)
+                @test QC._phase(safe, safe.v, safe.vout) ==
+                      phase_reference_dense(U.F, U.a, [d - 1, d - 1], d)
+                # Exercise the public normalization/gather/scatter entry point too.
+                for x in 0:(d - 1), z in 0:(d - 1), h in 0:(QC.phase_modulus(d) - 1)
+                    v = [x, z]
+                    op = GeneralPauli(v, h)
+                    out = conjugate(U, op)
+                    @test out.xz == Int.(mod.(big.(U.F) * v, d))
+                    @test out.phase == mod(h + phase_reference_dense(U.F, U.a, v, d), QC.phase_modulus(d))
+                    @test op.xz == v && op.phase == h
+                end
+                # Full group identities include raw phases, in both orders.
+                W = inv(U)
+                Iop = CliffordOperator(d, [1], eye_int(2), zeros(Int, 2))
+                @test is_matrix_inverse(U.F, W.F, d)
+                @test U ∘ W == Iop && W ∘ U == Iop
+                @test inv(W) == U
+                @test CliffordOperator(d, W.targets, W.F, W.a) == W
+            end
+        end
+        @test built == expected
+    end
+end
+
+# Identity on k qubits except the given local 2x2 action at coordinate `q`.
+function embed_local(k::Int, q::Int, M::Matrix{Int}, phases::Vector{Int}, d::Int)
+    S = 2k
+    F = eye_int(S)
+    F[q, q]         = M[1, 1]; F[k + q, q]         = M[2, 1]
+    F[q, k + q]     = M[1, 2]; F[k + q, k + q]     = M[2, 2]
+    a = zeros(Int, S)
+    a[q] = phases[1]; a[k + q] = phases[2]
+    return CliffordOperator(d, collect(1:k), F, a)
+end
+
+@testset "A k = 65 qubit operator exercises prefix coordinates above bit 64" begin
+    k = 65; q = 65; n = 65
+    # Fourier at coordinate 65: X -> Z, Z -> X. Its ordered-product cross term
+    # is NONZERO, which is exactly what a UInt64 prefix would drop, since
+    # UInt64(1) << 64 == 0. A Phase embedding would NOT detect that: its phase
+    # is linear in the input X coefficient and the relevant cross term is zero.
+    UF = embed_local(k, q, [0 1; 1 0], [0, 0], 2)
+    @test length(UF.targets) == 65
+
+    yv = zeros(Int, 2n); yv[q] = 1; yv[n + q] = 1
+    # Y_65 -> -Y_65: exponents preserved, raw phase 1 -> 3.
+    outY = conjugate(UF, GeneralPauli(copy(yv), 1))
+    @test outY.xz == yv
+    @test outY.phase == 3
+    # The same X_65 Z_65 vector with input raw phase zero acquires phase 2.
+    @test conjugate(UF, GeneralPauli(copy(yv), 0)).phase == 2
+
+    # Phase after Fourier: input raw phase zero gives output phase 3.
+    UP = embed_local(k, q, [1 0; 1 1], [1, 0], 2)
+    PF = UP ∘ UF
+    @test conjugate(PF, GeneralPauli(copy(yv), 0)).phase == 3
+
+    # Cross-check every one of these against the exact oracle.
+    for U in (UF, UP, PF)
+        local v = zeros(Int, 2k); v[q] = 1; v[k + q] = 1
+        prep = QC._prepare(U, 2, QC.JustInTimeInvMod(), true)
+        QC._matvec_prepared!(prep, copyto!(prep.v, v))
+        @test QC._phase(prep, prep.v, prep.vout) ==
+              phase_reference_dense(U.F, U.a, v, 2)
+    end
+
+    # Direct application on Y generators catches a wrong phase even when
+    # the same error could cancel in an inverse round trip.
+    for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true)
+        tab = TT(2, n; state = :product, basis = :Y, storephase = sp)
+        before = copy(tab.stab)
+        apply!(tab, UF)
+        expected = copy(before)
+        sp && (expected[2n + 1, q] = 3)
+        @test tab.stab == expected
+        if TT === DestabilizerTableau
+            @test tab.xdotz_cache == ones(Int, n)
+        end
+        apply!(tab, inv(UF))
+        @test tab.stab == before
+    end
+
+    # A one-qudit support whose only physical target is 65 has local arity ONE
+    # and does not test this limit at all.
+    small = CliffordOperator(2, [65], [0 1; 1 0], [0, 0])
+    @test length(small.targets) == 1
+end
+
+@testset "Large moduli use exact arithmetic in both tiers" begin
+    d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
+    # v6 §9.4's counterexample, now reachable through the PUBLIC constructor:
+    # an unreduced four-term Int dot wraps to 0 while the true answer is 4.
+    M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
+    U = CliffordOperator(d, [1, 2], M, zeros(Int, 4))
+    @test !QC.clifford_fast_dots(4, d)     # the guard rejects k = 2 at this d
+    @test U.fast == false
+    v = fill(d - 1, 4)
+    prep = QC._prepare(U, d, QC.JustInTimeInvMod(), true)
+    out = QC._matvec_prepared!(prep, copyto!(prep.v, v))
+    expected = [Int(mod(sum(big(M[i, j]) * v[j] for j in 1:4), d)) for i in 1:4]
+    @test collect(out) == expected
+    @test expected[1] == 4
+    @test QC._phase(prep, prep.v, prep.vout) == phase_reference_dense(U.F, U.a, v, d)
+    # inv and ∘ stay exact at this modulus.
+    @test is_matrix_inverse(U.F, inv(U).F, d)
+    @test U ∘ inv(U) == CliffordOperator(d, [1, 2], eye_int(4), zeros(Int, 4))
+    outpublic = conjugate(U, GeneralPauli(copy(v), d - 1))
+    @test outpublic.xz == expected
+    @test outpublic.phase == Int(mod(big(d - 1) + phase_reference_dense(U.F, U.a, v, d), d))
+
+    # A k = 1 operator at the same d is inside the fast guard; both tiers must
+    # agree with BigInt.
+    P = CliffordOperator(d, [1], [1 0; 1 1], [0, 0])
+    @test QC.clifford_fast_dots(2, d)
+    for fs in (false, true)
+        pp = QC._prepare(P, d, QC.JustInTimeInvMod(), true; force_safe = fs)
+        w = [d - 1, 0]
+        QC._matvec_prepared!(pp, copyto!(pp.v, w))
+        @test QC._phase(pp, pp.v, pp.vout) == phase_reference_dense(P.F, P.a, w, d)
+    end
+
+    # Above the scalar Int-product boundary, exercise widemul in the actual
+    # stored path, including raw validation, inverse and composition phases.
+    nearmax = Sys.WORD_SIZE == 64 ? 9223372036854775783 : 2147483647
+    for g in (Fourier(1), Phase(1), PauliGate(1, typemin(Int), typemin(Int)),
+              SUM(1, 2, nearmax - 1), CPhase(1, 2, nearmax - 1))
+        W = CliffordOperator(g, nearmax)
+        @test !W.fast
+        @test CliffordOperator(nearmax, W.targets, W.F, W.a) == W
+        S = length(W.a)
+        v = fill(nearmax - 1, S)
+        xref = Int.(mod.(big.(W.F) * v, nearmax))
+        href = phase_reference_dense(W.F, W.a, v, nearmax)
+        for fs in (false, true)
+            prep = QC._prepare(W, nearmax, QC.JustInTimeInvMod(), true; force_safe = fs)
+            QC._matvec_prepared!(prep, copyto!(prep.v, v))
+            @test prep.vout == xref
+            @test QC._phase(prep, prep.v, prep.vout) == href
+        end
+        Iop = CliffordOperator(nearmax, W.targets, eye_int(S), zeros(Int, S))
+        @test W ∘ inv(W) == Iop && inv(W) ∘ W == Iop
+        WW = W ∘ W
+        @test WW.F == Int.(mod.(big.(W.F) * big.(W.F), nearmax))
+        for i in 1:S
+            @test WW.a[i] == Int(mod(big(W.a[i]) +
+                phase_reference_dense(W.F, W.a, W.F[:, i], nearmax), nearmax))
+        end
+    end
+end
+
+# Embed a named action on local support coordinates without using composition.
+# The dense identity gets only the selected rows/columns replaced.
+function embed_named_on(g, d::Int, targets::Vector{Int})
+    local_targets, tF, ta = QC._clifford_data(g, d, QC.JustInTimeInvMod())
+    k = length(targets)
+    l = length(local_targets)
+    inds = vcat(collect(local_targets), k .+ collect(local_targets))
+    F, a = eye_int(2k), zeros(Int, 2k)
+    for j in 1:(2l)
+        a[inds[j]] = ta[j]
+        for i in 1:(2l)
+            F[inds[i], inds[j]] = tF[j][i]
+        end
+    end
+    return CliffordOperator(d, targets, F, a)
+end
+
+function physical_gate(g, targets)
+    g isa Fourier && return Fourier(targets[g.qudit])
+    g isa Phase && return Phase(targets[g.qudit])
+    g isa SUM && return SUM(targets[g.control], targets[g.target], g.a)
+    g isa CPhase && return CPhase(targets[g.qudit1], targets[g.qudit2], g.a)
+    error("unsupported fixture gate")
+end
+
+@testset "Seeded entangling supports with k > 2 and spaced reversed targets" begin
+    for d in (2, 3, 5), k in (3, 4)
+        rng = Random.MersenneTwister(20260921 + d + k)
+        targets = reverse(collect(2:2:2k))
+        @test all(abs.(diff(targets)) .> 1)
+        U = CliffordOperator(d, targets, eye_int(2k), zeros(Int, 2k))
+        # Guaranteed entangling action followed by seeded local and two-site gates.
+        gates = AbstractClifford[Fourier(1), SUM(1, 2), CPhase(2, 3)]
+        for step in 1:6
+            q = rand(rng, 1:k)
+            r = mod1(q + 1, k)
+            push!(gates, rand(rng, Bool) ? Phase(q) : Fourier(q))
+            push!(gates, SUM(q, r, rand(rng, 1:(d - 1))))
+        end
+        for g in gates
+            U = embed_named_on(g, d, targets) ∘ U
+        end
+        @test CliffordOperator(d, targets, U.F, U.a) == U
+        # Verify that the guaranteed SUM embedding really couples local sites.
+        entangler = embed_named_on(SUM(1, 2), d, targets)
+        @test entangler.F[2, 1] == 1
+        n = maximum(targets) + 2
+        for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true),
+            state in (:product, :mixed)
+            named = TT(d, n; state, storephase = sp)
+            if state === :mixed
+                measure!(named, SinglePauli(targets[1], 0, 1); outcome = 0)
+                measure!(named, SinglePauli(targets[2], 0, 1); outcome = 0)
+            end
+            one = deepcopy(named)
+            old = copy(one.stab)
+            oldm = one.m
+            for g in gates
+                apply!(named, physical_gate(g, targets))
+            end
+            apply!(one, U)
+            @test one.stab == named.stab && one.m == oldm
+            @test all(iszero, one.stab[:, (oldm + 1):end])
+            for q in setdiff(1:n, targets)
+                @test one.stab[q, :] == old[q, :]
+                @test one.stab[n + q, :] == old[n + q, :]
+            end
+            if TT === DestabilizerTableau
+                @test one.destab == named.destab
+                @test one.xdotz_cache == named.xdotz_cache
+            end
+            apply!(one, inv(U))
+            @test one.stab == old
+        end
+        for sample in 1:8
+            v = rand(rng, 0:(d - 1), 2k)
+            expectedxz = Int.(mod.(big.(U.F) * v, d))
+            expectedphase = phase_reference_dense(U.F, U.a, v, d)
+            for fs in (false, true)
+                prep = QC._prepare(U, d, QC.JustInTimeInvMod(), true; force_safe = fs)
+                QC._matvec_prepared!(prep, copyto!(prep.v, v))
+                beforev, beforeout = copy(prep.v), copy(prep.vout)
+                @test prep.vout == expectedxz
+                @test QC._phase(prep, prep.v, prep.vout) == expectedphase
+                @test prep.v == beforev && prep.vout == beforeout
+            end
+            # Sequential named conjugation is independent of dense composition.
+            xz = zeros(Int, 2n)
+            xz[targets] = v[1:k]; xz[n .+ targets] = v[(k + 1):end]
+            seq = GeneralPauli(copy(xz), 1)
+            for g in gates
+                seq = conjugate(physical_gate(g, targets), seq; d)
+            end
+            out = conjugate(U, GeneralPauli(copy(xz), 1))
+            @test out.xz == seq.xz && out.phase == seq.phase
+            @test out.xz[targets] == expectedxz[1:k]
+            @test out.xz[n .+ targets] == expectedxz[(k + 1):end]
+        end
+    end
+end
+
+function prepared_apply_allocations(tab, prep)
+    for _ in 1:3
+        QC._apply_prepared!(tab, prep)
+    end
+    return @allocated QC._apply_prepared!(tab, prep)
+end
+
+@testset "Runtime supports allocate nothing during application" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3),
+        sp in (false, true), k in (0, 3, 8, 65), state in (:product, :mixed)
+        n = max(k, 1)
+        tab = TT(d, n; state, storephase = sp)
+        U = k == 0 ? CliffordOperator(d, Int[], zeros(Int, 0, 0), Int[]) :
+                     embed_named_on(Fourier(k), d, collect(1:k))
+        stored_apply_allocations(tab, U)
+        @test stored_apply_allocations(tab, U) == 0
+        prep = QC._prepare(U, d, tab.inversemod, sp; force_safe = true)
+        prepared_apply_allocations(tab, prep)
+        @test prepared_apply_allocations(tab, prep) == 0
+    end
+end
+
+@testset "Safe-tier stored application and cache delta agree with BigInt" begin
+    d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
+    M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
+    U = CliffordOperator(d, [1, 2], M, zeros(Int, 4))
+    for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true)
+        tab = TT(d, 2; state = :product, basis = :X, storephase = sp,
+                 inversemod = QC.JustInTimeInvMod())
+        # Named Phase creates a physical, nonzero old x·z using Clifford
+        # arithmetic, without general tableau re-initialization at large d.
+        apply!(tab, Phase(1))
+        apply!(tab, Phase(2))
+        old = copy(tab.stab)
+        expected = copy(old)
+        for j in 1:tab.m
+            v = old[1:4, j]
+            expected[1:4, j] = Int.(mod.(big.(M) * v, d))
+            sp && (expected[5, j] = Int(mod(big(old[5, j]) +
+                phase_reference_dense(U.F, U.a, v, d), d)))
+        end
+        olddual = TT === DestabilizerTableau ? copy(tab.destab) : nothing
+        apply!(tab, U)
+        @test tab.stab == expected
+        if TT === DestabilizerTableau
+            @test tab.destab == Int.(mod.(big.(M) * olddual, d))
+            for j in 1:tab.m
+                @test tab.xdotz_cache[j] == Int(mod(sum(big(tab.stab[q, j]) *
+                    tab.stab[2 + q, j] for q in 1:2), d))
+            end
+        end
+        stored_apply_allocations(tab, U)
+        @test stored_apply_allocations(tab, U) == 0
+    end
+end
