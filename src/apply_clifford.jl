@@ -82,15 +82,13 @@ end
 # quadratic part is the cross terms.
 #
 # The prefix is a bitmask rather than a vector: at d = 2 every coordinate is a
-# bit, so no heap scratch is needed and `apply!` stays allocation-free. This
-# is a named-gate specialization (K ≤ 2), with an enforced K ≤ 64 bound.
-# P2 adds a separate vector-prefix evaluator for arbitrary dense supports;
-# the bitmask bound must not become a public Clifford arity restriction.
-#
-# Checked once per preparation, never per column: `_prepare` calls this when it
-# resolves the qubit regime, so the evaluator below may assume it. A P2 dense
-# operator past the bound must fail loudly rather than silently drop its high
-# coordinates.
+# bit, so no heap scratch is needed and `apply!` stays allocation-free. This is
+# a named-gate specialization (K ≤ 2), with an enforced K ≤ 64 bound.
+# `_phase_qubit_dense` is the vector-prefix evaluator used for arbitrary dense
+# supports; the bitmask bound is therefore internal to this path and is not a
+# public Clifford arity restriction. Note `UInt64(1) << 64 == 0` in Julia, so a
+# bitmask would silently drop coordinate 65 rather than erroring -- which is why
+# the bound is checked once in `_prepare`.
 @inline function _check_qubit_bitmask_bound(K::Int)
     0 <= K <= 64 || throw(ArgumentError(
         "The bitmask qubit phase evaluator requires 0 ≤ K ≤ 64, got $K; " *
@@ -513,19 +511,22 @@ Apply a Clifford unitary to `tab` in place by conjugation, returning `tab`.
 
 Each stabilizer generator `P` becomes `U P U†`. Only the gate's target rows and
 the active columns `1:m` change; `m`, the zeroed unused capacity, and the
-generator contract are all preserved. `tab.iscanonical` is cleared.
+generator contract are all preserved. Nonempty support clears
+`tab.iscanonical`; empty support returns the tableau unchanged, including its
+canonical flag.
 
 # Arguments
 - `tab::AbstractTableau`: tableau to update (`StabilizerTableau` or `DestabilizerTableau`).
 - `g::AbstractClifford`: one of the named gates [`Fourier`](@ref),
   [`Phase`](@ref), [`Multiplier`](@ref), [`PauliGate`](@ref), [`SUM`](@ref),
-  [`CPhase`](@ref) or [`SWAP`](@ref). [`AbstractClifford`](@ref) tabulates
-  their actions.
+  [`CPhase`](@ref) or [`SWAP`](@ref), or a stored [`CliffordOperator`](@ref).
+  [`AbstractClifford`](@ref) tabulates the named gates' actions.
 
 # Throws
-`ArgumentError` if a target lies outside `1:tab.n`, or if a gate parameter is
+`ArgumentError` if a target lies outside `1:tab.n`, if a gate parameter is
 invalid at `tab.d` (for example a [`Multiplier`](@ref) coefficient congruent to
-zero). Validation happens before any mutation.
+zero), or if a stored [`CliffordOperator`](@ref)'s dimension does not match
+`tab.d`. Validation happens before any mutation.
 
 # Examples
 ```julia
@@ -712,8 +713,8 @@ function _conjugate(g::AbstractClifford, op::AbstractPauli, n::Int,
 end
 
 """
-    conjugate(g::AbstractClifford, op::GeneralPauli; d)
-    conjugate(g::AbstractClifford, op::AbstractPauli, n::Int; d)
+    conjugate(g::AbstractClifford, op::GeneralPauli; d=nothing)
+    conjugate(g::AbstractClifford, op::AbstractPauli, n::Int; d=nothing)
 
 Return `U op U†` as a new [`GeneralPauli`](@ref), where `U` is the Clifford `g`.
 
@@ -724,23 +725,26 @@ consistently.
 # Arguments
 - `g::AbstractClifford`: the Clifford unitary — one of [`Fourier`](@ref),
   [`Phase`](@ref), [`Multiplier`](@ref), [`PauliGate`](@ref), [`SUM`](@ref),
-  [`CPhase`](@ref) or [`SWAP`](@ref), tabulated in
-  [`AbstractClifford`](@ref).
+  [`CPhase`](@ref) or [`SWAP`](@ref), or a stored [`CliffordOperator`](@ref).
+  The named gates are tabulated in [`AbstractClifford`](@ref).
 - `op`: the Pauli to conjugate. A dense [`GeneralPauli`](@ref) carries its own
   register size; a sparse `FewQuditPauli` does not, so `n` must be given.
 - `n::Int`: register size, required for sparse Paulis and checked against a
   dense one.
 
 # Keyword Arguments
-- `d`: qudit dimension. Named gates are dimension-agnostic, so this is required.
+- `d`: Prime qudit dimension, required for named gates. A stored operator
+  supplies its own dimension; an explicit `d` must match it.
 
 # Returns
 A new `GeneralPauli` on the full `n`-qudit register, fully normalized. The
 input is not mutated, and non-target coordinates are preserved.
 
 # Throws
-`ArgumentError` for a missing or non-prime `d`, a malformed dense length, a
-sparse index outside `1:n` or repeated, or a gate target outside `1:n`.
+`ArgumentError` for a missing `d` with a named gate, a non-prime `d`, a `d`
+that does not match a stored [`CliffordOperator`](@ref)'s own dimension, a
+malformed dense length, a sparse index outside `1:n` or repeated, or a gate
+target outside `1:n`.
 
 # Examples
 ```julia
@@ -750,7 +754,7 @@ conjugate(SUM(1, 2), GeneralPauli([1, 0, 0, 0], 0); d = 2)
 
 # Notes
 Heisenberg evolution of an observable under state evolution by `U` is `U† P U`;
-build that from the inverse Clifford, which arrives with general operators.
+build it as `conjugate(inv(U), op)` from a [`CliffordOperator`](@ref).
 
 See also [`AbstractClifford`](@ref), [`apply!`](@ref).
 """

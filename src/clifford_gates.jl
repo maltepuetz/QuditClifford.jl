@@ -13,8 +13,9 @@ supplied when the gate meets a tableau in [`apply!`](@ref), or explicitly in
 
 # The named gates
 
-The complete set of concrete subtypes. Names are qudit-native; no qubit
-aliases are exported, and the `d = 2` column is for orientation only.
+The named gate subtypes. `CliffordOperator` stores general operators at a
+fixed dimension. Names are qudit-native; no qubit aliases are exported, and
+the `d = 2` column is for orientation only.
 
 | Constructor | Action | At `d = 2` |
 |:---|:---|:---|
@@ -28,8 +29,12 @@ aliases are exported, and the `d = 2` column is for orientation only.
 
 `SUM` and `CPhase` accept a coefficient congruent to zero, which is the
 identity; `Multiplier` rejects one, since it would not be invertible. Two-qudit
-gates require distinct qudits. A general `CliffordOperator`, along with
-composition, inversion and uniform random sampling, is not yet implemented.
+gates require distinct qudits.
+
+The named gates above are dimension-agnostic. [`CliffordOperator`](@ref) is the
+other subtype: it stores an arbitrary Clifford on an ordered support at a fixed
+dimension, and supports composition and inversion. Uniform random Clifford
+sampling is not yet implemented.
 
 # Examples
 ```julia

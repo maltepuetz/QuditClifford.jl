@@ -15,13 +15,19 @@ dependency bump — carries the `skip-changelog` label instead.
   d)` returns `U P U†` (`n` is required for a sparse Pauli and inferred for a
   `GeneralPauli`). The gate set is qudit-native — `Fourier`, `Phase`,
   `Multiplier`, `PauliGate`, `SUM`, `CPhase`, `SWAP` — with no qubit aliases;
-  `docs/src/unitaries.md` gives the `d = 2` translations. General Clifford
-  operators, composition, inversion and uniform random sampling are not yet
-  included.
+  `docs/src/unitaries.md` gives the `d = 2` translations.
 - Logo and favicon for the documentation site — three dots in the Julia colours
   at the cube roots of unity, the three levels of a qutrit, swept by an arrow for
   the cyclic shift. Each ships as a light/dark pair and follows the reader's
   theme.
+- `CliffordOperator(d, targets, F, a; check)` stores an arbitrary Clifford on an
+  ordered support at a fixed dimension, and `CliffordOperator(g, d)` materializes
+  a named gate. Stored operators work with `apply!` and `conjugate` exactly as
+  named gates do, compose with `∘` (right operand first) and invert with `inv`,
+  so Heisenberg evolution is `conjugate(inv(U), op)`. Construction validates the
+  symplectic condition and, at `d = 2`, generator-image Hermiticity; `check=false`
+  skips only those two algebraic checks. Warmed stored `apply!` allocates nothing.
+  Uniform random Clifford sampling is still to come.
 
 ## 0.2.0 - 2026-09-15
 
