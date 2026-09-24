@@ -4,7 +4,7 @@ using Random
 
 const QC = QuditClifford
 
-# Build a dense prepared view from P1 tuple gate data, so the dense evaluators
+# Build a dense prepared view from tuple gate data, so the dense evaluators
 # can be compared against the already-validated tuple ones before any public
 # type exists. `F[row, col] = tuple_F[col][row]` -- the tuple form is columns.
 function dense_prep_from_gate(g, d::Int; storephase::Bool = true,
@@ -85,7 +85,8 @@ end
 end
 
 # Recreate the borrowed wrapper inside the measured application, from arrays
-# already owned by a fixture. This is the boundary Task 2 intends to measure.
+# already owned by a fixture. This is the boundary a wrapper-construction-plus-
+# apply benchmark measures.
 function fresh_dense_apply!(tab, fixture)
     prep = QC.PreparedDenseClifford(fixture.targets, fixture.F, fixture.a,
         fixture.D, fixture.v, fixture.vout, fixture.zpref, fixture.k,
@@ -313,10 +314,11 @@ end
     fill!(B.image_xdotz, 99)
     @test A == B && isequal(A, B) && hash(A) == hash(B)
 
-    # show exposes semantic data only.
+    # show exposes semantic data only: identical for A and the scratch- and
+    # cache-perturbed B.
     s = sprint(show, A)
     @test occursin("CliffordOperator", s) && occursin("d=5", s)
-    @test !occursin("zpref", s)
+    @test s == sprint(show, B)
 end
 
 @testset "Construction copies into independent dense storage" begin
@@ -538,7 +540,8 @@ end
             @test operator_snapshot(U) == snap
         end
     end
-    # v6 §6.1's worked qubit case.
+    # Qubit raw phases: Phase(1)'s generator images have exponents (1, 0);
+    # Fourier(1)'s have (0, 0).
     P2, F2 = CliffordOperator(Phase(1), 2), CliffordOperator(Fourier(1), 2)
     @test P2.a == [1, 0] && F2.a == [0, 0]
     # Empty support inverts to itself.
@@ -594,8 +597,8 @@ end
     @test_throws ArgumentError A ∘ CliffordOperator(Fourier(2), 3)
     @test_throws ArgumentError CliffordOperator(SUM(1, 2, 1), 3) ∘
                                CliffordOperator(SUM(2, 1, 1), 3)
-    # v6 §6.1's worked qubit case: Phase ∘ Fourier has raw phases (0, 1) and its
-    # inverse has (1, 0).
+    # Qubit composition: Phase ∘ Fourier has raw phases (0, 1), and its inverse
+    # has (1, 0).
     PF = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
     @test PF.a == [0, 1]
     @test inv(PF).a == [1, 0]
@@ -755,7 +758,7 @@ end
 
 @testset "Large moduli use exact arithmetic in both tiers" begin
     d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
-    # v6 §9.4's counterexample, now reachable through the PUBLIC constructor:
+    # A counterexample matrix, now reachable through the PUBLIC constructor:
     # an unreduced four-term Int dot wraps to 0 while the true answer is 4.
     M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
     U = CliffordOperator(d, [1, 2], M, zeros(Int, 4))

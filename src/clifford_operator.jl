@@ -17,18 +17,24 @@ A Clifford unitary on an ordered support, stored at a fixed dimension `d`.
 The operator is fixed up to a global phase by the conjugation images of the
 ordered generators `X_t1 … X_tk, Z_t1 … Z_tk`: column `i` of the `2k × 2k`
 symplectic matrix `F` is the exponent vector of the image of generator `i`, in
-all-X-then-all-Z order, and `a[i]` is that image's raw phase exponent modulo
-`phase_modulus(d)`.
+all-X-then-all-Z order, and `a[i]` is that image's raw phase exponent, reduced
+modulo 4 at `d = 2` and modulo `d` otherwise.
 
 Unlike the named gates, which are dimension-agnostic, a `CliffordOperator`
 carries its own `d` and has no register size; targets are checked against the
 register only when it meets a tableau or a Pauli.
 
+The second form, `CliffordOperator(g::AbstractClifford, d::Int)`, materializes
+a named gate as a stored operator on that gate's own support at dimension `d`.
+When `g` is itself a `CliffordOperator`, this instead returns an independent
+copy and requires `d == g.d`.
+
 # Arguments
 - `d::Int`: prime qudit dimension.
 - `targets`: ordered, distinct, positive qudit indices. Order is preserved.
 - `F`: `2k × 2k` integer matrix, normalized modulo `d` on construction.
-- `a`: length-`2k` raw phases, normalized modulo `phase_modulus(d)`.
+- `a`: length-`2k` raw phases, normalized modulo 4 at `d = 2` and modulo `d`
+  otherwise.
 
 # Keyword Arguments
 - `check::Bool=true`: verify `Fᵀ Ω F = Ω (mod d)` and, at `d = 2`, the parity
@@ -42,9 +48,13 @@ register only when it meets a tableau or a Pauli.
   Pauli handed to it, never a stored generator.
 
 # Throws
-`ArgumentError` for a non-prime `d`, offset-indexed inputs, malformed shapes,
-nonpositive or repeated targets, sizes that do not fit in `Int`, a
-non-symplectic `F`, or a qubit parity violation.
+`ArgumentError` for a non-prime `d`. The raw form also throws for
+offset-indexed inputs, malformed shapes, nonpositive or repeated targets, a
+target value that does not fit in `Int`, sizes that do not fit in `Int`, a
+non-symplectic `F`, or a qubit parity violation. The `(g::AbstractClifford,
+d::Int)` form also throws when `g` is a stored operator built for a different
+`d`, or when `g`'s own validation depends on `d` (for example, a `Multiplier`
+coefficient congruent to zero mod `d`).
 
 # Ownership and concurrency
 Construction copies caller-owned arrays. Treat the operator's fields as
@@ -322,13 +332,14 @@ end
                                  U.fast && !force_safe, storephase)
 end
 
-# EVERY positional argument type matches P1's
-# `_prepare(::AbstractClifford, ::Int, ::InverseMod, ::Bool)`. Annotating only
-# the first argument would leave two methods neither of which is more specific,
-# so an ordinary stored `apply!` would raise an ambiguity `MethodError`. Keep
-# trailing types aligned on every hook that specializes an `AbstractClifford`
-# fallback. The tableau's `InverseMod` is deliberately ignored: the operator
-# carries its own `inv2`, and its derived data is never rebuilt per application.
+# EVERY positional argument type matches the existing
+# `_prepare(::AbstractClifford, ::Int, ::InverseMod, ::Bool)` signature.
+# Annotating only the first argument would leave two methods neither of which
+# is more specific, so an ordinary stored `apply!` would raise an ambiguity
+# `MethodError`. Keep trailing types aligned on every hook that specializes an
+# `AbstractClifford` fallback. The tableau's `InverseMod` is deliberately
+# ignored: the operator carries its own `inv2`, and its derived data is never
+# rebuilt per application.
 function _prepare(U::CliffordOperator, d::Int, ::InverseMod, storephase::Bool;
                   force_safe::Bool = false)
     U.d == d || throw(ArgumentError(

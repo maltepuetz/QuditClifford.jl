@@ -134,8 +134,8 @@ end
 ########################################
 
 # Backing-agnostic tag. `PreparedClifford` is the compile-time tuple backing;
-# `PreparedDenseClifford` (Task 2) is the runtime-k dense one. The pipeline
-# below is written once against this tag and specialized by Julia per backing.
+# `PreparedDenseClifford` is the runtime-k dense one. The pipeline below is
+# written once against this tag and specialized by Julia per backing.
 abstract type AbstractPreparedClifford end
 
 # Resolved once per `apply!`, never per column: the gate's raw data, the image
@@ -231,9 +231,10 @@ end
 ########################################
 #
 # Seven operations carry the backing difference; everything above them is
-# written once. The tuple methods delegate to P1's primitives unchanged, so
-# their existing direct tests stay valid. The bang marks that a backing MAY
-# mutate borrowed scratch -- the tuple backing does not need to.
+# written once. The tuple methods delegate to the original tuple-only
+# primitives unchanged, so their existing direct tests stay valid. The bang
+# marks that a backing MAY mutate borrowed scratch -- the tuple backing does
+# not need to.
 
 @inline _gather_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
                           j::Int) where {K,S} = _gather(A, prep.targets, n, j)
@@ -428,7 +429,9 @@ end
     return s
 end
 
-# v6 §3.2, verbatim: φ = a·v + inv2 [ x_out·z_out − x·z − D·v ].
+# The closed-form odd-prime phase: φ = a·v + inv2 [ x_out·z_out − x·z − D·v ].
+# Precondition: same as the tuple form `_phase_odd` -- v and vout canonical,
+# every entry already reduced mod d.
 @inline function _phase_odd_dense(v::Vector{Int}, vout::Vector{Int},
                                   a::Vector{Int}, D::Vector{Int}, k::Int,
                                   d::Int, inv2::Int, fast::Bool)
@@ -441,11 +444,14 @@ end
     return add_mod(av, mul_mod(inv2, t, d), d)
 end
 
-# v6 §3.3 with the VECTOR prefix the spec mandates, not the named path's UInt64
-# bitmask. That bitmask is why `_phase_qubit` is bounded to K <= 64; using a
-# vector here keeps the bound an internal property of the named path and never a
-# public Clifford arity limit. `UInt64(1) << 64 == 0` in Julia, so a bitmask
-# would silently drop coordinate 65 rather than erroring.
+# The vector-prefix qubit phase evaluator used for arbitrary dense supports,
+# carrying the running Z prefix in a Vector rather than the named path's
+# UInt64 bitmask. That bitmask is why `_phase_qubit` is bounded to K <= 64;
+# using a vector here keeps the bound an internal property of the named path
+# and never a public Clifford arity limit. `UInt64(1) << 64 == 0` in Julia, so
+# a bitmask would silently drop coordinate 65 rather than erroring.
+# Precondition: same as the tuple form `_phase_qubit` -- v canonical (every
+# v[i] ∈ {0,1}) and every entry of F reduced mod 2.
 @inline function _phase_qubit_dense(v::Vector{Int}, F::Matrix{Int},
                                     a::Vector{Int}, k::Int, zpref::Vector{Int})
     S = 2k

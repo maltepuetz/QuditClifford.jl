@@ -335,9 +335,10 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    @testset "Registration preserves a P1 baseline without stored operators" begin
+    @testset "Registration preserves a baseline without CliffordOperator" begin
         # The actual workload functions remain qualified to QuditClifford; this
-        # module controls feature detection and models the P1 API surface.
+        # module controls feature detection and models an API surface without
+        # CliffordOperator.
         p1 = Module(:CliffordP1Only)
         for name in (:apply!, :Fourier, :Phase, :SUM)
             Core.eval(p1, Expr(:const, Expr(:(=), name, getfield(QuditClifford, name))))

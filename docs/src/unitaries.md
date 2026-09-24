@@ -115,7 +115,8 @@ true
 ```
 
 Operators compose and invert. `U ∘ V` applies `V` first and requires equal
-dimensions and identically ordered targets. `inv(U)` preserves U's support:
+dimensions and identically ordered targets. Here the composite `U = Phase(1) ∘
+Fourier(1)` has raw phases `(0, 1)`, and `inv(U)` recovers raw phases `(1, 0)`:
 
 ```jldoctest
 julia> U = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2);
