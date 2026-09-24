@@ -59,10 +59,9 @@ for T in TYPES, d in CONFIG.ds
 end
 
 # ---------------------------------------------------------------- clifford
-# Gate application across dimension, size and representation. Unlike measure!,
-# the cost per gate is O(k^2 * m) with k <= 2, so this is a linear-in-m probe
-# rather than a branch-sensitive one.
-
+# Named gate application has k <= 2; stored fixtures also vary runtime support
+# size. Stored construction and m=0 validation are timed in separate leaves.
+# The registration function omits unsupported APIs on older baselines.
 register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns)
 
 # ------------------------------------------------------------------ probes

@@ -305,4 +305,50 @@ include(joinpath(@__DIR__, "workloads.jl"))
             @test is_pure(tab; verify = true)
         end
     end
+
+    @testset "Stored Clifford benchmark fixtures act and all leaves run" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (2, 16)
+            group = stored_clifford_group(; d, n, T)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            for k in (1, 2, 8)
+                k <= n || continue
+                fixture = stored_clifford_fixture(d, k)
+                stored = T(d, n; state = :product, basis = :Z)
+                named = deepcopy(stored)
+                before = copy(stored.stab)
+                apply!(stored, fixture.U)
+                for g in fixture.gates
+                    apply!(named, g)
+                end
+                @test stored.stab != before
+                @test stored.stab == named.stab
+                @test is_pure(stored; verify = true)
+                if T === DestabilizerTableau
+                    @test stored.destab == named.destab
+                    @test stored.xdotz_cache == named.xdotz_cache
+                end
+            end
+        end
+    end
+
+    @testset "Registration preserves a P1 baseline without stored operators" begin
+        # The actual workload functions remain qualified to QuditClifford; this
+        # module controls feature detection and models the P1 API surface.
+        p1 = Module(:CliffordP1Only)
+        for name in (:apply!, :Fourier, :Phase, :SUM)
+            Core.eval(p1, Expr(:const, Expr(:(=), name, getfield(QuditClifford, name))))
+        end
+        @test !isdefined(p1, :CliffordOperator)
+        suite = BenchmarkGroup()
+        register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = p1)
+        @test Set(keys(suite["clifford"])) == Set(["StabilizerTableau/d=3/n=8"])
+        run(suite["clifford"]; samples = 1, evals = 1, seconds = 0.05)
+        head = BenchmarkGroup()
+        register_clifford_group!(head, (StabilizerTableau,), (3,), (8,))
+        @test haskey(head["clifford"], "stored/StabilizerTableau/d=3/n=8")
+    end
 end

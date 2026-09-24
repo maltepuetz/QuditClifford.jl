@@ -257,14 +257,66 @@ function clifford_group(; d::Int, n::Int, T,
     return g
 end
 
+function stored_clifford_fixture(d::Int, k::Int)
+    k > 0 || throw(ArgumentError("benchmark support must be positive"))
+    # Construct a nontrivial k-qudit action from named basis-image conjugation.
+    # This setup is outside measured apply!, and tests use this SAME builder.
+    gates = QuditClifford.AbstractClifford[]
+    for q in 1:k
+        push!(gates, QuditClifford.Fourier(q), QuditClifford.Phase(q))
+    end
+    for q in 1:(k - 1)
+        push!(gates, QuditClifford.SUM(q, q + 1))
+    end
+    F = zeros(Int, 2k, 2k)
+    a = zeros(Int, 2k)
+    for j in 1:(2k)
+        xz = zeros(Int, 2k); xz[j] = 1
+        op = QuditClifford.GeneralPauli(xz, 0)
+        for g in gates
+            op = QuditClifford.conjugate(g, op; d)
+        end
+        F[:, j] = op.xz
+        a[j] = op.phase
+    end
+    targets = collect(1:k)
+    U = QuditClifford.CliffordOperator(d, targets, F, a)
+    return (; U, gates, targets, F, a)
+end
+
+function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
+                               storephase::Bool = true,
+                               inversemod = QuditClifford.PrecomputedInvMod(d))
+    mk = tableau_maker(T, d, n; storephase, inversemod)
+    group = BenchmarkGroup()
+    for k in unique(collect(ks))
+        1 <= k <= n || continue
+        fixture = stored_clifford_fixture(d, k)
+        U, t, F, a = fixture.U, fixture.targets, fixture.F, fixture.a
+        group["apply!/stored/k=$k"] = bench_apply(mk, :product, U)
+        # Every k also has an m=0 leaf, making validation scaling visible.
+        group["apply!/stored/m=0/k=$k"] = bench_apply(mk, :mixed, U)
+        group["construct/k=$k/checked"] =
+            @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a)
+        group["construct/k=$k/unchecked"] =
+            @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a; check = false)
+    end
+    return group
+end
+
 # The PR-head script runs against both head and the older baseline package.
 # Do not call any new gate constructor until every API this group uses exists.
-function register_clifford_group!(suite, types, ds, ns; api::Module=QuditClifford)
+function register_clifford_group!(suite, types, ds, ns; api::Module = QuditClifford)
     required = (:apply!, :Fourier, :Phase, :SUM)
     all(name -> isdefined(api, name), required) || return suite
     for T in types, d in ds, n in ns
         suite["clifford"]["$(nameof(T))/d=$d/n=$n"] =
-            clifford_group(; d = d, n = n, T = T)
+            clifford_group(; d, n, T)
+    end
+    isdefined(api, :CliffordOperator) || return suite
+    for T in types, d in ds, n in ns
+        suite["clifford"]["stored/$(nameof(T))/d=$d/n=$n"] =
+            stored_clifford_group(; d, n, T)
     end
     return suite
 end
