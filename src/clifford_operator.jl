@@ -227,3 +227,70 @@ function CliffordOperator(d::Int, targets::AbstractVector{<:Integer},
     return _owned_clifford_operator(d, t, Fc, ac, D, inv2, fast,
                                     zeros(Int, S), zeros(Int, S), zeros(Int, k))
 end
+
+# Materialize a named gate. `_clifford_data` performs the modulus-dependent
+# gate validation (e.g. a zero-residue Multiplier), so it runs only after the
+# structural checks, and with `JustInTimeInvMod` so a standalone operator never
+# builds a dimension-sized lookup table.
+function CliffordOperator(g::AbstractClifford, d::Int)
+    Primes.isprime(d) || throw(ArgumentError("Qudit dimension d must be a prime number."))
+    raw = _clifford_targets(g)
+    k = length(raw)
+    t = Vector{Int}(undef, k)
+    @inbounds for i in 1:k
+        ti = Int(raw[i])
+        ti > 0 || throw(ArgumentError("Clifford target indices must be positive, got $ti."))
+        for r in 1:(i - 1)
+            t[r] == ti && throw(ArgumentError(
+                "Clifford targets must be distinct; $ti appears more than once."))
+        end
+        t[i] = ti
+    end
+    _, tF, ta = _clifford_data(g, d, JustInTimeInvMod())
+    S = 2k
+    F = Matrix{Int}(undef, S, S)
+    # The tuple form is COLUMNS: tF[col][row]. Writing this the other way round
+    # transposes every gate silently.
+    @inbounds for col in 1:S, row in 1:S
+        F[row, col] = tF[col][row]
+    end
+    a = Vector{Int}(undef, S)
+    @inbounds for i in 1:S
+        a[i] = ta[i]
+    end
+    fast = clifford_fast_dots(S, d)
+    D = _image_xdotz_dense(F, k, d, fast)
+    inv2 = d == 2 ? 0 : Base.invmod(2, d)
+    return _owned_clifford_operator(d, t, F, a, D, inv2, fast,
+                                    zeros(Int, S), zeros(Int, S), zeros(Int, k))
+end
+
+# Independent copy of a stored operator. Trusted by construction, so this never
+# repeats the O(k^3) algebraic check -- copying an operator built with
+# `check=false` must not surprise the caller by rejecting it.
+function CliffordOperator(U::CliffordOperator, d::Int)
+    U.d == d || throw(ArgumentError(
+        "CliffordOperator was built for d=$(U.d), but d=$d was requested."))
+    k = length(U.targets); S = 2k
+    return _owned_clifford_operator(d, copy(U.targets), copy(U.F), copy(U.a),
+                                    copy(U.image_xdotz), U.inv2, U.fast,
+                                    zeros(Int, S), zeros(Int, S), zeros(Int, k))
+end
+
+Base.copy(U::CliffordOperator) = CliffordOperator(U, U.d)
+
+# Semantic data only. Cache and scratch never affect equality or hashing, so an
+# operator must not be mutated while it is a dictionary key.
+Base.:(==)(U::CliffordOperator, V::CliffordOperator) =
+    U.d == V.d && U.targets == V.targets && U.F == V.F && U.a == V.a
+
+Base.isequal(U::CliffordOperator, V::CliffordOperator) =
+    isequal(U.d, V.d) && isequal(U.targets, V.targets) &&
+    isequal(U.F, V.F) && isequal(U.a, V.a)
+
+Base.hash(U::CliffordOperator, h::UInt) =
+    hash(U.a, hash(U.F, hash(U.targets, hash(U.d, hash(:CliffordOperator, h)))))
+
+Base.show(io::IO, U::CliffordOperator) =
+    print(io, "CliffordOperator(d=", U.d, ", targets=", U.targets,
+          ", k=", length(U.targets), ")")

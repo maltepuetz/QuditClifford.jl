@@ -255,6 +255,70 @@ Base.axes(::BrokenAxes) = error("caller-defined axes failure")
     @test CliffordOperator(3, 1:1, F1, a1).targets == [1]
 end
 
+@testset "Materialization, copying and value behaviour" begin
+    jit = QC.JustInTimeInvMod()
+    for d in (2, 3, 5)
+        gates = Any[Fourier(1), Phase(1), PauliGate(1, 1, 1),
+                    SUM(1, 2, 1), CPhase(1, 2, 1), SWAP(1, 2)]
+        push!(gates, Multiplier(1, d == 2 ? 1 : 2))
+        for g in gates
+            U = CliffordOperator(g, d)
+            targets, tF, ta = QC._clifford_data(g, d, jit)
+            S = 2 * length(targets)
+            @test U.d == d
+            @test U.targets == collect(Int, targets)
+            @test U.a == collect(Int, ta)
+            for col in 1:S, row in 1:S
+                @test U.F[row, col] == tF[col][row]
+            end
+            # Materialization must satisfy the public constructor's own checks.
+            @test CliffordOperator(d, U.targets, U.F, U.a) == U
+        end
+    end
+    # Modulus-dependent gate validation still fires during materialization.
+    @test_throws ArgumentError CliffordOperator(Multiplier(1, 3), 3)
+    @test_throws ArgumentError CliffordOperator(Fourier(1), 4)
+
+    # Copying is independent in semantic data, cache AND scratch.
+    U = CliffordOperator(Fourier(1), 3)
+    C = copy(U)
+    @test C == U && isequal(C, U) && hash(C) == hash(U)
+    for f in (:targets, :F, :a, :image_xdotz, :v, :vout, :zpref)
+        @test getfield(C, f) !== getfield(U, f)
+    end
+    M = CliffordOperator(U, 3)
+    @test M == U
+    assert_independent(M, U)
+    assert_independent(C, U)
+    @test_throws ArgumentError CliffordOperator(U, 5)
+
+    # Copying an unchecked operator must not reinstate the skipped check.
+    @test_throws ArgumentError CliffordOperator(3, [1], zeros(Int, 2, 2), zeros(Int, 2))
+    bad = CliffordOperator(3, [1], zeros(Int, 2, 2), zeros(Int, 2); check = false)
+    @test copy(bad) == bad
+    @test CliffordOperator(bad, 3) == bad
+    badparity = CliffordOperator(2, [1], eye_int(2), [1, 0]; check = false)
+    @test copy(badparity) == badparity
+
+    # Equality and hashing ignore cache and scratch.
+    A = CliffordOperator(Phase(1), 5)
+    B = copy(A)
+    fill!(B.v, 7); fill!(B.vout, 9); fill!(B.zpref, 3)
+    @test A == B && isequal(A, B) && hash(A) == hash(B)
+    @test A != CliffordOperator(Fourier(1), 5)
+    @test A != CliffordOperator(Phase(2), 5)
+    @test A != CliffordOperator(Phase(1), 3)
+    @test Dict(A => :found)[B] === :found
+    # Deliberate cache perturbation tests value semantics only; do not execute B.
+    fill!(B.image_xdotz, 99)
+    @test A == B && isequal(A, B) && hash(A) == hash(B)
+
+    # show exposes semantic data only.
+    s = sprint(show, A)
+    @test occursin("CliffordOperator", s) && occursin("d=5", s)
+    @test !occursin("zpref", s)
+end
+
 @testset "Construction copies into independent dense storage" begin
     F, a = identity_data(1)
     t = [2]
