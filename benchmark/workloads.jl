@@ -252,6 +252,25 @@ function bench_apply(mk, state, g)
 end
 
 """
+`apply!` on a tableau at `m = 0`, timed over `evals` evaluations per sample
+rather than restored once per sample. At `m = 0` the column loops in `apply!`
+run zero times -- the only effect is clearing `tab.iscanonical`, which does
+not accumulate from one call to the next -- so the call is idempotent there,
+and repeated evaluations need no snapshot restore between them the way
+`bench_apply_on` does.
+
+A single call is far below the timer floor: measured median `0.001 ns` at
+`evals = 1` (BenchmarkTools' way of saying "could not resolve this"), against
+a stable ~11-15 ns at `evals = 1000` -- checked across both tableau types,
+`d = 2` and `d = 5`, and `k = 1` and `k = 8`, all consistent. `evals` defaults
+to that measured 1000 rather than being recomputed per cell.
+"""
+function bench_apply_m0(mk, g; evals::Int = 1000)
+    tab = mk(:mixed)
+    return @benchmarkable(apply!($tab, $g), evals = evals)
+end
+
+"""
 The `apply!` spine: one- and two-qudit gates, on the phase-carrying path.
 
 `Fourier` has zero image `x·z`, so its odd-prime phase term is pure cross-term;
@@ -375,7 +394,9 @@ support size `k` in `ks`. Every `k` gets:
   zero-skip fast path (see `scrambled_tableau`'s docstring).
 - `"apply!/stored/m=0/k=\$k"`, applying to the maximally mixed state, making
   the validation-path cost `apply!` pays before any generator exists visible
-  on its own. Unchanged from before.
+  on its own. Built by [`bench_apply_m0`](@ref): a single call there is far
+  below the timer floor, so it is timed over many evaluations per sample
+  instead of restored once per sample.
 
 When `product`, also `"apply!/stored/product/k=\$k"` on a freshly restored
 `:product` state -- the sparse, mostly-zero/one-hot input the dense matvec's
@@ -402,7 +423,9 @@ function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
         U = fixture.U
         group["apply!/stored/k=$k"] = bench_apply_on(scrambled, U)
         # Every k also has an m=0 leaf, making validation scaling visible.
-        group["apply!/stored/m=0/k=$k"] = bench_apply(mk, :mixed, U)
+        # evals = 1000 (bench_apply_m0's default): a single call is far below
+        # the timer floor, and apply! at m=0 is idempotent, so no restore.
+        group["apply!/stored/m=0/k=$k"] = bench_apply_m0(mk, U)
         if product
             group["apply!/stored/product/k=$k"] = bench_apply(mk, :product, U)
         end
@@ -492,10 +515,10 @@ arithmetic.
 table, which would be gigabytes at this `d`.
 
 Leaves: `"apply!/\$(nameof(T))/k=8"` on a [`scrambled_tableau`](@ref) for each
-`T` in `types`, plus the same `"conjugate/k=8"`, `"inv/k=8"` and
-`"compose/k=8"` leaves [`stored_clifford_algebra_group`](@ref) builds at this
-`k`, so the two groups share a naming convention even though this one is keyed
-by `d` alone and registered unconditionally rather than once per `d in ds`.
+`T` in `types`, built directly here; plus `"conjugate/k=8"`, `"inv/k=8"` and
+`"compose/k=8"`, merged in from `stored_clifford_algebra_group(d; ks = (8,))`
+rather than rebuilt inline, so the fixture, the random observable and the
+leaf names cannot drift from that group's own `k = 8` cell.
 
 Registered as `suite["clifford"]["stored/safe/d=1000000007"]`, in every
 profile: it is cheap (one `n = 8` tableau per type, one `k = 8` fixture) and
@@ -505,7 +528,6 @@ function stored_clifford_safe_group(types)
     d = 1_000_000_007
     n = 8
     k = 8
-    S = 2k
     group = BenchmarkGroup()
     fixture = stored_clifford_fixture(d, k)
     U = fixture.U
@@ -514,13 +536,12 @@ function stored_clifford_safe_group(types)
         scrambled = scrambled_tableau(mk, d, n; seed = 20260910)
         group["apply!/$(nameof(T))/k=$k"] = bench_apply_on(scrambled, U)
     end
-    rng = Random.MersenneTwister(20260910)
-    xz = [rand(rng, 0:(d - 1)) for _ in 1:S]
-    phase = rand(rng, 0:(QuditClifford.phase_modulus(d) - 1))
-    op = QuditClifford.GeneralPauli(xz, phase)
-    group["conjugate/k=$k"] = @benchmarkable QuditClifford.conjugate($U, $op)
-    group["inv/k=$k"] = @benchmarkable inv($U)
-    group["compose/k=$k"] = @benchmarkable $U ∘ $U
+    # Identical in shape to stored_clifford_algebra_group's own k=8 cell, so
+    # build it there and merge rather than duplicating the fixture and the
+    # random-observable draw here.
+    for (key, leaf) in stored_clifford_algebra_group(d; ks = (k,))
+        group[key] = leaf
+    end
     return group
 end
 

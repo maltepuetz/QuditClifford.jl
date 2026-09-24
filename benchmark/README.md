@@ -171,7 +171,10 @@ leaf on a freshly restored `:product` state — deliberately the sparse input,
 so the fast path itself stays under coverage rather than going untested. A
 third leaf, `"apply!/stored/m=0/k=$k"`, applies to the maximally mixed state,
 making the validation-path cost `apply!` pays before any generator exists
-visible on its own.
+visible on its own. A single such call is far below the timer floor, so this
+leaf runs many evaluations per sample instead of the usual snapshot restore —
+safe because `apply!` at `m = 0` is idempotent (the column loops run zero
+times, and only `iscanonical` changes).
 
 `CliffordOperator` construction, checked and unchecked, is timed separately
 again: it takes no tableau, so it depends only on `d` and `k`, never on the
