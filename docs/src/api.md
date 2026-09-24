@@ -43,6 +43,7 @@ PauliGate
 SUM
 CPhase
 SWAP
+CliffordOperator
 apply!
 conjugate
 ```

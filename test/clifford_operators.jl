@@ -107,3 +107,161 @@ end
         @test fresh_dense_apply_allocations(tab, fixture) == 0
     end
 end
+
+# Snapshots compare semantic data, derived context and scratch independently.
+const OPERATOR_ARRAY_FIELDS = (:targets, :F, :a, :image_xdotz, :v, :vout, :zpref)
+operator_snapshot(U) = (U.d, U.inv2, U.fast,
+    map(f -> copy(getfield(U, f)), OPERATOR_ARRAY_FIELDS))
+function assert_independent(U, V)
+    for f in OPERATOR_ARRAY_FIELDS, g in OPERATOR_ARRAY_FIELDS
+        @test !Base.mightalias(getfield(U, f), getfield(V, g))
+    end
+    for (i, f) in enumerate(OPERATOR_ARRAY_FIELDS), g in OPERATOR_ARRAY_FIELDS[(i + 1):end]
+        @test !Base.mightalias(getfield(U, f), getfield(U, g))
+    end
+end
+
+# Identity Clifford on k targets: F = I_{2k}, all raw phases zero. Valid at
+# every prime d and trivially symplectic.
+eye_int(S::Int) = [i == j ? 1 : 0 for i in 1:S, j in 1:S]
+identity_data(k::Int) = (eye_int(2k), zeros(Int, 2k))
+
+# A minimal non-one-based array. Testing the offset rejection this way avoids
+# adding an OffsetArrays dependency to the tracked test/Project.toml.
+struct ZeroBased{T,N} <: AbstractArray{T,N}
+    data::Array{T,N}
+end
+Base.size(z::ZeroBased) = size(z.data)
+Base.axes(z::ZeroBased) = map(ax -> 0:(length(ax) - 1), axes(z.data))
+Base.getindex(z::ZeroBased{T,N}, I::Vararg{Int,N}) where {T,N} =
+    z.data[map(i -> i + 1, I)...]
+
+# Report huge shapes without storage. Any element read is a test failure.
+struct UnreadableIntArray{N} <: AbstractArray{Int,N}
+    dims::NTuple{N,Int}
+end
+Base.size(a::UnreadableIntArray) = a.dims
+Base.getindex(::UnreadableIntArray, I...) = error("input traversed before rejection")
+
+struct BrokenAxes <: AbstractVector{Int} end
+Base.size(::BrokenAxes) = (1,)
+Base.axes(::BrokenAxes) = error("caller-defined axes failure")
+
+@testset "Raw construction validates and normalizes" begin
+    for d in (2, 3, 5)
+        F, a = identity_data(2)
+        U = CliffordOperator(d, [1, 3], F, a)
+        @test U.d == d
+        @test U.targets == [1, 3]
+        @test U.F == F
+        @test U.a == a
+        @test U.image_xdotz == zeros(Int, 4)
+        @test U.inv2 == (d == 2 ? 0 : invmod(2, d))
+        @test length(U.v) == 4 && length(U.vout) == 4 && length(U.zpref) == 2
+        @test U.v !== U.vout
+        # The public type must not expose Julia's unchecked full-field
+        # constructor. Only the internal owned-data boundary may bypass the
+        # copying/validation route, even for otherwise valid input arrays.
+        fields = map(f -> getfield(U, f), fieldnames(CliffordOperator))
+        @test_throws MethodError CliffordOperator(fields...)
+
+        # Entries normalize: identity + d is still the identity, and raw
+        # phases reduce mod p.
+        @test CliffordOperator(d, [1, 3], F .+ d, a).F == F
+        @test CliffordOperator(d, [1, 3], F, a .+ QC.phase_modulus(d)).a == a
+
+        # Targets must be positive and distinct.
+        @test_throws ArgumentError CliffordOperator(d, [1, 1], F, a)
+        @test_throws ArgumentError CliffordOperator(d, [0, 2], F, a)
+        # Shapes.
+        @test_throws ArgumentError CliffordOperator(d, [1, 3], F, zeros(Int, 3))
+        @test_throws ArgumentError CliffordOperator(d, [1, 3], zeros(Int, 3, 4), a)
+        # Non-prime dimension.
+        @test_throws ArgumentError CliffordOperator(4, [1, 3], F, a)
+        # Non-symplectic F.
+        bad = copy(F); bad[1, 2] = 1; bad[2, 1] = 1
+        @test_throws ArgumentError CliffordOperator(d, [1, 3], bad, a)
+        @test CliffordOperator(d, [1, 3], bad, a; check = false) isa CliffordOperator
+    end
+
+    # typemin(Int) is reduced BEFORE any conversion or arithmetic. `check=false`
+    # because a constant matrix is not symplectic; normalization still runs.
+    for d in (2, 3, 5)
+        W = CliffordOperator(d, [1], fill(typemin(Int), 2, 2), fill(typemin(Int), 2);
+                             check = false)
+        @test all(==(mod(typemin(Int), d)), W.F)
+        @test all(==(mod(typemin(Int), QC.phase_modulus(d))), W.a)
+    end
+
+    # Qubit parity: a[i] must match image_xdotz[i] mod 2.
+    F, a = identity_data(1)
+    @test_throws ArgumentError CliffordOperator(2, [1], F, [1, 0])
+    @test CliffordOperator(2, [1], F, [1, 0]; check = false) isa CliffordOperator
+    # Qubit construction must not evaluate invmod(2, 2).
+    @test CliffordOperator(2, [1], F, a).inv2 == 0
+
+    # Empty support is the identity and is valid at every accepted d.
+    for d in (2, 3, 5)
+        E = CliffordOperator(d, Int[], zeros(Int, 0, 0), Int[])
+        @test E.targets == Int[] && size(E.F) == (0, 0) && isempty(E.a)
+    end
+
+    # One-based axes are a structural condition, enforced for either `check`.
+    # A correctly sized zero-based vector passes every length test and then
+    # invalidates the constructor's `1:k` loops.
+    F1, a1 = identity_data(1)
+    for check in (false, true)
+        for args in ((ZeroBased([1]), F1, a1),
+                     ([1], ZeroBased(F1), a1), ([1], F1, ZeroBased(a1)))
+            @test_throws ArgumentError CliffordOperator(3, args...; check)
+        end
+        @test_throws ArgumentError CliffordOperator(3, [big(typemax(Int)) + 1], F1, a1; check)
+        @test_throws ArgumentError CliffordOperator(3, [-1], F1, a1; check)
+        @test_throws ArgumentError CliffordOperator(3, [1, 1], eye_int(4), zeros(Int, 4); check)
+        @test_throws ArgumentError CliffordOperator(4, [1], F1, a1; check)
+        @test_throws ArgumentError CliffordOperator(3, [1], F1, [0]; check)
+        @test_throws ErrorException CliffordOperator(3, BrokenAxes(), F1, a1; check)
+
+        # Correct logical shape, representable element count, impossible bytes.
+        kb = isqrt(typemax(Int) ÷ sizeof(Int)) ÷ 2 + 1
+        sb = 2kb
+        @test big(sb)^2 <= typemax(Int) < big(sb)^2 * sizeof(Int)
+        @test_throws ArgumentError CliffordOperator(3, UnreadableIntArray((kb,)),
+            UnreadableIntArray((sb, sb)), UnreadableIntArray((sb,)); check)
+        # Impossible element counts and malformed ordinary shapes also precede access.
+        for kh in (typemax(Int), isqrt(typemax(Int)) ÷ 2 + 1)
+            @test_throws ArgumentError CliffordOperator(3, UnreadableIntArray((kh,)),
+                F1, a1; check)
+        end
+        @test_throws ArgumentError CliffordOperator(3, UnreadableIntArray((2,)), F1, a1; check)
+    end
+    for d in (2, 3, 5)
+        b = big(typemax(Int))^3
+        Fbig = big.(F1) .+ d * b
+        abig = big.(a1) .- QC.phase_modulus(d) * b
+        W = CliffordOperator(d, BigInt[1], Fbig, abig)
+        @test W.F == F1 && W.a == a1
+    end
+
+    # One-based non-contiguous views, transposes and ranges ARE accepted, and
+    # materialize in the documented order.
+    padded = [1 0 9; 0 1 9; 9 9 9]
+    @test CliffordOperator(3, [1], view(padded, 1:2, 1:2), a1).F == F1
+    # A nonsymmetric matrix makes accidental transpose/orientation bugs visible.
+    shear = [1 0; 1 1]
+    @test CliffordOperator(3, [1], transpose(shear), a1).F == [1 1; 0 1]
+    @test CliffordOperator(3, view([1, 99], 1:2:2), shear,
+                           view([0, 99, 0, 99], 1:2:4)).F == shear
+    @test CliffordOperator(3, 1:1, F1, a1).targets == [1]
+end
+
+@testset "Construction copies into independent dense storage" begin
+    F, a = identity_data(1)
+    t = [2]
+    U = CliffordOperator(3, t, F, a)
+    t[1] = 99; F[1, 1] = 7; a[1] = 5
+    @test U.targets == [2] && U.F[1, 1] == 1 && U.a[1] == 0
+    # A range target must materialize as Vector{Int}, not stay a range.
+    R = CliffordOperator(3, 1:1, identity_data(1)...)
+    @test R.targets isa Vector{Int} && R.targets == [1]
+end

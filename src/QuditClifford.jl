@@ -13,6 +13,7 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
     is_pure,
     AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
+    CliffordOperator,
     apply!, conjugate
 
 import Random, Primes
@@ -38,5 +39,6 @@ include("check_purity.jl")
 include("expectation_value.jl")
 include("clifford_gates.jl")
 include("apply_clifford.jl")
+include("clifford_operator.jl")
 
 end
