@@ -485,3 +485,36 @@ end
         end
     end
 end
+
+@testset "Stored Clifford application preserves duality and the live cache" begin
+    for d in (2, 3, 5), sp in (false, true), mixed in (false, true)
+        tab = DestabilizerTableau(d, 6; state = mixed ? :mixed : :product,
+                                 basis = mixed ? :Z : :X, storephase = sp)
+        if mixed
+            measure!(tab, SinglePauli(2, 1, 0); outcome = 0)
+            measure!(tab, SinglePauli(5, 1, 0); outcome = 0)
+        end
+        # Start with nonzero old target x·z, so subtract-before-scatter matters.
+        apply!(tab, Phase(2))
+        @test any(!iszero, tab.xdotz_cache[1:tab.m])
+        for g in (Fourier(2), Phase(2), SUM(2, 5, 1), CPhase(2, 5, 1), SWAP(2, 5))
+            oldm = tab.m
+            apply!(tab, CliffordOperator(g, d))
+            @test tab.m == oldm
+            _assert_duality(tab)
+            for j in 1:tab.m
+                expected = Int(mod(sum(big(tab.stab[q, j]) * tab.stab[tab.n + q, j]
+                                       for q in 1:tab.n), d))
+                @test tab.xdotz_cache[j] == expected
+            end
+            @test all(iszero, tab.stab[:, (tab.m + 1):end])
+            @test all(iszero, tab.destab[:, (tab.m + 1):end])
+            @test all(iszero, tab.xdotz_cache[(tab.m + 1):end])
+            if sp && d > 2
+                # Immediate deterministic query consumes the live cache.
+                op = GeneralPauli(copy(tab.stab[1:(2tab.n), 1]), tab.stab[2tab.n + 1, 1])
+                @test expect_int!(tab, op) == 0
+            end
+        end
+    end
+end

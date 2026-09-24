@@ -295,3 +295,44 @@ Base.hash(U::CliffordOperator, h::UInt) =
 Base.show(io::IO, U::CliffordOperator) =
     print(io, "CliffordOperator(d=", U.d, ", targets=", U.targets,
           ", k=", length(U.targets), ")")
+
+@inline _clifford_targets(U::CliffordOperator) = U.targets
+
+# Bounds only. Distinctness is proven by the constructor, so re-deriving it
+# per application would add an O(k^2) prelude that dominates when `m` is small.
+@inline function _validate_clifford_targets(U::CliffordOperator, n::Int)
+    t = U.targets
+    @inbounds for i in eachindex(t)
+        (1 <= t[i] <= n) || throw(ArgumentError(
+            "Clifford target $(t[i]) is outside the register 1:$n."))
+    end
+    return nothing
+end
+
+# The ONLY place a prepared view is built over a stored operator. Taking the
+# buffers explicitly is what keeps an allocating API from borrowing operand
+# scratch: `_prepare` passes `U`'s own buffers, `_prepare_for_conjugation`,
+# `inv` and `∘` pass call-local or result-owned ones.
+@inline function _dense_view(U::CliffordOperator, storephase::Bool,
+                             v::Vector{Int}, vout::Vector{Int},
+                             zpref::Vector{Int}; force_safe::Bool = false)
+    return PreparedDenseClifford(U.targets, U.F, U.a, U.image_xdotz, v, vout,
+                                 zpref, length(U.targets), U.d,
+                                 phase_modulus(U.d), U.inv2,
+                                 U.fast && !force_safe, storephase)
+end
+
+# EVERY positional argument type matches P1's
+# `_prepare(::AbstractClifford, ::Int, ::InverseMod, ::Bool)`. Annotating only
+# the first argument would leave two methods neither of which is more specific,
+# so an ordinary stored `apply!` would raise an ambiguity `MethodError`. Keep
+# trailing types aligned on every hook that specializes an `AbstractClifford`
+# fallback. The tableau's `InverseMod` is deliberately ignored: the operator
+# carries its own `inv2`, and its derived data is never rebuilt per application.
+function _prepare(U::CliffordOperator, d::Int, ::InverseMod, storephase::Bool;
+                  force_safe::Bool = false)
+    U.d == d || throw(ArgumentError(
+        "CliffordOperator was built for d=$(U.d), but the tableau has d=$d."))
+    return _dense_view(U, storephase, U.v, U.vout, U.zpref;
+                       force_safe = force_safe)
+end

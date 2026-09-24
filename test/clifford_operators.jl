@@ -329,3 +329,104 @@ end
     R = CliffordOperator(3, 1:1, identity_data(1)...)
     @test R.targets isa Vector{Int} && R.targets == [1]
 end
+
+@testset "Stored apply! matches named apply!" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+        storephase in (false, true)
+        gates = Any[Fourier(2), Phase(2), PauliGate(2, 1, 1),
+                    SUM(2, 5, 1), CPhase(2, 5, 1), SWAP(2, 5)]
+        push!(gates, Multiplier(2, d == 2 ? 1 : 2))
+        for g in gates
+            named  = TT(d, 6; state = :ghz, storephase = storephase)
+            stored = TT(d, 6; state = :ghz, storephase = storephase)
+            apply!(named, g)
+            apply!(stored, CliffordOperator(g, d))
+            @test stored.stab == named.stab
+            @test stored.m == named.m
+            TT === DestabilizerTableau && @test stored.destab == named.destab
+        end
+    end
+end
+
+# Include all mutable tableau fields when checking failure atomicity.
+tableau_snapshot(tab) = map(fieldnames(typeof(tab))) do f
+    x = getfield(tab, f)
+    # PrecomputedInvMod has identity equality, so compare its table by value.
+    x isa QC.PrecomputedInvMod ? (typeof(x), copy(x.lookuptable)) : deepcopy(x)
+end
+
+@testset "Stored _prepare dispatches and validates" begin
+    U = CliffordOperator(Fourier(1), 3)
+    for im in (QC.PrecomputedInvMod(3), QC.JustInTimeInvMod()),
+        sp in (false, true), fs in (false, true)
+        prep = QC._prepare(U, 3, im, sp; force_safe = fs)
+        @test prep isa QC.PreparedDenseClifford
+        @test prep.storephase == sp
+        @test prep.fast == (U.fast && !fs)
+        @test prep.v === U.v && prep.vout === U.vout
+    end
+    # Dimension mismatch fails before any tableau mutation.
+    tab = StabilizerTableau(5, 3; state = :ghz)
+    before = copy(tab.stab)
+    @test_throws ArgumentError apply!(tab, U)
+    @test tab.stab == before
+    # Out-of-register target fails before mutation too.
+    W = CliffordOperator(Fourier(9), 3)
+    tab3 = StabilizerTableau(3, 3; state = :ghz)
+    before3 = copy(tab3.stab)
+    @test_throws ArgumentError apply!(tab3, W)
+    @test tab3.stab == before3
+    for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true)
+        tab = TT(3, 3; state = :ghz, storephase = sp)
+        mismatched = CliffordOperator(Fourier(1), 5)
+        emptywrong = CliffordOperator(5, Int[], zeros(Int, 0, 0), Int[])
+        for bad in (W, mismatched, emptywrong)
+            snap = tableau_snapshot(tab)
+            usnap = operator_snapshot(bad)
+            @test_throws ArgumentError apply!(tab, bad)
+            @test tableau_snapshot(tab) == snap
+            @test operator_snapshot(bad) == usnap
+        end
+        # The prepared boundary also rejects phase/dimension/bounds mismatches
+        # before touching any tableau or borrowed-scratch field.
+        for prep in (QC._prepare(U, 3, QC.JustInTimeInvMod(), !sp),
+                     QC._prepare(mismatched, 5, QC.JustInTimeInvMod(), sp),
+                     QC._prepare(W, 3, QC.JustInTimeInvMod(), sp))
+            snap = tableau_snapshot(tab)
+            @test_throws ArgumentError QC._apply_prepared!(tab, prep)
+            @test tableau_snapshot(tab) == snap
+        end
+    end
+end
+
+function stored_apply_allocations(tab, U)
+    for _ in 1:3
+        apply!(tab, U)
+    end
+    return @allocated apply!(tab, U)
+end
+
+@testset "Stored apply! is allocation-free after warm-up" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+        storephase in (false, true)
+        tab = TT(d, 12; state = :ghz, storephase = storephase)
+        for g in (Fourier(1), Phase(1), SUM(1, 12), CPhase(1, 12), SWAP(1, 12))
+            U = CliffordOperator(g, d)
+            stored_apply_allocations(tab, U)
+            @test stored_apply_allocations(tab, U) == 0
+        end
+    end
+end
+
+@testset "Empty support applies as the identity and preserves iscanonical" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3),
+        sp in (false, true), state in (:ghz, :mixed)
+        tab = TT(d, 4; state, storephase = sp)
+        canonicalize!(tab)
+        @test tab.iscanonical
+        before = tableau_snapshot(tab)
+        E = CliffordOperator(d, Int[], zeros(Int, 0, 0), Int[])
+        @test apply!(tab, E) === tab
+        @test tableau_snapshot(tab) == before
+    end
+end
