@@ -192,12 +192,13 @@ end
 @testset "Narrow and unsigned inverse tables behave as Int tables" begin
     # The package is Int arithmetic throughout: binom2_mod_oddprime takes an
     # Int, and measure! forms mod(-commutator * inv, d). Handed an unsigned
-    # inverse, that negation and multiply wrap in unsigned arithmetic BEFORE the
-    # mod, which left both tableau types with non-commuting generators and no
-    # error at all -- a corrupt state, not an exception. An Int32 table instead
-    # threw a MethodError from binom2_mod_oddprime. PrecomputedInvMod now
-    # converts to Vector{Int} on construction, so neither can arise; these
-    # assert that every accepted table type behaves exactly as the Int control.
+    # inverse, that negation and multiply would wrap in unsigned arithmetic
+    # BEFORE the mod, leaving both tableau types with non-commuting generators
+    # and no error at all -- a corrupt state, not an exception -- and an Int32
+    # table would hit a MethodError in binom2_mod_oddprime. PrecomputedInvMod
+    # therefore converts to Vector{Int} on construction, so neither can arise;
+    # these assert that every accepted table type behaves exactly as the Int
+    # control.
     tables = (Int[1, 2], Int32[1, 2], UInt64[1, 2])
     mk(TT, tbl; kw...) = TT(3, 2; inversemod=QuditClifford.PrecomputedInvMod(tbl), kw...)
 
@@ -301,8 +302,8 @@ end
     end
 
     # maxlog=1 budgets by the log message's id. With the default id -- the call
-    # site -- one unsafe tableau spent the budget for every dimension there will
-    # ever be, so a later, strictly worse (d, n) was silenced. The id now
+    # site -- one unsafe tableau would spend the budget for every dimension there
+    # will ever be, silencing a later, strictly worse (d, n). The id therefore
     # carries (d, n), and the policy that follows is identity, not severity:
     # EVERY distinct pair warns once, including one that is unsafe by less than
     # a pair already reported. n = 2 last pins that half -- its accumulator is
@@ -327,11 +328,11 @@ end
 @testset "Modular inversion strategies" begin
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod(4)
 
-    # Integer tables are converted to Vector{Int}; non-integer ones are rejected
-    # instead, so the error names the actual mistake. Before that a Float64
-    # table was accepted and then behaved differently per dimension: fine at
-    # d = 2, which never takes the odd-d phase branch, but a MethodError from
-    # inside binom2_mod_oddprime at every odd prime.
+    # Integer tables are converted to Vector{Int}; non-integer ones are
+    # rejected, so the error names the actual mistake. An accepted Float64 table
+    # would behave differently per dimension: fine at d = 2, which never takes
+    # the odd-d phase branch, but a MethodError from inside binom2_mod_oddprime
+    # at every odd prime.
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1.0])
     @test_throws ArgumentError QuditClifford.PrecomputedInvMod([1 // 1])
     # A table given in any integer type is converted to Vector{Int} on

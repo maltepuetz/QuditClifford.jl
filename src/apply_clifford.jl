@@ -231,10 +231,10 @@ end
 ########################################
 #
 # Seven operations carry the backing difference; everything above them is
-# written once. The tuple methods delegate to the original tuple-only
-# primitives unchanged, so their existing direct tests stay valid. The bang
-# marks that a backing MAY mutate borrowed scratch -- the tuple backing does
-# not need to.
+# written once. The tuple methods delegate to the tuple primitives (`_gather`,
+# `_scatter!`, `_matvec`, `_col_xdotz`), which keep their own direct tests. The
+# bang marks that a backing MAY mutate borrowed scratch -- the tuple backing
+# does not need to.
 
 @inline _gather_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
                           j::Int) where {K,S} = _gather(A, prep.targets, n, j)
@@ -506,10 +506,10 @@ end
         v[i] == 0 && continue
         phase = add_mod(phase, a[i], 4)
         # Under the precondition every F entry and zpref entry is 0 or 1, so
-        # `F[q,i] & zpref[q]` is exactly the bit product, and the parity of
-        # their sum over q equals the old chain of conditional XORs (each
-        # true `F[q,i] == 1 && zpref[q] == 1` flipped `cross` once). c <= k,
-        # so the accumulator cannot overflow.
+        # `F[q,i] & zpref[q]` is exactly the bit product and `c & 1` is the
+        # parity x(F[:,i]) · zpref mod 2: the ordered-product cross term of
+        # this image against the Z parts of the images already multiplied in.
+        # c <= k, so the accumulator cannot overflow.
         c = 0
         @simd for q in 1:k
             c += F[q, i] & zpref[q]

@@ -758,8 +758,8 @@ end
 
 @testset "Large moduli use exact arithmetic in both tiers" begin
     d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
-    # A counterexample matrix, now reachable through the PUBLIC constructor:
-    # an unreduced four-term Int dot wraps to 0 while the true answer is 4.
+    # A counterexample matrix, built through the public constructor: an
+    # unreduced four-term Int dot wraps to 0 while the true answer is 4.
     M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
     U = CliffordOperator(d, [1, 2], M, zeros(Int, 4))
     @test !QC.clifford_fast_dots(4, d)     # the guard rejects k = 2 at this d
