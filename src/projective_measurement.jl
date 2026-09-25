@@ -215,8 +215,8 @@ end
     # would cost O(n*m) per measurement. But `set_operator!` zeroed the column
     # before writing it, so every term outside the operator's own qudit support
     # vanishes: collect that support once in O(n) and each pairing drops to
-    # O(nsupp) -- a handful of terms for a sparse Pauli. A dense operator keeps
-    # its full support, and so keeps the old cost; only zero terms go unvisited.
+    # O(nsupp) -- a handful of terms for a sparse Pauli. A dense operator has
+    # full support and pays the full O(n*m); only zero terms go unvisited.
     supp = tab.support_workspace
     nsupp = _column_support!(supp, tab.stab, pivot, n)
 

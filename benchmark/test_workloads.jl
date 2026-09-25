@@ -268,17 +268,18 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    @testset "Clifford registration preserves an older baseline" begin
+    @testset "Clifford registration skips a baseline without the Clifford API" begin
         suite = BenchmarkGroup()
         existing = BenchmarkGroup()
         suite["existing"] = existing
-        legacy = Module(:CliffordAPINotYetPresent)
-        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = legacy) === suite
+        no_clifford_api = Module(:NoCliffordAPI)
+        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = no_clifford_api) === suite
         @test Set(keys(suite)) == Set(["existing"])
         @test suite["existing"] === existing
 
-        # In this checkout the new APIs exist, so normal registration adds the
-        # group alongside the old one, rather than replacing the whole suite.
+        # In this checkout the Clifford APIs exist, so normal registration adds
+        # the clifford group alongside the existing one, rather than replacing
+        # the whole suite.
         @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,)) === suite
         @test haskey(suite, "clifford")
         @test suite["existing"] === existing
@@ -304,5 +305,236 @@ include(joinpath(@__DIR__, "workloads.jl"))
             apply!(tab, SUM(4, 12, 1))
             @test is_pure(tab; verify = true)
         end
+    end
+
+    @testset "Stored Clifford benchmark fixtures act and all leaves run" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (2, 16)
+            group = stored_clifford_group(; d, n, T)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            for k in (1, 2, 8)
+                k <= n || continue
+                fixture = stored_clifford_fixture(d, k)
+                stored = T(d, n; state = :product, basis = :Z)
+                named = deepcopy(stored)
+                before = copy(stored.stab)
+                apply!(stored, fixture.U)
+                for g in fixture.gates
+                    apply!(named, g)
+                end
+                @test stored.stab != before
+                @test stored.stab == named.stab
+                @test is_pure(stored; verify = true)
+                if T === DestabilizerTableau
+                    @test stored.destab == named.destab
+                    @test stored.xdotz_cache == named.xdotz_cache
+                end
+            end
+        end
+    end
+
+    @testset "Stored construct group is registered once per d and all its leaves run" begin
+        for d in (2, 3, 5)
+            group = stored_clifford_construct_group(d)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            for k in (1, 2, 8)
+                fixture = stored_clifford_fixture(d, k)
+                @test CliffordOperator(d, fixture.targets, fixture.F, fixture.a) == fixture.U
+                @test CliffordOperator(d, fixture.targets, fixture.F, fixture.a;
+                                       check = false) == fixture.U
+            end
+        end
+
+        # register_clifford_group! must add exactly one construct cell per d,
+        # regardless of how many (T, n) cells share that d.
+        suite = BenchmarkGroup()
+        register_clifford_group!(suite, (StabilizerTableau, DestabilizerTableau), (3,), (8, 16))
+        construct_keys = [k for k in keys(suite["clifford"]) if startswith(k, "stored/construct/")]
+        @test Set(construct_keys) == Set(["stored/construct/d=3"])
+    end
+
+    @testset "scrambled_tableau is dense, physical and deterministic" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            n = 16
+            mk = tableau_maker(T, d, n)
+
+            a = scrambled_tableau(mk, d, n; seed = 11)
+            b = scrambled_tableau(mk, d, n; seed = 11)
+            c = scrambled_tableau(mk, d, n; seed = 12)
+            @test a.stab == b.stab                            # deterministic
+            @test a.stab != c.stab                            # the seed actually matters
+            T === DestabilizerTableau && @test a.destab == b.destab
+
+            @test is_pure(a; verify = true)
+            @test a.stab != T(d, n; state = :product).stab    # actually scrambled
+
+            # Dense local coordinates: > 25% of the k = 8 target rows are
+            # nonzero across all n = 16 active columns -- the property
+            # stored_clifford_group relies on scrambled_tableau for. A
+            # :product or :mixed leaf is instead mostly zero or one-hot (see
+            # scrambled_tableau's docstring).
+            k = 8
+            rows = vcat(1:k, n .+ (1:k))
+            density = count(!iszero, a.stab[rows, 1:a.m]) / (length(rows) * a.m)
+            @test density > 0.25
+        end
+    end
+
+    @testset "Every stored, algebra and safe leaf runs" begin
+        n = 16
+        ks = (1, 2, 8)
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            group = stored_clifford_group(; d, n, T, ks, product = true)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            # k = 1, 2, 8 all <= n = 16, and product = true adds a third leaf
+            # per k on top of the base and m=0 leaves.
+            @test length(keys(group)) == 3 * length(ks)
+        end
+
+        for d in (2, 3)
+            group = stored_clifford_algebra_group(d; ks)
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            @test length(keys(group)) == 3 * length(ks)
+        end
+
+        let group = stored_clifford_safe_group((StabilizerTableau, DestabilizerTableau))
+            @test !isempty(keys(group))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+            @test Set(keys(group)) ==
+                  Set(["apply!/StabilizerTableau/k=8", "apply!/DestabilizerTableau/k=8",
+                       "conjugate/k=8", "inv/k=8", "compose/k=8"])
+        end
+    end
+
+    @testset "Benchmarked stored-operator calls compute the right thing" begin
+        n = 16
+        for d in (2, 3), k in (1, 2, 8)
+            fixture = stored_clifford_fixture(d, k)
+            U = fixture.U
+            S = 2k
+
+            # inv(U) ∘ U is the identity operator on U's targets: ∘ applies
+            # its right operand first, so this is inv(U) after U, which must
+            # cancel exactly.
+            V = inv(U) ∘ U
+            identity_F = [Int(i == j) for i in 1:S, j in 1:S]
+            @test V.F == identity_F
+            @test all(iszero, V.a)
+            @test V.targets == U.targets
+
+            # conjugate(U, op) equals sequential named conjugation through
+            # fixture.gates, in the SAME order stored_clifford_fixture built U
+            # from. U's whole point is that its conjugation action equals
+            # that composed action for ANY op, not only the basis vectors
+            # used to build F -- conjugation is linear in the exponent
+            # vector, so the columns determine the map everywhere.
+            rng = Random.MersenneTwister(1000 + d * 100 + k)
+            xz = [rand(rng, 0:(d - 1)) for _ in 1:S]
+            phase = rand(rng, 0:(QuditClifford.phase_modulus(d) - 1))
+            op = GeneralPauli(xz, phase)
+            lhs = QuditClifford.conjugate(U, op)
+            ref = deepcopy(op)
+            for g in fixture.gates
+                ref = QuditClifford.conjugate(g, ref; d)
+            end
+            @test lhs.xz == ref.xz
+            @test mod(lhs.phase, QuditClifford.phase_modulus(d)) ==
+                  mod(ref.phase, QuditClifford.phase_modulus(d))
+
+            # U ∘ U applied to a tableau equals applying U twice.
+            UU = U ∘ U
+            tab1 = DestabilizerTableau(d, n; state = :product)
+            apply!(tab1, UU)
+            tab2 = DestabilizerTableau(d, n; state = :product)
+            apply!(tab2, U)
+            apply!(tab2, U)
+            @test tab1.stab == tab2.stab
+            @test tab1.destab == tab2.destab
+
+            # Stored apply! on the scrambled state equals applying
+            # fixture.gates in order -- what stored_clifford_group's
+            # "apply!/stored/k=$k" leaf (via scrambled_tableau) measures.
+            mk = tableau_maker(DestabilizerTableau, d, n)
+            scr = scrambled_tableau(mk, d, n; seed = 11)
+            stored = deepcopy(scr)
+            apply!(stored, U)
+            named = deepcopy(scr)
+            for g in fixture.gates
+                apply!(named, g)
+            end
+            @test stored.stab == named.stab
+            @test stored.destab == named.destab
+        end
+    end
+
+    @testset "Overflow-safe group reaches the safe tier and computes correctly" begin
+        d = 1_000_000_007
+        n = 8
+        k = 8
+        @test QuditClifford.max_safe_dimension(n) >= d   # the tableau stays safe
+        @test !QuditClifford.clifford_fast_dots(2k, d)    # but the Clifford dot does not
+
+        fixture = stored_clifford_fixture(d, k)
+        U = fixture.U
+        @test !U.fast
+
+        for T in (StabilizerTableau, DestabilizerTableau)
+            mk = tableau_maker(T, d, n; inversemod = QuditClifford.JustInTimeInvMod())
+            scr = scrambled_tableau(mk, d, n; seed = 20260910)
+            @test is_pure(scr; verify = true)
+
+            stored = deepcopy(scr)
+            apply!(stored, U)
+            named = deepcopy(scr)
+            for g in fixture.gates
+                apply!(named, g)
+            end
+            @test stored.stab == named.stab
+            T === DestabilizerTableau && @test stored.destab == named.destab
+        end
+    end
+
+    @testset "Registration preserves a baseline without CliffordOperator" begin
+        # The actual workload functions remain qualified to QuditClifford; this
+        # module controls feature detection and models an API surface without
+        # CliffordOperator.
+        named_only = Module(:NamedGatesOnly)
+        for name in (:apply!, :Fourier, :Phase, :SUM)
+            Core.eval(named_only, Expr(:const, Expr(:(=), name, getfield(QuditClifford, name))))
+        end
+        @test !isdefined(named_only, :CliffordOperator)
+        suite = BenchmarkGroup()
+        register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = named_only)
+        @test Set(keys(suite["clifford"])) == Set(["StabilizerTableau/d=3/n=8"])
+        # No stored/... key of any kind -- construct, algebra and safe
+        # included -- appears without CliffordOperator.
+        @test !any(startswith(k, "stored/") for k in keys(suite["clifford"]))
+        run(suite["clifford"]; samples = 1, evals = 1, seconds = 0.05)
+
+        head = BenchmarkGroup()
+        register_clifford_group!(head, (StabilizerTableau,), (3,), (8,); ks = (1, 2, 8))
+        @test haskey(head["clifford"], "stored/StabilizerTableau/d=3/n=8")
+        # With CliffordOperator, registration also adds the per-d algebra group
+        # and the fixed-d safe group beside the stored/construct cell.
+        @test haskey(head["clifford"], "stored/algebra/d=3")
+        @test haskey(head["clifford"], "stored/safe/d=1000000007")
     end
 end

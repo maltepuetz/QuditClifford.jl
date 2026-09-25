@@ -66,7 +66,7 @@ const _BARRETT_VALID = Bool[_barrett_ok(_barrett_mul(d), d) for d in 1:_BARRETT_
 
 # The lower bound on the table index is load-bearing, not decorative: the read
 # is `@inbounds`, so a non-positive `d` would read off the front of the table
-# and return whatever was there. No caller can reach that today -- both tableau
+# and return whatever was there. No caller reaches that -- both tableau
 # builders reject a non-prime `d` -- but the guard is one comparison and the
 # alternative is undefined behaviour. `false` is the right answer there anyway:
 # it routes to the fallback tier rather than claiming a Barrett constant for a
@@ -94,7 +94,7 @@ end
 #   a == 1    subtract, then one conditional add        (no multiply)
 #   a == d-1  -(d-1) == +1 (mod d): add, then one conditional subtract
 #   Barrett   multiply, shift-reduce, then conditional add
-#   otherwise the original divide-twice loop, unchanged
+#   otherwise the divide-twice loop
 #
 # The two multiply-free tiers cover every multiplier that occurs at d = 2 and
 # d = 3: in `canonicalize!` the multiplier is a nonzero tableau entry, and in

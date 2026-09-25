@@ -19,4 +19,5 @@ using Aqua
     include("purity.jl")
     include("initialization.jl")
     include("unitaries.jl")
+    include("clifford_operators.jl")
 end

@@ -652,8 +652,8 @@ end
         end
     end
 
-    # The spec's symplectic counterexample F = [A A; 0 A^(-T)]. This is
-    # internal kernel data, not a premature public P2 CliffordOperator API.
+    # A symplectic counterexample F = [A A; 0 A^(-T)], handed to the tuple
+    # kernel directly as prepared data.
     d = Sys.WORD_SIZE == 64 ? 2147483647 : 32749
     M = mod.([-1 -1 -1 -1; 0 -1 0 -1; 0 0 -1 0; 0 0 1 -1], d)
     F = ntuple(j -> ntuple(i -> M[i, j], 4), 4)
@@ -872,9 +872,8 @@ end
     # DoublePauli. TriplePauli and NPauli -- including the empty-support
     # NPauli{0}, which represents the identity -- get the same sparse/dense
     # agreement check that "conjugate normalization and validation" already
-    # uses for SinglePauli. Pinned at d = 5, n = 4 under SUM(2, 4, 3): a
-    # reviewer verified this combination is already correct, so this pins
-    # behaviour rather than hunting a bug.
+    # uses for SinglePauli. Pinned at d = 5, n = 4 under SUM(2, 4, 3), a
+    # combination known to be correct, so this pins behaviour.
     d = 5
     n = 4
     g = SUM(2, 4, 3)

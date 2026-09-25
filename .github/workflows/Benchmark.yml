@@ -81,9 +81,9 @@ jobs:
           # benchmark/README.md.
           job-summary: 'true'
           # Take the suite from THIS branch's checkout. Without it benchpkg
-          # downloads benchmark/benchmarks.jl from the default branch, which
-          # fails outright until this PR lands and, afterwards, would let the
-          # two revisions be measured by two different suites.
+          # downloads benchmark/benchmarks.jl from the default branch, so a
+          # suite change could not be measured by its own branch, and the two
+          # revisions could be measured by two different suites.
           script: 'benchmark/benchmarks.jl'
           # Explicit because github.event.pull_request.head.sha is empty on
           # workflow_dispatch; without the fallback the A/B collapses to one

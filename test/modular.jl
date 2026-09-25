@@ -30,8 +30,8 @@ const LARGE_PRIMES = Int[p for p in (1009, 10007, 100003, 1000003, 10000019,
                          if p <= typemax(Int)]
 
 # d = 131 is in here because the guard REJECTS Barrett there, so the fallback
-# path is exercised; 127 is the largest prime under 128, the ceiling for a
-# future Int8 element type; 443 is the largest accepted Barrett modulus.
+# path is exercised; 127 is the largest prime under 128, the Int8 ceiling;
+# 443 is the largest accepted Barrett modulus.
 # NB top level: `const` inside a `@testset` body is a syntax error.
 const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
 
@@ -128,7 +128,7 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         end
     end
 
-    # Naive references. Deliberately written the way the call sites read today,
+    # Naive references. Deliberately written the way the call sites read,
     # so a mismatch means the primitive is wrong, not that the reference drifted.
     _ref_submul(dst, src, a, d) = [mod(dst[i] - mod(a * src[i], d), d) for i in eachindex(dst)]
     _ref_addmul(dst, src, a, d) = [mod(dst[i] + mod(a * src[i], d), d) for i in eachindex(dst)]

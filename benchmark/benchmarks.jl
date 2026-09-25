@@ -21,18 +21,21 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~85 s per revision
+#   ci     n in (64, 256)      the PR job; ~95 s per revision
 #   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
 #
 # d = 5 is in `ci` because it is the smallest prime that takes the Barrett tier
 # in src/modular.jl. Without it no pull-request benchmark executes that tier at
 # all, and a guard that started rejecting every d would look like no change.
 const CONFIG = if PROFILE == "smoke"
-    (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false)
+    (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false,
+     stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "ci"
-    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false)
+    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false,
+     stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "full"
-    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true)
+    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true,
+     stored_ks = (1, 2, 8, 32, 128), stored_product = true)
 else
     error("Unknown QC_BENCH_PROFILE = $(repr(PROFILE)); expected \"smoke\", \"ci\" or \"full\".")
 end
@@ -59,11 +62,17 @@ for T in TYPES, d in CONFIG.ds
 end
 
 # ---------------------------------------------------------------- clifford
-# Gate application across dimension, size and representation. Unlike measure!,
-# the cost per gate is O(k^2 * m) with k <= 2, so this is a linear-in-m probe
-# rather than a branch-sensitive one.
-
-register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns)
+# Named gate application has k <= 2; stored fixtures also vary runtime support
+# size, k in CONFIG.stored_ks -- (1, 2, 8) in smoke/ci, plus 32 and 128 in
+# full. The stored apply! leaf runs on a seeded, dense scrambled_tableau; full
+# also adds a :product-state leaf per k (CONFIG.stored_product), the sparse
+# input the dense matvec's zero-skip fast path serves. Stored
+# construction, the algebra ops (conjugate/inv/compose) and m=0 validation are
+# timed in separate leaves; a fixed large-d leaf gives the overflow-safe
+# arithmetic tier its own coverage regardless of profile. The registration
+# function omits unsupported APIs on older baselines.
+register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
+                         ks = CONFIG.stored_ks, product = CONFIG.stored_product)
 
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
@@ -116,8 +125,8 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
 
     # Pauli sparsity. commutation_col is O(weight) for the FewQuditPauli types
     # but O(n) for GeneralPauli, and the destabilizer dual re-orthogonalization
-    # is now restricted to the operator's support -- so a dense operator
-    # regresses that path back to full O(n*m). This is the probe that guards it.
+    # is restricted to the operator's support -- so a dense operator pays the
+    # full O(n*m) on that path. This is the probe that guards it.
     let mk = tableau_maker(DestabilizerTableau, d, n)
         # Sites spread across the chain at every weight, so these rows differ in
         # weight and not in where the support happens to sit.
@@ -174,8 +183,8 @@ end
 # samples, not a longer job. That makes the CI budget exact rather than a hope.
 #
 # Tiers are set so even the slowest leaf clears ~13 samples on a runner ~3x
-# slower than the development machine. That is deliberately modest: the first
-# CI run showed sample count is NOT what limits this suite. Error bars come
+# slower than the development machine. That is deliberately modest: on CI,
+# sample count is NOT what limits this suite. Error bars come
 # back under 2% almost everywhere, while ratios between the two revisions
 # scatter up to 14% -- that gap is build-to-build difference, not sampling, and
 # no amount of extra samples touches it. Spending budget to shrink an error bar
@@ -185,12 +194,12 @@ function _budget(profile, keypath)
     profile == "smoke" && return 0.05
     # full is a manual sweep with a 90 min ceiling and no PR loop waiting on
     # it, so it can afford a wider slice than ci. At scale 2.0 its heaviest
-    # leaves bottomed out at 7 samples locally, which is ~2 on a CI runner --
-    # below the point where a median can reject a single outlier.
+    # leaves would get only 7 samples locally, ~2 on a CI runner -- below the
+    # point where a median can reject a single outlier.
     scale = profile == "full" ? 3.0 : 1.0
     # Dispatch on the top-level group, not a substring of the joined path:
-    # "midcircuit" contains "circuit", and matching that handed the midcircuit
-    # leaves the five-second slot meant for whole trajectories.
+    # "midcircuit" contains "circuit", and a substring match would hand the
+    # midcircuit leaves the five-second slot meant for whole trajectories.
     group = first(keypath)
     joined = join(keypath, "/")
 
@@ -203,13 +212,12 @@ function _budget(profile, keypath)
     # ~150 ms on a CI runner, against well under 1 ms for everything else in
     # the cell. They still need a bigger slice than the default.
     #
-    # 2.0 s rather than the 3.0 s this started at. The first CI run showed
-    # these are already the most precise rows in the table -- 0.998 +/- 0.0019
-    # at ~19 samples, because they are pure integer work with no allocation
-    # variance. Within-revision precision of 0.2% is far below the ~5-10%
-    # between-revision scatter it is being compared against, so the extra
-    # second bought nothing. 2.0 s still clears ~13 samples on a runner 3x
-    # slower than a dev machine.
+    # 2.0 s is enough: on CI these are already the most precise rows in the
+    # table -- 0.998 +/- 0.0019 at ~19 samples, because they are pure integer
+    # work with no allocation variance. Within-revision precision of 0.2% is
+    # far below the ~5-10% between-revision scatter it is being compared
+    # against, so a larger slice would buy nothing. 2.0 s still clears ~13
+    # samples on a runner 3x slower than a dev machine.
     #
     # The midcircuit canonicalize! starts from a nearly canonical tableau and
     # is ~20x cheaper, so it stays in the default tier.
