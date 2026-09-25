@@ -337,7 +337,7 @@ A pure state produced by `depth` seeded rounds of *unitary* Clifford action on
 `mk(:product)`, rather than by measurement: each round, for every qudit `q` in
 `1:n`, applies `Fourier(q)` or `Phase(q)` (a seeded coin) and then `SUM(q, q2,
 c)` to a seeded partner `q2 != q` with coefficient `c in 1:(d-1)`. Only named
-P1 gates are used, so `apply!` keeps a `DestabilizerTableau`'s dual basis and
+gates are used, so `apply!` keeps a `DestabilizerTableau`'s dual basis and
 `xdotz_cache` consistent with no extra bookkeeping here, and the result stays
 physical: `is_pure(tab; verify = true)`.
 
@@ -400,8 +400,8 @@ support size `k` in `ks`. Every `k` gets:
 
 When `product`, also `"apply!/stored/product/k=\$k"` on a freshly restored
 `:product` state -- the sparse, mostly-zero/one-hot input the dense matvec's
-fast path was added for, and what the scrambled leaf above deliberately no
-longer measures. Meant for the `full` profile only (see `CONFIG` in
+zero-skip fast path serves, which the scrambled leaf above deliberately avoids.
+Meant for the `full` profile only (see `CONFIG` in
 `benchmark/benchmarks.jl`), so this demonstration leaf never costs the
 PR-blocking `ci` job any samples.
 
@@ -546,8 +546,9 @@ function stored_clifford_safe_group(types)
     return group
 end
 
-# The PR-head script runs against both head and the older baseline package.
-# Do not call any new gate constructor until every API this group uses exists.
+# The PR-head script also runs against the baseline package, which may lack APIs
+# this file uses. Check that every API a group needs exists before calling any
+# of its constructors.
 #
 # `ks` and `product` thread straight through to `stored_clifford_group`.
 # `stored_clifford_construct_group` and `stored_clifford_algebra_group` reuse
@@ -722,10 +723,11 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     # the workspace -- so a caller reaching it after a run of measure! has
     # iscanonical == false, and how much the elimination in rank_fp_cols! has to
     # do depends entirely on how close the generators already are to echelon
-    # form. Sharing the canonicalized tableau above measured a state no caller is
-    # in: at n = 256 the restricted generator matrix of a dirty
+    # form. Sharing the canonicalized tableau above would measure a state no
+    # caller is in: at n = 256 the restricted generator matrix of a dirty
     # DestabilizerTableau needs 424 eliminations against 2 canonical, so the leaf
-    # understated the real cost and was nearly blind to changes in the kernel.
+    # would understate the real cost and be nearly blind to changes in the
+    # kernel.
     #
     # A StabilizerTableau barely moves either way, and that is a real asymmetry
     # rather than a flaw here: `coeffs_from_generators!` canonicalizes it on

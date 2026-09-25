@@ -30,9 +30,9 @@ Reported values are **medians**, not minima.
 
 ### What the noise actually looks like
 
-These numbers are measured, not estimated. The pull request that introduced
-this suite touched no `src/`, so its own run was a null experiment: 108 rows
-whose true ratio is exactly 1.00. On `ubuntu-latest`:
+These numbers are measured, not estimated, in a null experiment: a run whose
+two revisions have identical `src/`, so all 108 rows have a true ratio of
+exactly 1.00. On `ubuntu-latest`:
 
 - median and mean ratio **1.000 / 0.999** — no systematic bias between the two
   revisions
@@ -45,8 +45,8 @@ run where nothing had changed. **Never conclude anything from a single row.**
 ### The error bars do not bound the noise
 
 Each cell renders as `median ± interquartile range`. It is tempting to dismiss
-any ratio whose deviation from 1 is smaller than that `±`, and an earlier
-version of this file said to. That rule is wrong, and the null run shows why:
+any ratio whose deviation from 1 is smaller than that `±`. That rule is wrong,
+and the null run shows why:
 **39 of the 108 rows deviated from 1.00 by more than their own error bar.**
 
 The error bar measures how precisely each revision was measured *within* its

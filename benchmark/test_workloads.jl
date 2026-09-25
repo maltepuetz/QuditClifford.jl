@@ -268,17 +268,18 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
-    @testset "Clifford registration preserves an older baseline" begin
+    @testset "Clifford registration skips a baseline without the Clifford API" begin
         suite = BenchmarkGroup()
         existing = BenchmarkGroup()
         suite["existing"] = existing
-        legacy = Module(:CliffordAPINotYetPresent)
-        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = legacy) === suite
+        no_clifford_api = Module(:NoCliffordAPI)
+        @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = no_clifford_api) === suite
         @test Set(keys(suite)) == Set(["existing"])
         @test suite["existing"] === existing
 
-        # In this checkout the new APIs exist, so normal registration adds the
-        # group alongside the old one, rather than replacing the whole suite.
+        # In this checkout the Clifford APIs exist, so normal registration adds
+        # the clifford group alongside the existing one, rather than replacing
+        # the whole suite.
         @test register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,)) === suite
         @test haskey(suite, "clifford")
         @test suite["existing"] === existing
@@ -352,9 +353,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
 
         # register_clifford_group! must add exactly one construct cell per d,
-        # regardless of how many (T, n) cells share that d -- the duplication
-        # F6 fixed (construct leaves used to live inside stored_clifford_group,
-        # once per (T, n) cell).
+        # regardless of how many (T, n) cells share that d.
         suite = BenchmarkGroup()
         register_clifford_group!(suite, (StabilizerTableau, DestabilizerTableau), (3,), (8, 16))
         construct_keys = [k for k in keys(suite["clifford"]) if startswith(k, "stored/construct/")]
@@ -517,13 +516,13 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # The actual workload functions remain qualified to QuditClifford; this
         # module controls feature detection and models an API surface without
         # CliffordOperator.
-        p1 = Module(:CliffordP1Only)
+        named_only = Module(:NamedGatesOnly)
         for name in (:apply!, :Fourier, :Phase, :SUM)
-            Core.eval(p1, Expr(:const, Expr(:(=), name, getfield(QuditClifford, name))))
+            Core.eval(named_only, Expr(:const, Expr(:(=), name, getfield(QuditClifford, name))))
         end
-        @test !isdefined(p1, :CliffordOperator)
+        @test !isdefined(named_only, :CliffordOperator)
         suite = BenchmarkGroup()
-        register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = p1)
+        register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,); api = named_only)
         @test Set(keys(suite["clifford"])) == Set(["StabilizerTableau/d=3/n=8"])
         # No stored/... key of any kind -- construct, algebra and safe
         # included -- appears without CliffordOperator.
@@ -533,9 +532,8 @@ include(joinpath(@__DIR__, "workloads.jl"))
         head = BenchmarkGroup()
         register_clifford_group!(head, (StabilizerTableau,), (3,), (8,); ks = (1, 2, 8))
         @test haskey(head["clifford"], "stored/StabilizerTableau/d=3/n=8")
-        # The per-d algebra group and the fixed-d safe group are both new in
-        # this task; the head API creates them alongside the pre-existing
-        # stored/construct cell.
+        # With CliffordOperator, registration also adds the per-d algebra group
+        # and the fixed-d safe group beside the stored/construct cell.
         @test haskey(head["clifford"], "stored/algebra/d=3")
         @test haskey(head["clifford"], "stored/safe/d=1000000007")
     end
