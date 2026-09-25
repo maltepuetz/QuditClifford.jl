@@ -467,9 +467,10 @@ registered once per `d` by `register_clifford_group!` rather than once per
 
 `U = stored_clifford_fixture(d, k).U`, built outside any timed body:
 
-- `"conjugate/k=\$k"` conjugates a seeded, dense `GeneralPauli` on `U`'s own
-  `2k`-qudit register with a random phase -- exercising the general Heisenberg
-  path rather than a single weight-1 basis generator. `test_workloads.jl`
+- `"conjugate/k=\$k"` conjugates a seeded `GeneralPauli` on `U`'s own
+  `k`-qudit register, dense in all `2k` exponent coordinates and with a random
+  phase -- exercising the general Heisenberg path rather than a single weight-1
+  basis generator. `test_workloads.jl`
   checks it against sequential named conjugation through `fixture.gates`.
 - `"inv/k=\$k"` and `"compose/k=\$k"` (`U ∘ U`) are allocating calls that leave
   `U` and its scratch untouched, so neither needs `evals = 1` or a snapshot
