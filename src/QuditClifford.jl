@@ -16,7 +16,7 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     CliffordOperator,
     apply!, conjugate,
     random_clifford, random_clifford!, random_state!,
-    StabilizerKet, ket, state_vector
+    StabilizerKet, ket, state_vector, density_matrix
 
 import Random, Primes
 import Random.rand!

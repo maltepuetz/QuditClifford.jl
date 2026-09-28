@@ -362,3 +362,154 @@ end
     err = dense_thrown(() -> state_vector(TT(3, 100; state=:ghz)))
     @test err isa ArgumentError && occursin("3^100", err.msg)
 end
+
+##################
+# density_matrix #
+##################
+
+ref_embed(d, n, q, u) = kron(Matrix{ComplexF64}(I, d^(q - 1), d^(q - 1)), u,
+                                Matrix{ComplexF64}(I, d^(n - q), d^(n - q)))
+ref_fourier(d) = [ref_omega(r * c, d) / sqrt(d) for r in 0:d-1, c in 0:d-1]
+ref_phase_gate(d) = d == 2 ? ComplexF64[1 0; 0 im] :
+    Matrix{ComplexF64}(Diagonal([ref_omega(j * (j - 1) ÷ 2, d) for j in 0:d-1]))
+function ref_multiplier(d, a)
+    M = zeros(ComplexF64, d, d)
+    for j in 0:d-1
+        M[mod(a * j, d)+1, j+1] = 1
+    end
+    return M
+end
+
+# A gate given by its action on basis labels, c ↦ amplitude · |c′⟩.
+function ref_monomial(d, n, action)
+    D = d^n
+    U = zeros(ComplexF64, D, D)
+    for col in 1:D
+        c′, amp = action(ref_digits(col, d, n))
+        U[ref_index(c′, d), col] += amp
+    end
+    return U
+end
+function ref_sum(d, n, ctl, tgt, a)
+    return ref_monomial(d, n, c -> begin
+        c′ = copy(c)
+        c′[tgt] = mod(c[tgt] + a * c[ctl], d)
+        (c′, 1.0)
+    end)
+end
+ref_cphase(d, n, q1, q2, a) =
+    ref_monomial(d, n, c -> (c, ref_omega(a * c[q1] * c[q2], d)))
+function ref_swap(d, n, q1, q2)
+    return ref_monomial(d, n, c -> begin
+        c′ = copy(c)
+        c′[q1], c′[q2] = c[q2], c[q1]
+        (c′, 1.0)
+    end)
+end
+
+# (gate, U) for all seven named gates on n >= 2 qudits: nontrivial
+# coefficients, a reversed control/target, and nonadjacent targets at n = 3.
+function ref_gate_cases(d, n)
+    cases = Any[
+        (Fourier(2), ref_embed(d, n, 2, ref_fourier(d))),
+        (Phase(n), ref_embed(d, n, n, ref_phase_gate(d))),
+        (PauliGate(1, 1, d - 1), ref_embed(d, n, 1, ref_shift(d) * ref_clock(d)^(d - 1))),
+        (SUM(n, 1, d - 1), ref_sum(d, n, n, 1, d - 1)),
+        (SUM(1, 2), ref_sum(d, n, 1, 2, 1)),
+        (CPhase(1, n, d - 1), ref_cphase(d, n, 1, n, d - 1)),
+        (SWAP(n, 1), ref_swap(d, n, n, 1)),
+    ]
+    d > 2 && push!(cases, (Multiplier(2, d - 1), ref_embed(d, n, 2, ref_multiplier(d, d - 1))))
+    return cases
+end
+
+# Every Pauli word P(x, z, a) on n qudits with every central phase a, checking
+# tr(ρ P) against expect! on a COPY: expect! may canonicalize, and running it on
+# the original would hide a mutation made by the conversion. Returns the
+# failing (x, z, a), so a failure names its word.
+function dense_expect_mismatches(tab, rho)
+    d, n = tab.d, tab.n
+    bad = Tuple{Vector{Int},Vector{Int},Int}[]
+    for w in 0:(d^(2n)-1)
+        xz = [div(w, d^(i - 1)) % d for i in 1:(2n)]
+        x, z = xz[1:n], xz[(n+1):(2n)]
+        for a in 0:(ref_p(d)-1)
+            lhs = tr(rho * ref_pauli(d, x, z, a))
+            rhs = expect!(deepcopy(tab), GeneralPauli(xz, a))
+            isapprox(lhs, rhs; atol=1e-10) || push!(bad, (x, z, a))
+        end
+    end
+    return bad
+end
+
+
+@testset "Dense basis counter against recomputation" begin
+    # (3, 2) is where a row digit wraps without a column carry; (5, 1) makes
+    # the wrap distance d - 1 = 4
+    for (d, n) in ((2, 3), (3, 2), (5, 1))
+        D, p = d^n, ref_p(d)
+        strides = QC._kron_strides(d, n)
+        bad = Tuple{Vector{Int},Int}[]
+        for w in 0:(d^(2n)-1), a in 0:(p-1)
+            xz = [div(w, d^(i - 1)) % d for i in 1:(2n)]
+            rho = zeros(ComplexF64, D, D)
+            QC._add_pauli!(rho, xz, a, n, d, p, p ÷ d, strides, zeros(Int, n), zeros(Int, n), 1.0)
+            isapprox(rho, ref_pauli(d, xz[1:n], xz[(n+1):(2n)], a); atol=1e-12) || push!(bad, (xz, a))
+        end
+        @test isempty(bad)
+    end
+end
+
+@testset "density_matrix agrees with expect! and the projector ($label, d=$d)" for (label, TT) in DENSE_TABLEAU_TYPES, d in (2, 3)
+    for n in 1:3, mixed in (false, true), trial in 1:2
+        tab = dense_random_tableau(TT, d, n, Xoshiro(3000d + 100n + 10mixed + trial); mixed)
+        rho = density_matrix(tab)
+        @test isempty(dense_expect_mismatches(tab, rho))
+        @test rho ≈ ref_projector(tab) / d^(n - tab.m) atol = 1e-10
+    end
+end
+
+@testset "density_matrix structure ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    for d in (2, 3), n in 1:3, mixed in (false, true)
+        tab = dense_random_tableau(TT, d, n, Xoshiro(4000d + 10n + mixed); mixed)
+        rho = density_matrix(tab)
+        R = d^(n - tab.m)
+        @test rho ≈ rho' atol = 1e-12
+        @test tr(rho) ≈ 1
+        @test rho * rho ≈ rho / R atol = 1e-10
+        vals = eigvals(Hermitian(rho))
+        @test count(v -> v > 1e-9, vals) == R
+        @test all(v -> abs(v) < 1e-9 || abs(v - 1 / R) < 1e-9, vals)
+        if tab.m == n
+            ψ = state_vector(tab)
+            @test rho ≈ ψ * ψ' atol = 1e-10
+        end
+    end
+    # Z₁ alone on two qubits: |0⟩⟨0| ⊗ I/2, a mixed tensor product
+    @test density_matrix(TT(2, reshape([0, 0, 1, 0, 0], 5, 1))) ≈ kron([1 0; 0 0], Matrix(I, 2, 2) / 2)
+    @test density_matrix(TT(3, 2; state=:mixed)) ≈ Matrix(I, 9, 9) / 9
+    @test density_matrix(TT(2, 0)) == fill(1.0 + 0im, 1, 1)
+end
+
+@testset "apply! agrees with U ρ U† ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    for (d, n) in ((2, 3), (3, 3), (5, 2)), mixed in (false, true)
+        rng = Xoshiro(5000d + 10n + mixed)
+        for (g, U) in ref_gate_cases(d, n)
+            tab = dense_random_tableau(TT, d, n, rng; mixed)
+            before = density_matrix(tab)
+            apply!(tab, g)
+            @test density_matrix(tab) ≈ U * before * U' atol = 1e-10
+        end
+    end
+end
+
+@testset "density_matrix: contract ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    dense_check_contract(density_matrix, TT; needs_pure=false)
+end
+
+@testset "density_matrix: budgets are exact at the threshold ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    @test size(density_matrix(TT(3, 2; state=:ghz); maxentries=81)) == (9, 9)
+    @test_throws ArgumentError density_matrix(TT(3, 2; state=:ghz); maxentries=80)
+    err = dense_thrown(() -> density_matrix(TT(3, 100; state=:ghz)))
+    @test err isa ArgumentError && occursin("3^100", err.msg)
+end
