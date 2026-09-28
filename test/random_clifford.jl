@@ -556,3 +556,284 @@ end
     @test !U.fast
     @test rc_refill_allocations(Xoshiro(2), U) == 0
 end
+
+###########################
+# Uniformly random states #
+###########################
+
+const RC_TABLEAU_TYPES = [("StabilizerTableau", StabilizerTableau),
+                          ("DestabilizerTableau", DestabilizerTableau)]
+
+# ζ^h ⊗_q X^x_q Z^z_q with ζ = i at d = 2 and ω = exp(2πi/d) otherwise; qudit 1
+# is the leftmost Kronecker factor.
+function rc_pauli_matrix(xz, h, d::Int)
+    n = length(xz) ÷ 2
+    ω = cis(2π / d)
+    ζ = d == 2 ? complex(0.0, 1.0) : ω
+    X = zeros(ComplexF64, d, d)
+    for j in 0:(d - 1)
+        X[mod(j + 1, d) + 1, j + 1] = 1
+    end
+    Z = Matrix{ComplexF64}(Diagonal([ω^j for j in 0:(d - 1)]))
+    M = ones(ComplexF64, 1, 1)
+    for q in 1:n
+        M = kron(M, X^xz[q] * Z^xz[n + q])
+    end
+    return ζ^h * M
+end
+
+# The density matrix of the group the active columns generate:
+# ρ = ∏_j (Σ_t g_j^t / d) / d^(n - m), from the stored phases.
+function rc_density(tab)
+    d, n, m = tab.d, tab.n, tab.m
+    ρ = Matrix{ComplexF64}(I, d^n, d^n)
+    for j in 1:m
+        g = rc_pauli_matrix(tab.stab[1:(2n), j], tab.stab[2n + 1, j], d)
+        ρ *= sum(g^t for t in 0:(d - 1)) / d
+    end
+    return ρ / d^(n - m)
+end
+
+# Rounded for use as a Set key; `+ 0.0` folds -0.0 into 0.0.
+rc_density_key(ρ) = map(z -> complex(round(real(z); digits = 8) + 0.0,
+                                     round(imag(z); digits = 8) + 0.0), ρ)
+
+rc_same(a, b) = a == b
+rc_same(a::QC.PrecomputedInvMod, b::QC.PrecomputedInvMod) = a.lookuptable == b.lookuptable
+# Every field's object and a deep copy of its contents: an unchanged tableau
+# holds the same arrays with the same entries.
+rc_snapshot(tab) = [(getfield(tab, f), deepcopy(getfield(tab, f))) for f in fieldnames(typeof(tab))]
+rc_unchanged(tab, snap) =
+    all(getfield(tab, f) === ref && rc_same(getfield(tab, f), contents)
+        for (f, (ref, contents)) in zip(fieldnames(typeof(tab)), snap))
+
+# (d, n, m) => stabilizer groups with phases, isotropic subspaces. There are
+# I(n, m, d) = ∏_{i=0}^{m-1} (d^(2(n-i)) - 1) / ∏_{j=1}^{m} (d^j - 1) subspaces
+# and d^m · I groups; only the full products divide exactly.
+const RC_STATE_COUNTS = [((2, 1, 1), 6, 3), ((3, 1, 1), 12, 4), ((2, 2, 1), 30, 15),
+                         ((2, 2, 2), 60, 15), ((3, 2, 1), 120, 40)]
+
+@testset "States are uniform over stabilizer groups ($label)" for (label, TT) in RC_TABLEAU_TYPES
+    for ((d, n, m), nstates, nspaces) in RC_STATE_COUNTS
+        blocks, L = rc_alpha_blocks(n, m)
+        tab = TT(d, n)
+        states = Dict{Matrix{ComplexF64},Int}()
+        failure = nothing
+        for (index, script) in enumerate(rc_scripts(d, blocks, L + m))
+            src = RCScript(script)
+            random_state!(src, tab; m)
+            ρ = rc_density(tab)
+            failure = rc_failed((; d, n, m, index),
+                :consumed => rc_consumed_all(src),
+                :physical => ρ ≈ ρ' && tr(ρ) ≈ 1 && ρ * ρ ≈ ρ / d^(n - m))
+            failure === nothing || break
+            key = rc_density_key(ρ)
+            states[key] = get(states, key, 0) + 1
+        end
+        @test failure === nothing
+        @test length(states) == nstates
+        @test allequal(values(states))
+
+        # Phase-free runs have no phase suffix and are keyed by row space.
+        plain = TT(d, n; storephase = false)
+        spaces = Dict{Matrix{Int},Int}()
+        failure = nothing
+        for (index, script) in enumerate(rc_scripts(d, blocks, L))
+            src = RCScript(script)
+            random_state!(src, plain; m)
+            failure = rc_failed((; d, n, m, index, storephase = false),
+                :consumed => rc_consumed_all(src))
+            failure === nothing || break
+            key = first(rc_rref(permutedims(plain.stab[:, 1:m]), d))
+            spaces[key] = get(spaces, key, 0) + 1
+        end
+        @test failure === nothing
+        @test length(spaces) == nspaces
+        @test allequal(values(spaces))
+    end
+end
+
+@testset "random_state! validates m before drawing or mutating ($label)" for (label, TT) in RC_TABLEAU_TYPES
+    tab = TT(3, 3; state = :ghz)
+    snap = rc_snapshot(tab)
+    none = RCScript(Int[])
+    @test_throws ArgumentError random_state!(none, tab; m = -1)
+    @test_throws ArgumentError random_state!(none, tab; m = 4)
+    @test_throws ArgumentError random_state!(tab; m = 4)
+    @test rc_unchanged(tab, snap)
+    # m = 0 is the maximally mixed state, drawn from nothing, even at n = 0.
+    @test random_state!(none, tab; m = 0) === tab
+    @test tab.m == 0 && all(iszero, tab.stab) && !tab.iscanonical
+    TT === DestabilizerTableau && @test all(iszero, tab.destab) && all(iszero, tab.xdotz_cache)
+    empty = TT(3, 0)
+    @test random_state!(none, empty) === empty && empty.m == 0
+    @test_throws ArgumentError random_state!(none, empty; m = 1)
+    @test none.pos == 0
+end
+
+@testset "State draws: m(4n - 2m + 1), plus m phases when stored" begin
+    for (_, TT) in RC_TABLEAU_TYPES, d in (2, 3), storephase in (false, true), n in 1:4, m in 0:n
+        script = rc_simple_script(n, m, storephase ? m : 0)
+        @test length(script) == m * (4n - 2m + 1) + (storephase ? m : 0)
+        src = RCScript(script)
+        tab = TT(d, n; storephase)
+        @test random_state!(src, tab; m) === tab && rc_consumed_all(src)
+    end
+end
+
+@testset "A failed draw leaves the tableau untouched ($label)" for (label, TT) in RC_TABLEAU_TYPES
+    for d in (2, 3), storephase in (false, true), m in (1, 2)
+        accepted = rc_simple_script(2, m, storephase ? m : 0)
+        # The same script after one rejected α block (2r = 4 draws at step 1).
+        for script in (accepted, [zeros(Int, 4); accepted]), allowed in 0:(length(script) - 1)
+            tab = TT(d, 2; state = :ghz, storephase)
+            canonicalize!(tab)
+            snap = rc_snapshot(tab)
+            failing = RCThrowing(RCScript(script), allowed)
+            @test_throws RCInjectedFailure random_state!(failing, tab; m)
+            @test failing.count == allowed
+            @test rc_unchanged(tab, snap)
+        end
+    end
+end
+
+@testset "Seeds reproduce states; the RNG-free form uses the default RNG" begin
+    for (_, TT) in RC_TABLEAU_TYPES, d in (2, 3)
+        a = random_state!(Xoshiro(4), TT(d, 5); m = 3)
+        b = random_state!(Xoshiro(4), TT(d, 5); m = 3)
+        @test a.stab == b.stab
+        Random.seed!(12)
+        c = random_state!(TT(d, 5); m = 3)
+        Random.seed!(12)
+        @test random_state!(Random.default_rng(), TT(d, 5); m = 3).stab == c.stab
+        Random.seed!(13)
+        e = random_state!(TT(d, 5))
+        Random.seed!(13)
+        @test random_state!(Random.default_rng(), TT(d, 5); m = 5).stab == e.stab
+    end
+end
+
+@testset "Random states keep every tableau invariant ($label)" for (label, TT) in RC_TABLEAU_TYPES
+    rng = Xoshiro(33)
+    for d in (2, 3), storephase in (false, true)
+        cases = [(n, m) for n in (0, 1, 3) for m in 0:n]
+        append!(cases, [(16, m) for m in (0, 1, 8, 16)])
+        for (n, m) in cases, start in (:mixed, :ghz, :canonical)
+            tab = TT(d, n; state = start === :mixed ? :mixed : :ghz, storephase,
+                     inversemod = QC.JustInTimeInvMod())
+            start === :canonical && canonicalize!(tab)
+            fields = fieldnames(typeof(tab))
+            before = map(f -> getfield(tab, f), fields)
+            @test random_state!(rng, tab; m) === tab
+            @test tab.d == d && tab.n == n && tab.m == m && tab.storephase == storephase
+            @test !tab.iscanonical && tab.inversemod === QC.JustInTimeInvMod()
+            @test all(f -> !(getfield(tab, f) isa Array) ||
+                           getfield(tab, f) === before[findfirst(==(f), fields)], fields)
+            @test all(x -> 0 <= x < d, tab.stab[1:(2n), :])
+            storephase && @test all(x -> 0 <= x < QC.phase_modulus(d), tab.stab[2n + 1, :])
+            @test all(iszero, tab.stab[:, (m + 1):n])
+            # The raw constructor checks commutation and independence. At m = 0
+            # there is nothing to check, and a 0 × 0 raw matrix (n = 0 without a
+            # phase row) hangs the constructor's @turbo pass.
+            m > 0 && @test TT(d, tab.stab[:, 1:m]; m, storephase) isa TT
+            if storephase && d == 2
+                @test all(j -> iseven(tab.stab[2n + 1, j] -
+                                      sum(tab.stab[q, j] * tab.stab[n + q, j] for q in 1:n;
+                                          init = 0)), 1:m)
+            end
+            @test is_pure(tab; verify = true) == (m == n)
+            if TT === DestabilizerTableau
+                @test all(iszero, tab.destab[:, (m + 1):n])
+                @test all(iszero, tab.xdotz_cache[(m + 1):n])
+            end
+        end
+    end
+end
+
+# The state stabilized by Z_1, …, Z_m with duals X_1, …, X_m: a Z-basis product
+# tableau with its columns after m cleared. A bare reset! would be pure.
+function rc_z_fixture(TT, d::Int, n::Int, m::Int, storephase::Bool)
+    tab = TT(d, n; state = :product, basis = :Z, storephase)
+    tab.stab[:, (m + 1):n] .= 0
+    if tab isa DestabilizerTableau
+        tab.destab[:, (m + 1):n] .= 0
+        tab.xdotz_cache[(m + 1):n] .= 0
+    end
+    tab.m = m
+    return tab
+end
+
+@testset "random_state! equals the completed Clifford applied to ⟨Z_1, …, Z_m⟩" begin
+    n = 2
+    rng = Xoshiro(20260925)
+    for (d, stride, frames) in ((2, 1, 720), (3, 97, 535))
+        blocks, L = rc_alpha_blocks(n, n)
+        scripts = rc_scripts(d, blocks, L)[1:stride:end]
+        @test length(scripts) == frames
+        failure = nothing
+        for (index, script) in enumerate(scripts)
+            phase_draws = rand(rng, 0:(d - 1), 2n)
+            U = random_clifford!(RCScript([script; phase_draws]), rc_identity_operator(d, n))
+            for m in 0:n, storephase in (false, true), (_, TT) in RC_TABLEAU_TYPES
+                # State phase draw j is operator phase draw n + j; a phase-free
+                # state draws no phases at all.
+                prefix = script[1:last(rc_alpha_blocks(n, m))]
+                src = RCScript(storephase ? [prefix; phase_draws[(n + 1):(n + m)]] : prefix)
+                # A canonicalized start leaves a stale canonicalization workspace.
+                target = TT(d, n; state = :ghz, storephase)
+                canonicalize!(target)
+                random_state!(src, target; m)
+                expected = apply!(rc_z_fixture(TT, d, n, m, storephase), U)
+                destab = TT === DestabilizerTableau
+                failure = rc_failed((; d, index, m, storephase, tableau = nameof(TT)),
+                    :consumed => rc_consumed_all(src),
+                    :m => target.m == expected.m == m,
+                    :iscanonical => !target.iscanonical && !expected.iscanonical,
+                    :stab => target.stab == expected.stab,
+                    :destab => !destab || target.destab == expected.destab,
+                    :xdotz_cache => !destab || target.xdotz_cache == expected.xdotz_cache)
+                failure === nothing || break
+            end
+            failure === nothing || break
+        end
+        @test failure === nothing
+    end
+end
+
+@testset "States at a large modulus use the safe tier" begin
+    d, n = RC_D1, 2
+    @test !QC.clifford_fast_dots(2n, d)
+    for (_, TT) in RC_TABLEAU_TYPES, m in 1:n
+        tab = TT(d, n; inversemod = QC.JustInTimeInvMod())
+        random_state!(Xoshiro(m), tab; m)
+        S = tab.stab[1:(2n), 1:m]
+        @test all(x -> 0 <= x < d, S)
+        @test all(rc_pair(view(S, :, i), view(S, :, j), n, d) == 0 for i in 1:m, j in 1:m)
+        # Independence: a nonzero 2 × 2 minor when m = 2, a nonzero vector when m = 1.
+        @test m == 1 ? any(!iszero, S) :
+              any(mod(big(S[i, 1]) * S[j, 2] - big(S[j, 1]) * S[i, 2], d) != 0
+                  for i in 1:(2n), j in 1:(2n))
+        if TT === DestabilizerTableau
+            @test all(rc_pair(view(tab.destab, :, i), view(S, :, j), n, d) == (i == j)
+                      for i in 1:m, j in 1:m)
+            @test all(tab.xdotz_cache[j] ==
+                      mod(sum(big(S[q, j]) * S[n + q, j] for q in 1:n), d) for j in 1:m)
+        end
+    end
+end
+
+function rc_state_allocations(rng::AbstractRNG, tab, m::Int)
+    for _ in 1:3
+        random_state!(rng, tab; m)
+    end
+    return @allocated random_state!(rng, tab; m)
+end
+
+@testset "State scratch does not grow with m" begin
+    for (_, TT) in RC_TABLEAU_TYPES, d in (2, 3), storephase in (false, true)
+        tab = TT(d, 12; storephase)
+        rng = Xoshiro(3)
+        @test rc_state_allocations(rng, tab, 1) == rc_state_allocations(rng, tab, 12)
+        @test rc_state_allocations(rng, tab, 0) == 0
+    end
+end

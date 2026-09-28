@@ -55,6 +55,7 @@ conjugate
 ```@docs
 random_clifford
 random_clifford!
+random_state!
 ```
 
 ## Measurements

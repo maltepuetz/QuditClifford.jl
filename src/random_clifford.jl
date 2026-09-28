@@ -306,3 +306,114 @@ function random_clifford!(rng::Random.AbstractRNG, U::CliffordOperator)
 end
 
 random_clifford!(U::CliffordOperator) = random_clifford!(Random.default_rng(), U)
+
+###########################
+# Uniformly random states #
+###########################
+
+"""
+    random_state!([rng::AbstractRNG,] tab::AbstractTableau; m::Int = tab.n) -> tab
+
+Replace the state of `tab` with a uniformly random stabilizer state that has
+`m` independent commuting generators, and return `tab`.
+
+With `m == tab.n` the result is a uniformly random pure stabilizer state. With
+`0 < m < n` it is the normalized projector onto a uniformly random stabilizer
+code: the stabilizer group has `d^m` elements and the density matrix has rank
+`d^(n - m)`. `m == 0` gives the maximally mixed state and draws nothing. The
+state is the image of `|0⟩⟨0|^⊗m ⊗ I/d^(n-m)` under a uniformly random
+Clifford, sampled directly rather than by building that Clifford.
+
+With `storephase=false` the result is uniform over `m`-dimensional isotropic
+subspaces, and no phases are drawn. A [`DestabilizerTableau`](@ref) also gets
+its dual basis and cache, with no separate reconstruction.
+
+# Keyword Arguments
+- `m::Int = tab.n`: number of generators, `0 ≤ m ≤ tab.n`.
+
+# Throws
+`ArgumentError` unless `0 ≤ m ≤ tab.n`, before any draw or mutation.
+
+# Notes
+- Keeps `d`, `n`, `storephase`, the inversion strategy and every array of
+  `tab`, and clears `tab.iscanonical`.
+- For `m > 0`, each call allocates a `2n × 2n` scratch matrix and four
+  length-`2n` vectors, and costs `O(n²m)`. Every draw happens before `tab` is
+  modified, so an exception from the RNG leaves it unchanged, although the RNG
+  has advanced.
+- A fixed seed reproduces the state for the same RNG type, Julia version and
+  package version.
+
+# Examples
+```julia
+using Random
+tab = DestabilizerTableau(3, 4)
+random_state!(Xoshiro(1), tab)            # a random pure state
+random_state!(Xoshiro(2), tab; m = 2)     # a random stabilizer code
+```
+
+See also [`random_clifford`](@ref), [`reset!`](@ref).
+"""
+function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
+                       m::Int = tab.n)
+    n = tab.n
+    0 <= m <= n || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n = $n, got m = $m."))
+    m == 0 && return reset!(tab; state = :mixed)
+    d = tab.d
+    # The scratch is larger than the tableau, so check its own element and byte
+    # counts: Julia 1.10's array constructor accepts sizes whose element count
+    # overflows.
+    S = _clifford_size(n)
+    G = _set_identity!(Matrix{Int}(undef, S, S))
+    u, w = Vector{Int}(undef, S), Vector{Int}(undef, S)
+    α, β = Vector{Int}(undef, S), Vector{Int}(undef, S)
+    fast = clifford_fast_dots(S, d)
+    _sample_pairs!(rng, G, n, m, d, fast, u, w, α, β)
+    # Stage the commit in the sampler's spent vectors: β[j] is stabilizer j's
+    # x·z, α[j] its raw phase. These are the last draws.
+    for j in 1:m
+        β[j] = _col_xdotz_matrix(G, n + j, n, d, fast)
+    end
+    if tab.storephase
+        for j in 1:m
+            α[j] = d == 2 ? β[j] + 2 * _draw(rng, 2) : _draw(rng, d)
+        end
+    end
+    # Commit. Stabilizer j is the Z image G[:, n + j] and its dual the X image
+    # G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without any repair pass.
+    stab = tab.stab
+    fill!(stab, 0)
+    @inbounds for j in 1:m
+        for q in 1:S
+            stab[q, j] = G[q, n + j]
+        end
+        tab.storephase && (stab[S + 1, j] = α[j])
+    end
+    _write_random_duals!(tab, G, m, β)
+    tab.m = m
+    tab.iscanonical = false
+    return tab
+end
+
+random_state!(tab::AbstractTableau; m::Int = tab.n) =
+    random_state!(Random.default_rng(), tab; m = m)
+
+# Dual-basis bookkeeping for `random_state!`: nothing for a plain tableau.
+_write_random_duals!(::AbstractTableau, G::Matrix{Int}, m::Int, D::Vector{Int}) = nothing
+
+# The first m X images become the destabilizers, and D[1:m] the stabilizers'
+# x·z values; the unused columns and cache entries are zeroed.
+function _write_random_duals!(tab::DestabilizerTableau, G::Matrix{Int}, m::Int,
+                              D::Vector{Int})
+    destab = tab.destab
+    cache = tab.xdotz_cache
+    fill!(destab, 0)
+    fill!(cache, 0)
+    @inbounds for j in 1:m
+        for q in axes(destab, 1)
+            destab[q, j] = G[q, j]
+        end
+        cache[j] = D[j]
+    end
+    return nothing
+end
