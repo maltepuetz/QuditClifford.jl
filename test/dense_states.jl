@@ -513,3 +513,61 @@ end
     err = dense_thrown(() -> density_matrix(TT(3, 100; state=:ghz)))
     @test err isa ArgumentError && occursin("3^100", err.msg)
 end
+
+###########
+# Display #
+###########
+
+@testset "Display ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    bell = ket(TT(2, 2; state=:ghz))
+    @test sprint(show, MIME"text/plain"(), bell) == "StabilizerKet (d = 2, n = 2, 2 terms):\n  (|00⟩ + |11⟩)/√2"
+    @test repr(bell) == "(|00⟩ + |11⟩)/√2"
+
+    basis = ket(TT(2, 4; state=:product, basis=:Z))
+    @test repr(basis) == "|0000⟩"
+    @test sprint(show, MIME"text/plain"(), basis) == "StabilizerKet (d = 2, n = 4, 1 term):\n  |0000⟩"
+    @test repr(ket(TT(2, 0))) == "|⟩"
+
+    for (gates, text) in (([PauliGate(1, 0, 1)], "(|00⟩ − |11⟩)/√2"),
+                          ([Phase(1)], "(|00⟩ + i|11⟩)/√2"),
+                          ([Phase(1), PauliGate(1, 0, 1)], "(|00⟩ − i|11⟩)/√2"))
+        tab = TT(2, 2; state=:ghz)
+        foreach(g -> apply!(tab, g), gates)
+        @test repr(ket(tab)) == text
+    end
+    @test repr(ket(TT(3, reshape([1, 0, 1], 3, 1)))) == "(|0⟩ + ω₃|1⟩ + ω₃²|2⟩)/√3"
+    @test repr(ket(TT(11, 2; state=:ghz))) ==
+          "(|0,0⟩ + |1,1⟩ + |2,2⟩ + |3,3⟩ + |4,4⟩ + |5,5⟩ + |6,6⟩ + |7,7⟩ + |8,8⟩ + |9,9⟩ + |10,10⟩)/√11"
+
+    # term cap: the full count stays in the divisor
+    plus = ket(TT(2, 5; state=:product, basis=:X))
+    s = repr(plus)
+    @test count("⟩", s) == 16 && endswith(s, " + …)/√32")
+    @test sprint(show, plus; context=:max_ket_terms => 3) == "(|00000⟩ + |00001⟩ + |00010⟩ + …)/√32"
+
+    # label cap, counted in coordinates
+    wide = ket(TT(3, 100; state=:ghz))
+    @test repr(wide) == "(|" * "0"^16 * "…" * "0"^16 * "⟩ + |" * "1"^16 * "…" * "1"^16 *
+                        "⟩ + |" * "2"^16 * "…" * "2"^16 * "⟩)/√3"
+    @test sprint(show, wide; context=:max_ket_label => 4) == "(|00…00⟩ + |11…11⟩ + |22…22⟩)/√3"
+    @test sprint(show, wide; context=:max_ket_label => 3) == "(|00…0⟩ + |11…1⟩ + |22…2⟩)/√3"
+    @test sprint(show, ket(TT(11, 5; state=:ghz)); context=(:max_ket_label => 2, :max_ket_terms => 2)) ==
+          "(|0,…,0⟩ + |1,…,1⟩ + …)/√11"
+
+    # a limited IOContext respects the display width
+    narrow = sprint(show, plus; context=(:limit => true, :displaysize => (24, 40)))
+    @test narrow == "(|00000⟩ + |00001⟩ + |00010⟩ + …)/√32"
+    @test textwidth(narrow) <= 40
+    boxed = sprint(show, MIME"text/plain"(), plus; context=(:limit => true, :displaysize => (24, 40)))
+    @test textwidth(last(split(boxed, '\n'))) <= 40
+    # the last term needs no room for an ellipsis: at exactly the expression's
+    # width of 16 it prints whole, and one column less elides it
+    @test textwidth(repr(bell)) == 16
+    @test sprint(show, bell; context=(:limit => true, :displaysize => (24, 16))) == "(|00⟩ + |11⟩)/√2"
+    @test sprint(show, bell; context=(:limit => true, :displaysize => (24, 15))) == "(|00⟩ + …)/√2"
+
+    for bad in (0, -2, "x", 1.5)
+        @test_throws ArgumentError sprint(show, bell; context=:max_ket_terms => bad)
+        @test_throws ArgumentError sprint(show, bell; context=:max_ket_label => bad)
+    end
+end

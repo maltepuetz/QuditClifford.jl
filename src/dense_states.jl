@@ -464,3 +464,116 @@ function _add_pauli!(rho::Matrix{ComplexF64}, xz::Vector{Int}, a::Int,
         end
     end
 end
+
+###########
+# Display #
+###########
+
+# Display caps come from IOContext properties rather than a global `Ref` like
+# `max_qudits_display`. That is a deliberate departure: a property is scoped to
+# one `show` call, composes with the caller's own IOContext, and leaves no
+# mutable global for concurrent callers to race on. `max_qudits_display` is
+# left as it is.
+function _ket_display_cap(io::IO, key::Symbol, default::Int)
+    v = get(io, key, default)
+    (v isa Integer && v > 0) || throw(ArgumentError(
+        "IOContext property :$key must be a positive integer, got $(repr(v))."))
+    return Int(v)
+end
+
+# |c₁c₂…cₙ⟩, digits joined for d <= 10 and comma separated above that, with the
+# middle elided past `maxlabel` coordinates. Counting coordinates rather than
+# characters never splits a multi-digit coordinate.
+function _show_ket_label(io::IO, k::StabilizerKet, t::Int, maxlabel::Int)
+    n = k.n
+    sep = k.d > 10 ? "," : ""
+    print(io, '|')
+    if n <= maxlabel
+        for q in 1:n
+            q > 1 && print(io, sep)
+            print(io, k.labels[q, t])
+        end
+    else
+        head = cld(maxlabel, 2)
+        tail = maxlabel - head
+        for q in 1:head
+            q > 1 && print(io, sep)
+            print(io, k.labels[q, t])
+        end
+        print(io, sep, '…')
+        for q in (n-tail+1):n
+            print(io, sep, k.labels[q, t])
+        end
+    end
+    print(io, '⟩')
+    return nothing
+end
+
+# One term with its leading separator; the first term is bare, since its phase
+# is 0 by the canonical form. Qubits use signs and i; odd primes use ω_d with
+# the dimension as a subscript, so an expression printed without its header
+# still names its root.
+function _show_ket_term(io::IO, k::StabilizerKet, t::Int, maxlabel::Int)
+    if t > 1
+        e = k.phases[t]
+        if k.d == 2
+            print(io, e >= 2 ? " − " : " + ")
+            isodd(e) && print(io, 'i')
+        else
+            print(io, " + ")
+            if e != 0
+                print(io, 'ω')
+                _show_script_integer(io, k.d, _PAULI_SUBSCRIPT_DIGITS, '₋')
+                e != 1 && _show_script_integer(io, e, _PAULI_SUPERSCRIPT_DIGITS, '⁻')
+            end
+        end
+    end
+    _show_ket_label(io, k, t, maxlabel)
+    return nothing
+end
+
+# The expression alone: `|c⟩` for one term, otherwise `(t₁ + t₂ + …)/√T`. At
+# most `:max_ket_terms` terms are printed, fewer when `:limit` is set and the
+# line would pass the display width less `indent`; the full count T always
+# stays in the divisor. Only printed terms are formatted, each bounded by the
+# label cap.
+function _show_ket_expression(io::IO, k::StabilizerKet, indent::Int)
+    T = length(k.phases)
+    maxterms = _ket_display_cap(io, :max_ket_terms, 16)
+    maxlabel = _ket_display_cap(io, :max_ket_label, 32)
+    if T == 1
+        _show_ket_label(io, k, 1, maxlabel)
+        return nothing
+    end
+    budget = get(io, :limit, false) === true ? displaysize(io)[2] - indent : typemax(Int)
+    tail = string(")/√", T)
+    ellipsis = " + …"
+    print(io, '(')
+    width = 1 + textwidth(tail)
+    shown = 0
+    for t in 1:min(T, maxterms)
+        term = sprint(_show_ket_term, k, t, maxlabel; context=io)
+        w = textwidth(term)
+        # Always print the first term. A later one must fit together with the
+        # ellipsis that follows it when terms remain; the last term needs only
+        # its own width.
+        more = t < T
+        t > 1 && width + w + (more ? textwidth(ellipsis) : 0) > budget && break
+        print(io, term)
+        width += w
+        shown += 1
+    end
+    shown < T && print(io, ellipsis)
+    print(io, tail)
+    return nothing
+end
+
+Base.show(io::IO, k::StabilizerKet) = _show_ket_expression(io, k, 0)
+
+function Base.show(io::IO, ::MIME"text/plain", k::StabilizerKet)
+    T = length(k.phases)
+    print(io, "StabilizerKet (d = ", k.d, ", n = ", k.n, ", ", T,
+          T == 1 ? " term" : " terms", "):\n  ")
+    _show_ket_expression(io, k, 2)
+    return nothing
+end
