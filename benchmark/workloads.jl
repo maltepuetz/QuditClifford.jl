@@ -827,3 +827,146 @@ function purification_trajectory(; d::Int, n::Int, max_layers::Int = 10_000,
     end
     return rank_history, max_layers + 1
 end
+
+# ------------------------------------------ random Cliffords and states
+
+"""
+    random_operator_fixture(d, k; seed = 20260925)
+
+A seeded `Xoshiro` and a `k`-qudit `CliffordOperator` sampled from it at
+dimension `d`, as `(; rng, U)`. The refill leaves and their tests share this
+builder.
+"""
+function random_operator_fixture(d::Int, k::Int; seed::Int = 20260925)
+    rng = Random.Xoshiro(seed + k)
+    return (; rng, U = QuditClifford.random_clifford(rng, d, 1:k))
+end
+
+"""
+    random_refill_group(d; ks = (1, 2, 8), seed = 20260925)
+
+`random_clifford!` on a warmed operator, `"refill/d=\$d/k=\$k"` for each `k`
+in `ks`. A refill reads nothing of the operator's previous action, so the
+leaf needs no restore between evaluations, and it allocates nothing.
+"""
+function random_refill_group(d::Int; ks = (1, 2, 8), seed::Int = 20260925)
+    group = BenchmarkGroup()
+    for k in unique(collect(ks))
+        (; rng, U) = random_operator_fixture(d, k; seed)
+        group["refill/d=$d/k=$k"] = @benchmarkable QuditClifford.random_clifford!($rng, $U)
+    end
+    return group
+end
+
+"""
+    random_state_fixture(T, d, n; seed = 20260925)
+
+A seeded `Xoshiro` and a `T(d, n)` tableau, as `(; rng, tab)`, shared by the
+state leaves and their tests.
+"""
+random_state_fixture(T, d::Int, n::Int; seed::Int = 20260925) =
+    (; rng = Random.Xoshiro(seed + n), tab = T(d, n))
+
+"""
+    random_state_group(; d, n, T, seed = 20260925)
+
+`random_state!` with `m = 1` and `m = n` on one `T(d, n)` tableau:
+`"state/\$(nameof(T))/d=\$d/n=\$n/m=\$m"`. A replacement reads nothing of the
+previous state, so repeated evaluations need no restore. Both leaves allocate
+the same `2n × 2n` scratch, so their difference is the `O(n²m)` sampling.
+"""
+function random_state_group(; d::Int, n::Int, T, seed::Int = 20260925)
+    group = BenchmarkGroup()
+    (; rng, tab) = random_state_fixture(T, d, n; seed)
+    for m in unique((1, n))
+        group["state/$(nameof(T))/d=$d/n=$n/m=$m"] =
+            @benchmarkable QuditClifford.random_state!($rng, $tab; m = $m)
+    end
+    return group
+end
+
+# ------------------------------------ macro workload: monitored circuit
+
+"""
+    monitored_setup(; d, n, seed, T = DestabilizerTableau)
+
+The state of a [`monitored_trajectory`](@ref) before its first layer, as
+`(tab, bonds, rng)`: a seeded `Xoshiro`, a `:Z` product tableau, and one
+two-qudit operator per bond of the periodic chain, `bonds[q]` acting on qudits
+`q` and `mod1(q + 1, n)`.
+"""
+function monitored_setup(; d::Int, n::Int, seed::Int, T = DestabilizerTableau)
+    n >= 2 && iseven(n) || throw(ArgumentError("n must be even and at least 2"))
+    rng = Random.Xoshiro(seed)
+    tab = T(d, n; state = :Z)
+    bonds = [QuditClifford.random_clifford(rng, d, [q, mod1(q + 1, n)]) for q in 1:n]
+    return tab, bonds, rng
+end
+
+"""
+    monitored_layers!(tab, bonds, rng, layers; p = 0.25)
+
+The hot loop of [`monitored_trajectory`](@ref): `layers` brickwork layers,
+each refilling and applying the operator of every bond in its matching, then
+measuring `Z` on each qudit with probability `p`. Every measurement gets an
+outcome drawn from `rng`, since `measure!`'s default would draw from the
+global RNG. Allocates nothing once warm.
+"""
+function monitored_layers!(tab, bonds, rng, layers::Int; p::Float64 = 0.25)
+    n, d = tab.n, tab.d
+    for layer in 1:layers
+        for q in (isodd(layer) ? 1 : 2):2:n
+            QuditClifford.apply!(tab, QuditClifford.random_clifford!(rng, bonds[q]))
+        end
+        for q in 1:n
+            rand(rng) < p || continue
+            QuditClifford.measure!(tab, QuditClifford.SinglePauli(q, 0, 1);
+                                   outcome = rand(rng, 0:(d - 1)))
+        end
+    end
+    return tab
+end
+
+"""
+    monitored_trajectory(; d, n, layers = 4n, p = 0.25, seed, T = DestabilizerTableau)
+
+One trajectory of a monitored brickwork circuit on a periodic chain of `n`
+qudits: random two-qudit Cliffords on alternating bonds, each followed by
+single-qudit `Z` measurements with probability `p`. One seeded `Xoshiro`
+drives the gates, the measurement choices and their outcomes, so every
+revision runs the identical circuit. Returns the final tableau, which is pure.
+"""
+function monitored_trajectory(; d::Int, n::Int, layers::Int = 4n, p::Float64 = 0.25,
+                                seed::Int, T = DestabilizerTableau)
+    tab, bonds, rng = monitored_setup(; d, n, seed, T)
+    return monitored_layers!(tab, bonds, rng, layers; p)
+end
+
+# The PR-head script also runs against a baseline that may lack random
+# sampling. Check for both APIs before building any fixture, so such a
+# baseline keeps its whole column.
+function register_random_group!(suite, types, ds, ns; ks = (1, 2, 8),
+                                circuits::Bool = false,
+                                api::Module = QuditClifford)
+    all(name -> isdefined(api, name), (:random_clifford!, :random_state!)) || return suite
+    n = first(ns)
+    for d in ds
+        for (key, leaf) in random_refill_group(d; ks)
+            suite["random"][key] = leaf
+        end
+        let rng = Random.Xoshiro(20260925), targets = collect(1:8)
+            suite["random"]["sample/d=$d/k=8"] =
+                @benchmarkable QuditClifford.random_clifford($rng, $d, $targets)
+        end
+        for T in types, (key, leaf) in random_state_group(; d, n, T)
+            suite["random"][key] = leaf
+        end
+    end
+    if circuits
+        for nn in (16, 32, 64)
+            suite["circuit"]["monitored/d=2/n=$nn"] =
+                @benchmarkable(monitored_trajectory(d = 2, n = $nn, seed = 1234), evals = 1)
+        end
+    end
+    return suite
+end
