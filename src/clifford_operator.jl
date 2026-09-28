@@ -60,7 +60,9 @@ coefficient congruent to zero mod `d`).
 Construction copies caller-owned arrays. Treat the operator's fields as
 read-only: mutating `targets`, `F`, `a`, or derived data directly is unsupported
 and can invalidate cached context and the assumptions of `apply!`. Construct
-a new operator to change its action. `copy(U)` owns independent arrays.
+a new operator to change its action, or refill it in place with
+[`random_clifford!`](@ref), the one package operation that replaces an
+operator's action. `copy(U)` owns independent arrays.
 
 `apply!` reuses the operator's scratch, so concurrent applications must use
 independent copies. Allocating `conjugate`, `inv`, and composition leave operand
@@ -136,28 +138,33 @@ function _check_symplectic(F::Matrix{Int}, k::Int, d::Int, fast::Bool)
     return nothing
 end
 
-function _image_xdotz_dense(F::Matrix{Int}, k::Int, d::Int, fast::Bool)
-    S = 2k
-    D = Vector{Int}(undef, S)
+# x(F[:, c]) · z(F[:, c]) mod d, for column c of a 2k × 2k matrix.
+@inline function _col_xdotz_matrix(F::Matrix{Int}, c::Int, k::Int, d::Int,
+                                   fast::Bool)
     if fast
-        @inbounds for i in 1:S
-            s = 0
-            for q in 1:k
-                s += F[q, i] * F[k + q, i]
-            end
-            D[i] = mod(s, d)
+        s = 0
+        @inbounds for q in 1:k
+            s += F[q, c] * F[k + q, c]
         end
-    else
-        @inbounds for i in 1:S
-            s = 0
-            for q in 1:k
-                s = add_mod(s, mul_mod(F[q, i], F[k + q, i], d), d)
-            end
-            D[i] = s
-        end
+        return mod(s, d)
+    end
+    s = 0
+    @inbounds for q in 1:k
+        s = add_mod(s, mul_mod(F[q, c], F[k + q, c], d), d)
+    end
+    return s
+end
+
+function _image_xdotz_dense!(D::Vector{Int}, F::Matrix{Int}, k::Int, d::Int,
+                             fast::Bool)
+    @inbounds for i in 1:(2k)
+        D[i] = _col_xdotz_matrix(F, i, k, d, fast)
     end
     return D
 end
+
+_image_xdotz_dense(F::Matrix{Int}, k::Int, d::Int, fast::Bool) =
+    _image_xdotz_dense!(Vector{Int}(undef, 2k), F, k, d, fast)
 
 # Validate each requested array's element and byte count before reading inputs.
 # Empty support takes this same path without division by S.
@@ -188,6 +195,48 @@ end
     return nothing
 end
 
+# The exact number of targets, as an Int, read from scalar metadata only. An
+# integer range computes its `length` in its element type's width: the length
+# of `typemin(Int):typemax(Int)` wraps to 0, and a `UInt`, `Int128` or `BigInt`
+# range reports a count of that type. Endpoint arithmetic is exact for every
+# ordinal range, because `last(r)` lies on the progression. Every other vector
+# reports an exact length, although not necessarily an Int one (a
+# `StepRangeLen` returns its stored length type), and an error thrown by the
+# caller's own `length` propagates unchanged.
+function _target_count(targets::AbstractVector{<:Integer})
+    k = if targets isa OrdinalRange{<:Integer,<:Integer}
+        isempty(targets) ? 0 :
+            div(_exact_integer(last(targets)) - _exact_integer(first(targets)),
+                _exact_integer(step(targets))) + 1
+    else
+        length(targets)
+    end
+    0 <= k <= typemax(Int) || throw(ArgumentError(
+        "The number of Clifford targets, $k, is not representable as Int."))
+    return Int(k)
+end
+
+# A signed type of twice the width holds every endpoint difference and quotient
+# exactly: Int64 for 32-bit or narrower integers, Int128 for 64-bit ones, and
+# BigInt beyond. Int64 keeps the count of an `Int` range allocation-free on
+# 32-bit hosts too, where Base divides Int128 values through BigInt.
+_exact_integer(x::Union{Bool,Int8,Int16,Int32,UInt8,UInt16,UInt32}) = Int64(x)
+_exact_integer(x::Union{Int64,UInt64}) = Int128(x)
+_exact_integer(x::Integer) = big(x)
+
+# Copy `k` counted targets into owned dense storage, checking each value.
+# `copy(targets)` need not return a Vector{Int} -- a range is one example.
+function _copy_targets(targets::AbstractVector{<:Integer}, k::Int)
+    t = Vector{Int}(undef, k)
+    @inbounds for i in 1:k
+        ti = targets[i]
+        (ti isa Integer && typemin(Int) <= ti <= typemax(Int)) ||
+            throw(ArgumentError("Clifford target $ti is not representable as Int."))
+        _store_target!(t, i, Int(ti))
+    end
+    return t
+end
+
 function CliffordOperator(d::Int, targets::AbstractVector{<:Integer},
                           F::AbstractMatrix{<:Integer},
                           a::AbstractVector{<:Integer}; check::Bool = true)
@@ -200,22 +249,15 @@ function CliffordOperator(d::Int, targets::AbstractVector{<:Integer},
     # 3. sizes, before forming anything. Checked arithmetic so an impossible
     #    shape is an ArgumentError rather than a silent wrap, and so a huge
     #    lazy target range is never traversed.
-    k = length(targets)
+    k = _target_count(targets)
     S = _clifford_size(k)
     # 4. shapes
     size(F) == (S, S) || throw(ArgumentError(
         "F must be $(S)×$(S) for k = $k targets, got $(size(F))."))
     length(a) == S || throw(ArgumentError(
         "a must have length $S for k = $k targets, got $(length(a))."))
-    # 5. target values, then copy into explicitly allocated dense storage.
-    #    `copy(targets)` need not return a Vector{Int} -- a range is one example.
-    t = Vector{Int}(undef, k)
-    @inbounds for i in 1:k
-        ti = targets[i]
-        (ti isa Integer && typemin(Int) <= ti <= typemax(Int)) ||
-            throw(ArgumentError("Clifford target $ti is not representable as Int."))
-        _store_target!(t, i, Int(ti))
-    end
+    # 5. target values, copied into explicitly allocated dense storage.
+    t = _copy_targets(targets, k)
     p = phase_modulus(d)
     Fc = Matrix{Int}(undef, S, S)
     @inbounds for col in 1:S, row in 1:S

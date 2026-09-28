@@ -33,8 +33,8 @@ gates require distinct qudits.
 
 The named gates above are dimension-agnostic. [`CliffordOperator`](@ref) is the
 other subtype: it stores an arbitrary Clifford on an ordered support at a fixed
-dimension, and supports composition and inversion. Uniform random Clifford
-sampling is not yet implemented.
+dimension, and supports composition and inversion. [`random_clifford`](@ref)
+samples one uniformly.
 
 # Examples
 ```julia

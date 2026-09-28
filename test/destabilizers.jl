@@ -518,3 +518,66 @@ end
         end
     end
 end
+
+# x·z of stabilizer column j, the value `xdotz_cache[j]` must hold.
+_stab_xdotz(tab, j) =
+    mod(sum(tab.stab[q, j] * tab.stab[tab.n + q, j] for q in 1:tab.n; init = 0), tab.d)
+
+function _assert_active_cache(tab)
+    for j in 1:tab.m
+        @test tab.xdotz_cache[j] == _stab_xdotz(tab, j)
+    end
+end
+
+# A Pauli with exponents `xz`, Hermitian at d = 2 through the phase x·z mod 2.
+function _hermitian_pauli(xz::AbstractVector{<:Integer}, d::Int)
+    n = length(xz) ÷ 2
+    phase = d == 2 ? mod(sum(xz[q] * xz[n + q] for q in 1:n; init = 0), 2) : 0
+    return GeneralPauli(collect(Int, xz), phase)
+end
+
+@testset "Random states stay dual through apply! and every measure! branch" begin
+    rng = Xoshiro(20260925)
+    for d in (2, 3), n in (3, 6), m in unique((0, 1, n ÷ 2, n))
+        tab = DestabilizerTableau(d, n)
+        random_state!(rng, tab; m)
+        _assert_duality(tab)
+        @test tab.xdotz_cache == [j <= m ? _stab_xdotz(tab, j) : 0 for j in 1:n]
+        apply!(tab, random_clifford(rng, d, 1:n))
+        _assert_duality(tab)
+        _assert_active_cache(tab)
+        if m > 0
+            # In span: a generator's own exponents give a deterministic outcome.
+            measure!(tab, _hermitian_pauli(tab.stab[1:(2n), 1], d))
+            @test tab.m == m
+            _assert_duality(tab)
+            _assert_active_cache(tab)
+            # Noncommuting: a dual anticommutes with its own stabilizer.
+            measure!(tab, _hermitian_pauli(tab.destab[:, 1], d);
+                     outcome = rand(rng, 0:(d - 1)))
+            @test tab.m == m
+            _assert_duality(tab)
+            _assert_active_cache(tab)
+        end
+        if m < n
+            # Commuting and independent: remove a random vector's components
+            # along the duals, so it commutes with every generator, and draw
+            # again until it lies outside their span.
+            op = _hermitian_pauli(zeros(Int, 2n), d)
+            while true
+                x = rand(rng, 0:(d - 1), 2n, 1)
+                v = vec(x)
+                for j in 1:m
+                    c = mod(_symp(x, 1, tab.stab, j, n), d)
+                    v = mod.(v .- c .* tab.destab[:, j], d)
+                end
+                op = _hermitian_pauli(v, d)
+                expect_int!(tab, op) == -1 && break
+            end
+            measure!(tab, op; outcome = rand(rng, 0:(d - 1)))
+            @test tab.m == m + 1
+            _assert_duality(tab)
+            _assert_active_cache(tab)
+        end
+    end
+end

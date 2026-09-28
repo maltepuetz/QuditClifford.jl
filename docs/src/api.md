@@ -50,6 +50,14 @@ apply!
 conjugate
 ```
 
+## Random Cliffords and states
+
+```@docs
+random_clifford
+random_clifford!
+random_state!
+```
+
 ## Measurements
 
 ```@docs

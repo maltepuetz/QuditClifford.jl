@@ -74,6 +74,16 @@ end
 register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
                          ks = CONFIG.stored_ks, product = CONFIG.stored_product)
 
+# ------------------------------------------------------------------ random
+# Operator refills at every stored k, the allocating sampler at k = 8, and
+# state replacement at m = 1 and m = n for the smallest n only: sampling a
+# state costs O(n^2 m), about 45 ms at n = m = 256, which a CI leaf could time
+# only two or three times. Circuit profiles also get a monitored random-circuit
+# trajectory. The registration function omits all of it on a baseline without
+# the sampling API.
+register_random_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
+                       ks = CONFIG.stored_ks, circuits = CONFIG.circuits)
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in

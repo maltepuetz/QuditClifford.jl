@@ -512,6 +512,82 @@ include(joinpath(@__DIR__, "workloads.jl"))
         end
     end
 
+    @testset "Random registration skips a baseline without the sampling API" begin
+        suite = BenchmarkGroup()
+        existing = BenchmarkGroup()
+        suite["existing"] = existing
+        no_random_api = Module(:NoRandomAPI)
+        @test register_random_group!(suite, (StabilizerTableau,), (3,), (8,);
+                                     circuits = true, api = no_random_api) === suite
+        @test Set(keys(suite)) == Set(["existing"])
+        @test suite["existing"] === existing
+
+        types = (StabilizerTableau, DestabilizerTableau)
+        head = BenchmarkGroup()
+        @test register_random_group!(head, types, (2, 3), (8, 16);
+                                     ks = (1, 2, 8), circuits = true) === head
+        expected = Set(vcat(["refill/d=$d/k=$k" for d in (2, 3) for k in (1, 2, 8)],
+                            ["sample/d=$d/k=8" for d in (2, 3)],
+                            ["state/$(nameof(T))/d=$d/n=8/m=$m"
+                             for T in types for d in (2, 3) for m in (1, 8)]))
+        @test Set(keys(head["random"])) == expected
+        @test Set(keys(head["circuit"])) == Set(["monitored/d=2/n=$n" for n in (16, 32, 64)])
+        # @benchmarkable bodies are quoted, so a broken leaf is invisible until run.
+        for (path, leaf) in BenchmarkTools.leaves(head["random"])
+            trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+            @test !isempty(trial.times)
+        end
+        # Same reasoning for the monitored circuit leaves: run the cheapest
+        # one (n = 16) rather than a whole trajectory at every n.
+        monitored_trial = run(head["circuit"]["monitored/d=2/n=16"];
+                              samples = 1, evals = 1, seconds = 0.05)
+        @test !isempty(monitored_trial.times)
+    end
+
+    @testset "Random workloads compute what their leaves claim" begin
+        for d in (2, 3, 5), k in (1, 2, 8)
+            fixture = random_operator_fixture(d, k)
+            @test fixture.U == random_operator_fixture(d, k).U      # repeatable
+            for _ in 1:3
+                random_clifford!(fixture.rng, fixture.U)
+                # The checked constructor accepts only symplectic F and, at
+                # d = 2, Hermitian generator images.
+                U = fixture.U
+                @test CliffordOperator(d, U.targets, U.F, U.a) == U
+            end
+        end
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3), n in (8, 16)
+            for m in (1, n)
+                (; rng, tab) = random_state_fixture(T, d, n)
+                random_state!(rng, tab; m)
+                @test tab.m == m
+                @test is_pure(tab; verify = true) == (m == n)
+            end
+        end
+    end
+
+    @testset "Monitored trajectory is deterministic, pure and allocation-free" begin
+        warm_allocations(tab, bonds, rng) =
+            (monitored_layers!(tab, bonds, rng, 4); @allocated monitored_layers!(tab, bonds, rng, 4))
+        for T in (StabilizerTableau, DestabilizerTableau)
+            a = monitored_trajectory(d = 2, n = 8, layers = 16, seed = 5, T = T)
+            b = monitored_trajectory(d = 2, n = 8, layers = 16, seed = 5, T = T)
+            @test a.stab == b.stab
+            @test is_pure(a; verify = true)
+            # layers defaults to 4n.
+            @test monitored_trajectory(d = 2, n = 4, seed = 5, T = T).stab ==
+                  monitored_trajectory(d = 2, n = 4, layers = 16, seed = 5, T = T).stab
+            tab, bonds, rng = monitored_setup(d = 2, n = 8, seed = 5, T = T)
+            @test warm_allocations(tab, bonds, rng) == 0
+        end
+        # A periodic brickwork chain needs an even number of at least two sites.
+        for n in (0, 1, 3)
+            @test_throws ArgumentError monitored_setup(d = 2, n = n, seed = 1)
+        end
+        # Z measurements and parity-respecting qubit Cliffords never warn.
+        @test_logs monitored_trajectory(d = 2, n = 6, layers = 8, seed = 3)
+    end
+
     @testset "Registration preserves a baseline without CliffordOperator" begin
         # The actual workload functions remain qualified to QuditClifford; this
         # module controls feature detection and models an API surface without
