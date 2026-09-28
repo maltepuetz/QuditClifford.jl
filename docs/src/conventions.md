@@ -92,6 +92,29 @@ For qubits, a Pauli used as a physical observable should be Hermitian.
 [`measure!`](@ref) exposes `phase_policy` to warn, repair, or explicitly accept
 a non-Hermitian phase convention.
 
+## Computational basis ordering
+
+[`state_vector`](@ref) and [`density_matrix`](@ref) index the computational
+basis with qudit 1 as the most significant digit:
+
+```math
+\mathrm{index}(c_1, \ldots, c_n) = 1 + \sum_{q=1}^{n} c_q\, d^{\,n-q},
+```
+
+so the vector of a product state is `kron` of its factors in qudit order, and a
+label prints in reading order. This is independent of the tableau layout, which
+groups every X row before every Z row. [`ket`](@ref) fixes the global phase by
+making the amplitude of the lexicographically first label real and positive,
+and [`state_vector`](@ref) keeps that choice.
+
+All three conversions require `storephase=true`, because a phase-free tableau
+does not determine a state (see [Dense and Exact States](@ref)), and each
+refuses a result larger than its `maxentries` keyword, `2^24` scalars by
+default. [`ket`](@ref) is exact. The dense arrays are floating point: a density
+matrix sums unit-modulus terms, so round-off and cancellation can leave small
+residuals where the exact entry is zero, and comparisons need an absolute
+tolerance.
+
 ## Mutating operations
 
 Functions ending in `!` reuse tableau workspaces and may change the tableau or

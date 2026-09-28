@@ -9,9 +9,10 @@
 QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
 including Clifford unitaries, uniformly random Clifford operators and
 stabilizer states, projective Pauli measurements, expectation values,
-canonicalization, purity checks, and entanglement-entropy calculations. It
-supports qubits (`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as
-well as pure and mixed stabilizer states.
+canonicalization, purity checks, entanglement-entropy calculations, and
+conversion to exact kets, state vectors and density matrices. It supports
+qubits (`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as well as
+pure and mixed stabilizer states.
 
 > **Development status:** QuditClifford.jl is under active development and has
 > not yet reached a stable release. APIs may change before version 1.0.
