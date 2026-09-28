@@ -84,7 +84,7 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
 | `smoke` | n = 8 | 2, 3 | 164 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 335 | ~100 s (estimated from ~95 s measured, plus ~5% for the new leaves) | the pull-request job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 335 | ~82 s (measured locally: 81.7 s before and 82.3 s after the random leaves) | the pull-request job |
 | `full` | n ∈ {64, 256, 512} | 2, 3, 5, 7 | 823 | ~16 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
@@ -203,13 +203,13 @@ refill reads nothing of the previous action, so repeated evaluations need no
 restore, and it allocates nothing. `sample/d=$d/k=8` times the allocating
 `random_clifford`. `state/$(nameof(T))/d=$d/n=$n/m=$m` replaces a tableau's
 state with `random_state!` at `m = 1` and `m = n`, for the smallest `n` in the
-profile only. Both leaves allocate the same `2n × 2n` scratch, so the gap
-between them is the `O(n²m)` sampling; at `n = m = 256` one call takes about
-45 ms, which a CI leaf could time only two or three times. The `full` profile
-also adds `circuit/monitored/d=2/n=$n` for `n ∈ {16, 32, 64}`: a monitored
-brickwork trajectory with one operator per bond, refilled every layer, and `Z`
-measurements whose outcomes come from the same seeded RNG. Its warm hot loop
-allocates nothing, which `test_workloads.jl` checks.
+profile only, because at `n = m = 256` one call takes about 45 ms, which a CI
+leaf could time only two or three times. Both leaves allocate the same
+`2n × 2n` scratch, so the gap between them is the `O(n²m)` sampling. The
+`full` profile also adds `circuit/monitored/d=2/n=$n` for `n ∈ {16, 32, 64}`:
+a monitored brickwork trajectory with one operator per bond, refilled every
+layer, and `Z` measurements whose outcomes come from the same seeded RNG. Its
+warm hot loop allocates nothing, which `test_workloads.jl` checks.
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /

@@ -537,6 +537,11 @@ include(joinpath(@__DIR__, "workloads.jl"))
             trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
             @test !isempty(trial.times)
         end
+        # Same reasoning for the monitored circuit leaves: run the cheapest
+        # one (n = 16) rather than a whole trajectory at every n.
+        monitored_trial = run(head["circuit"]["monitored/d=2/n=16"];
+                              samples = 1, evals = 1, seconds = 0.05)
+        @test !isempty(monitored_trial.times)
     end
 
     @testset "Random workloads compute what their leaves claim" begin
