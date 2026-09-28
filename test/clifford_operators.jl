@@ -256,6 +256,69 @@ Base.axes(::BrokenAxes) = error("caller-defined axes failure")
     @test CliffordOperator(3, 1:1, F1, a1).targets == [1]
 end
 
+# Reports one target, but its `length` fails. The constructor must pass that
+# caller-defined error through rather than rewrite it.
+const LENGTH_FAILURE = OverflowError("caller-defined length failure")
+struct LengthFailureTargets <: AbstractVector{Int} end
+Base.size(::LengthFailureTargets) = (1,)
+Base.length(::LengthFailureTargets) = throw(LENGTH_FAILURE)
+Base.getindex(::LengthFailureTargets, ::Int) = error("input traversed before rejection")
+
+# A representable length whose Clifford data could never be stored. Reading an
+# entry fails, so a rejection proves the targets were not traversed.
+struct UnreadableHugeTargets <: AbstractVector{Int} end
+Base.size(::UnreadableHugeTargets) = (typemax(Int) ÷ 2,)
+Base.getindex(::UnreadableHugeTargets, ::Int) = error("input traversed before rejection")
+
+# An integer range computes `length` in its element type's width: a UInt,
+# Int128 or BigInt range reports a count of that type, and the length of
+# typemin(Int):typemax(Int) wraps to 0. Construction counts from the endpoints.
+@testset "Range targets are counted exactly" begin
+    F1, a1 = identity_data(1)
+    F2, a2 = identity_data(2)
+    E, e = zeros(Int, 0, 0), Int[]
+    for check in (false, true)
+        for T in (Int, Int32, Int128, UInt, BigInt)
+            @test CliffordOperator(3, T(2):T(2), F1, a1; check).targets == [2]
+            @test CliffordOperator(3, T(1):T(2):T(3), F2, a2; check).targets == [1, 3]
+            @test CliffordOperator(3, T(1):T(0), E, e; check).targets == Int[]
+        end
+        for T in (Int, Int32, Int128, BigInt)
+            @test CliffordOperator(3, T(3):T(-2):T(1), F2, a2; check).targets == [3, 1]
+        end
+        # Not an ordinal range; its stored length is a BigInt.
+        @test CliffordOperator(3, StepRangeLen(big(1), big(2), big(2)), F2, a2;
+                               check).targets == [1, 3]
+
+        # Nonempty, although their machine lengths are 0 or negative.
+        for huge in (typemin(Int):typemax(Int), typemin(Int):2:typemax(Int),
+                     UInt(0):typemax(UInt))
+            @test !isempty(huge) && length(huge) <= 0
+            @test_throws ArgumentError CliffordOperator(3, huge, E, e; check)
+        end
+        # Exact counts above typemax(Int).
+        for huge in (big(1):(big(typemax(Int)) + 1),
+                     Int128(1):(Int128(typemax(Int)) + 1), UInt(1):typemax(UInt))
+            @test_throws ArgumentError CliffordOperator(3, huge, F1, a1; check)
+        end
+        # A representable count with unrepresentable storage.
+        kb = isqrt(typemax(Int) ÷ sizeof(Int)) ÷ 2 + 1
+        @test_throws ArgumentError CliffordOperator(3, big(1):big(kb), F1, a1; check)
+        @test_throws ArgumentError CliffordOperator(3, UnreadableHugeTargets(), F1, a1; check)
+        caught = try
+            CliffordOperator(3, LengthFailureTargets(), F1, a1; check)
+        catch err
+            err
+        end
+        @test caught === LENGTH_FAILURE
+    end
+    # Ranges of 64-bit or narrower integers are counted without allocating.
+    count_allocations(r) = (QC._target_count(r); @allocated QC._target_count(r))
+    for r in (1:8, UInt(1):UInt(8), Int32(9):Int32(-2):Int32(1), 1:0)
+        @test count_allocations(r) == 0
+    end
+end
+
 @testset "Materialization, copying and value behaviour" begin
     jit = QC.JustInTimeInvMod()
     for d in (2, 3, 5)
