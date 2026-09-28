@@ -60,7 +60,9 @@ coefficient congruent to zero mod `d`).
 Construction copies caller-owned arrays. Treat the operator's fields as
 read-only: mutating `targets`, `F`, `a`, or derived data directly is unsupported
 and can invalidate cached context and the assumptions of `apply!`. Construct
-a new operator to change its action. `copy(U)` owns independent arrays.
+a new operator to change its action, or refill it in place with
+[`random_clifford!`](@ref), the one package operation that replaces an
+operator's action. `copy(U)` owns independent arrays.
 
 `apply!` reuses the operator's scratch, so concurrent applications must use
 independent copies. Allocating `conjugate`, `inv`, and composition leave operand
@@ -136,28 +138,33 @@ function _check_symplectic(F::Matrix{Int}, k::Int, d::Int, fast::Bool)
     return nothing
 end
 
-function _image_xdotz_dense(F::Matrix{Int}, k::Int, d::Int, fast::Bool)
-    S = 2k
-    D = Vector{Int}(undef, S)
+# x(F[:, c]) · z(F[:, c]) mod d, for column c of a 2k × 2k matrix.
+@inline function _col_xdotz_matrix(F::Matrix{Int}, c::Int, k::Int, d::Int,
+                                   fast::Bool)
     if fast
-        @inbounds for i in 1:S
-            s = 0
-            for q in 1:k
-                s += F[q, i] * F[k + q, i]
-            end
-            D[i] = mod(s, d)
+        s = 0
+        @inbounds for q in 1:k
+            s += F[q, c] * F[k + q, c]
         end
-    else
-        @inbounds for i in 1:S
-            s = 0
-            for q in 1:k
-                s = add_mod(s, mul_mod(F[q, i], F[k + q, i], d), d)
-            end
-            D[i] = s
-        end
+        return mod(s, d)
+    end
+    s = 0
+    @inbounds for q in 1:k
+        s = add_mod(s, mul_mod(F[q, c], F[k + q, c], d), d)
+    end
+    return s
+end
+
+function _image_xdotz_dense!(D::Vector{Int}, F::Matrix{Int}, k::Int, d::Int,
+                             fast::Bool)
+    @inbounds for i in 1:(2k)
+        D[i] = _col_xdotz_matrix(F, i, k, d, fast)
     end
     return D
 end
+
+_image_xdotz_dense(F::Matrix{Int}, k::Int, d::Int, fast::Bool) =
+    _image_xdotz_dense!(Vector{Int}(undef, 2k), F, k, d, fast)
 
 # Validate each requested array's element and byte count before reading inputs.
 # Empty support takes this same path without division by S.

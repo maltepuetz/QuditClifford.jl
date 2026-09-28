@@ -279,3 +279,280 @@ end
     @test !QC.clifford_fast_dots(4, RC_D1)
     @test rc_pairs_allocations(Xoshiro(1), RC_D1, 2, false) == 0
 end
+
+#############################
+# Uniformly random operators #
+#############################
+
+# A rejection-free script: every α block a unit vector, every free β
+# coordinate and every trailing phase draw zero.
+function rc_simple_script(k::Int, steps::Int, nphases::Int)
+    blocks, L = rc_alpha_blocks(k, steps)
+    script = zeros(Int, L + nphases)
+    for b in blocks
+        script[first(b)] = 1
+    end
+    return script
+end
+
+rc_identity_operator(d::Int, k::Int) =
+    CliffordOperator(d, 1:k, rc_identity!(Matrix{Int}(undef, 2k, 2k)), zeros(Int, 2k))
+
+# Every one-qudit Clifford with its valid phases: all of SL(2, Z_d), which is
+# Sp(2, Z_d), with every raw phase pair at odd d and, at d = 2, the two phases
+# per image with a ≡ x·z (mod 2).
+function rc_one_qudit_cliffords(d::Int)
+    out = Set{Tuple{Matrix{Int},Vector{Int}}}()
+    for p in 0:(d - 1), q in 0:(d - 1), r in 0:(d - 1), s in 0:(d - 1)
+        mod(p * s - q * r, d) == 1 || continue
+        F = [p q; r s]
+        D = [mod(F[1, j] * F[2, j], d) for j in 1:2]
+        phases = d == 2 ? [[D[1] + 2x, D[2] + 2y] for x in 0:1 for y in 0:1] :
+                          [[x, y] for x in 0:(d - 1) for y in 0:(d - 1)]
+        for a in phases
+            push!(out, (F, a))
+        end
+    end
+    return out
+end
+
+# One-based data behind zero-based axes.
+# A representable length whose operator could never be stored; reading an
+# entry fails, so a rejection proves the targets were not traversed.
+struct RCUnreadableHugeTargets <: AbstractVector{Int} end
+Base.size(::RCUnreadableHugeTargets) = (typemax(Int) ÷ 2,)
+Base.getindex(::RCUnreadableHugeTargets, ::Int) = error("targets traversed before rejection")
+
+struct RCOffsetTargets <: AbstractVector{Int}
+    data::Vector{Int}
+end
+Base.size(v::RCOffsetTargets) = size(v.data)
+Base.axes(v::RCOffsetTargets) = (0:(length(v.data) - 1),)
+Base.getindex(v::RCOffsetTargets, i::Int) = v.data[i + 1]
+
+@testset "Refills reach every one-qudit Clifford exactly once" begin
+    for (d, count) in ((2, 24), (3, 216))
+        blocks, L = rc_alpha_blocks(1, 1)
+        scripts = rc_scripts(d, blocks, L + 2)
+        @test length(scripts) == count
+        U = rc_identity_operator(d, 1)
+        seen = Set{Tuple{Matrix{Int},Vector{Int}}}()
+        failure = nothing
+        for (index, script) in enumerate(scripts)
+            src = RCScript(script)
+            random_clifford!(src, U)
+            push!(seen, (copy(U.F), copy(U.a)))
+            failure = rc_failed((; d, index),
+                :consumed => rc_consumed_all(src),
+                :cached => U.image_xdotz == QC._image_xdotz_dense(U.F, 1, d, U.fast))
+            failure === nothing || break
+        end
+        @test failure === nothing
+        @test seen == rc_one_qudit_cliffords(d)
+    end
+end
+
+@testset "random_clifford validates before drawing" begin
+    # Any draw from an empty script is an ErrorException, so an ArgumentError
+    # here proves validation came first.
+    none = RCScript(Int[])
+    @test_throws ArgumentError random_clifford(none, 4, [1])
+    @test_throws ArgumentError random_clifford(none, 1, [1])
+    @test_throws ArgumentError random_clifford(none, 3, [1, 1])
+    @test_throws ArgumentError random_clifford(none, 3, [0])
+    @test_throws ArgumentError random_clifford(none, 3, [2, -1])
+    @test_throws ArgumentError random_clifford(none, 3, [big(typemax(Int)) + 1])
+    @test_throws ArgumentError random_clifford(none, 3, RCOffsetTargets([1]))
+    @test_throws ArgumentError random_clifford(none, 3, RCUnreadableHugeTargets())
+    # Huge lazy ranges fail on their count, without being traversed.
+    for huge in (1:typemax(Int), typemin(Int):typemax(Int), UInt(0):typemax(UInt),
+                 big(1):(big(typemax(Int)) + 1))
+        @test_throws ArgumentError random_clifford(none, 3, huge)
+    end
+    # A bare integer is not an arity shorthand.
+    err = try
+        random_clifford(none, 3, 2)
+    catch e
+        e
+    end
+    @test err isa ArgumentError && occursin("1:2", err.msg) && occursin("[2]", err.msg)
+    @test_throws ArgumentError random_clifford(3, 2)
+    @test none.pos == 0
+end
+
+@testset "Range targets behave like the equivalent vectors" begin
+    for (targets, dense) in ((big(2):big(3), [2, 3]), (UInt(2):UInt(3), [2, 3]),
+                             (Int128(2):Int128(3), [2, 3]), (5:-2:1, [5, 3, 1]),
+                             (Int128(5):Int128(-2):Int128(1), [5, 3, 1]),
+                             (big(1):big(0), Int[]), (UInt(1):UInt(0), Int[]))
+        a_src, b_src = RCCounting(Xoshiro(3)), RCCounting(Xoshiro(3))
+        a = random_clifford(a_src, 3, targets)
+        b = random_clifford(b_src, 3, dense)
+        @test a == b && a.targets == dense && a_src.count == b_src.count
+    end
+end
+
+@testset "Refills make 2k^2 + 3k draws without rejection" begin
+    for d in (2, 3), k in 0:4
+        script = rc_simple_script(k, k, 2k)
+        @test length(script) == 2k^2 + 3k
+        src = RCScript(script)
+        U = random_clifford(src, d, 1:k)
+        @test rc_consumed_all(src)
+        again = RCScript(script)
+        @test random_clifford!(again, U) === U && rc_consumed_all(again)
+    end
+end
+
+@testset "A refill keeps every array and forgets the old action" begin
+    fields = (:targets, :F, :a, :image_xdotz, :v, :vout, :zpref)
+    for d in (2, 3, 5), k in (1, 3)
+        targets = collect(k:-1:1) .+ 1
+        # Neither symplectic nor, at d = 2, Hermitian: check=false keeps it.
+        U = CliffordOperator(d, targets, fill(1, 2k, 2k), fill(1, 2k); check = false)
+        arrays = map(f -> getfield(U, f), fields)
+        fill!(U.v, -9); fill!(U.vout, -9); fill!(U.zpref, -9)
+        @test random_clifford!(Xoshiro(11), U) === U
+        @test all(map(f -> getfield(U, f), fields) .=== arrays)
+        @test U.d == d && U.targets == targets
+        @test U.fast == QC.clifford_fast_dots(2k, d)
+        @test U.inv2 == (d == 2 ? 0 : invmod(2, d))
+        @test U.image_xdotz == QC._image_xdotz_dense(U.F, k, d, U.fast)
+        # The checked constructor accepts the result: symplectic, and at
+        # d = 2 every image Hermitian.
+        @test CliffordOperator(d, targets, U.F, U.a) == U
+        # Old action and scratch played no part.
+        V = CliffordOperator(d, targets, rc_identity!(Matrix{Int}(undef, 2k, 2k)),
+                             zeros(Int, 2k))
+        @test random_clifford!(Xoshiro(11), V) == U
+    end
+end
+
+@testset "A sampled operator owns independent arrays" begin
+    targets = [4, 1, 3]
+    U = random_clifford(Xoshiro(8), 3, targets)
+    @test U.targets == targets && U.targets !== targets
+    targets[1] = 99
+    @test U.targets == [4, 1, 3]
+    fields = (:targets, :F, :a, :image_xdotz, :v, :vout, :zpref)
+    arrays = map(f -> getfield(U, f), fields)
+    @test all(!Base.mightalias(arrays[i], arrays[j])
+              for i in eachindex(arrays) for j in (i + 1):length(arrays))
+    V = random_clifford(Xoshiro(8), 3, [4, 1, 3])
+    @test U == V
+    @test all(!Base.mightalias(getfield(U, f), getfield(V, g)) for f in fields, g in fields)
+end
+
+@testset "A failed refill is recovered by the next one" begin
+    for d in (2, 3), k in (1, 2)
+        script = rc_simple_script(k, k, 2k)
+        reference = random_clifford!(RCScript(script), rc_identity_operator(d, k))
+        for allowed in 0:(length(script) - 1)
+            U = random_clifford(Xoshiro(5), d, 1:k)
+            failing = RCThrowing(RCScript(script), allowed)
+            @test_throws RCInjectedFailure random_clifford!(failing, U)
+            @test failing.count == allowed
+            random_clifford!(RCScript(script), U)
+            @test U == reference && U.image_xdotz == reference.image_xdotz
+        end
+    end
+end
+
+@testset "Seeds reproduce operators; RNG-free forms use the default RNG" begin
+    for d in (2, 3)
+        @test random_clifford(Xoshiro(21), d, 1:3) == random_clifford(Xoshiro(21), d, 1:3)
+        @test random_clifford(MersenneTwister(21), d, 1:3) ==
+              random_clifford(MersenneTwister(21), d, 1:3)
+        Random.seed!(99)
+        a = random_clifford(d, 1:3)
+        Random.seed!(99)
+        @test random_clifford(Random.default_rng(), d, 1:3) == a
+        U, V = random_clifford(Xoshiro(1), d, 1:3), random_clifford(Xoshiro(1), d, 1:3)
+        Random.seed!(7)
+        random_clifford!(U)
+        Random.seed!(7)
+        random_clifford!(Random.default_rng(), V)
+        @test U == V
+    end
+    # Empty support draws nothing, in either form.
+    counting = RCCounting(Xoshiro(1))
+    E = random_clifford(counting, 3, Int[])
+    @test E.targets == Int[] && size(E.F) == (0, 0) && isempty(E.a)
+    @test random_clifford!(counting, E) === E
+    @test counting.count == 0
+end
+
+@testset "Sampled operators are valid and invertible ($(nameof(typeof(rng))))" for rng in
+        (Xoshiro(2026), MersenneTwister(2026))
+    for d in (2, 3, 5), k in (3, 5, 8)
+        U = random_clifford(rng, d, 1:k)
+        @test CliffordOperator(d, U.targets, U.F, U.a) == U
+        E = rc_identity_operator(d, k)
+        @test inv(U) ∘ U == E
+        @test U ∘ inv(U) == E
+        for TT in (StabilizerTableau, DestabilizerTableau)
+            tab = TT(d, k + 2; state = :ghz)
+            before = deepcopy(tab)
+            apply!(tab, U)
+            apply!(tab, inv(U))
+            @test tab.stab == before.stab
+            if TT === DestabilizerTableau
+                @test tab.destab == before.destab
+                @test tab.xdotz_cache == before.xdotz_cache
+            end
+        end
+    end
+    # An unsorted, noncontiguous support keeps its order.
+    U = random_clifford(rng, 3, [7, 2, 5])
+    @test U.targets == [7, 2, 5]
+    tab = DestabilizerTableau(3, 8; state = :ghz)
+    before = deepcopy(tab)
+    apply!(tab, U)
+    apply!(tab, inv(U))
+    @test tab.stab == before.stab && tab.destab == before.destab
+end
+
+@testset "A k = 65 qubit sample round-trips through a 65-qubit tableau" begin
+    # Dense images drive the vector-prefix qubit evaluator past coordinate 64.
+    U = random_clifford(Xoshiro(65), 2, 1:65)
+    @test CliffordOperator(2, U.targets, U.F, U.a) == U
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        tab = TT(2, 65; state = :ghz)
+        before = deepcopy(tab)
+        apply!(tab, U)
+        @test is_pure(tab; verify = true)
+        apply!(tab, inv(U))
+        @test tab.stab == before.stab
+    end
+end
+
+@testset "Large moduli sample exact Cliffords in both tiers" begin
+    @test QC.clifford_fast_dots(2, RC_D1) && !QC.clifford_fast_dots(4, RC_D1)
+    for d in (RC_D1, RC_D2), k in (1, 2, 3)
+        U = random_clifford(Xoshiro(k), d, 1:k)
+        @test U.fast == QC.clifford_fast_dots(2k, d)
+        @test all(x -> 0 <= x < d, U.F) && all(x -> 0 <= x < d, U.a)
+        @test rc_is_symplectic(U.F, k, d)
+        W = inv(U) ∘ U
+        @test W.F == rc_identity!(Matrix{Int}(undef, 2k, 2k)) && all(iszero, W.a)
+    end
+end
+
+function rc_refill_allocations(rng::AbstractRNG, U::CliffordOperator)
+    for _ in 1:3
+        random_clifford!(rng, U)
+    end
+    return @allocated random_clifford!(rng, U)
+end
+
+@testset "Warmed refills allocate nothing" begin
+    for d in (2, 3, 5), k in (0, 1, 2, 8, 33)
+        U = random_clifford(Xoshiro(1), d, 1:k)
+        @test rc_refill_allocations(Xoshiro(2), U) == 0
+        @test rc_refill_allocations(Random.default_rng(), U) == 0
+    end
+    # The safe tier, at a modulus the fast tier rejects for k = 2.
+    U = random_clifford(Xoshiro(1), RC_D1, 1:2)
+    @test !U.fast
+    @test rc_refill_allocations(Xoshiro(2), U) == 0
+end

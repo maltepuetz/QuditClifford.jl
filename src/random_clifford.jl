@@ -168,3 +168,141 @@ function _sample_pairs!(rng::Random.AbstractRNG, F::Matrix{Int}, k::Int,
     end
     return F
 end
+
+@inline function _set_identity!(F::Matrix{Int})
+    fill!(F, 0)
+    @inbounds for i in axes(F, 1)
+        F[i, i] = 1
+    end
+    return F
+end
+
+#################################
+# Uniformly random operators    #
+#################################
+
+"""
+    random_clifford([rng::AbstractRNG,] d::Int, targets::AbstractVector{<:Integer}) -> CliffordOperator
+
+A uniformly random Clifford unitary on the ordered support `targets` at prime
+dimension `d`, returned as a [`CliffordOperator`](@ref).
+
+The distribution is uniform over the Clifford group modulo global phase: every
+symplectic matrix `F` is equally likely, and so is each of its `d^(2k)` valid
+raw phase vectors, where `k = length(targets)`. At `d = 2` the valid phases are
+the ones that keep every generator image Hermitian. Every coordinate is drawn
+with `rand(rng, 0:(d - 1))`, so the result is exactly uniform for an ideal
+RNG. The RNG-free form uses `Random.default_rng()`. Sampling costs `O(k³)`
+expected time.
+
+# Arguments
+- `rng::AbstractRNG`: source of randomness.
+- `d::Int`: prime qudit dimension.
+- `targets`: ordered, distinct, positive qudit indices, copied into the
+  operator. Pass `1:k` for the first `k` qudits.
+
+# Throws
+`ArgumentError`, before any draw, for a non-prime `d`, offset-indexed targets,
+a target count or target value that does not fit in `Int`, nonpositive or
+repeated targets, or an integer in place of the target vector.
+
+# Notes
+A fixed seed reproduces the result for the same RNG type, Julia version and
+package version. The draw stream is not a cross-version guarantee.
+
+# Examples
+```julia
+using Random
+U = random_clifford(Xoshiro(1), 3, 1:2)    # a random two-qutrit Clifford
+apply!(tab, U)
+```
+
+See also [`random_clifford!`](@ref), [`random_state!`](@ref).
+"""
+function random_clifford(rng::Random.AbstractRNG, d::Int,
+                         targets::AbstractVector{<:Integer})
+    Primes.isprime(d) || throw(ArgumentError("Qudit dimension d must be a prime number."))
+    Base.require_one_based_indexing(targets)
+    k = _target_count(targets)
+    S = _clifford_size(k)
+    t = _copy_targets(targets, k)
+    # The identity is a valid operator, as the owned boundary requires; the
+    # refill replaces its action. NEVER invmod(2, 2), which is undefined.
+    inv2 = d == 2 ? 0 : Base.invmod(2, d)
+    U = _owned_clifford_operator(d, t, _set_identity!(Matrix{Int}(undef, S, S)),
+                                 zeros(Int, S), zeros(Int, S), inv2,
+                                 clifford_fast_dots(S, d), zeros(Int, S),
+                                 zeros(Int, S), zeros(Int, k))
+    return random_clifford!(rng, U)
+end
+
+random_clifford(d::Int, targets::AbstractVector{<:Integer}) =
+    random_clifford(Random.default_rng(), d, targets)
+
+# A bare integer could mean "on qudit k" or "on k qudits", so neither is guessed.
+random_clifford(::Random.AbstractRNG, ::Int, k::Integer) = _throw_integer_targets(k)
+random_clifford(::Int, k::Integer) = _throw_integer_targets(k)
+
+@noinline _throw_integer_targets(k::Integer) = throw(ArgumentError(
+    "random_clifford takes a vector of target qudits, got the integer $k. " *
+    "Pass 1:$k for the first $k qudits, or [$k] for qudit $k alone."))
+
+"""
+    random_clifford!([rng::AbstractRNG,] U::CliffordOperator) -> U
+
+Refill `U` in place with a new uniformly random Clifford on the same dimension
+and ordered support, and return `U`.
+
+The result depends only on the draws, never on `U`'s previous action, so any
+operator can be refilled, including one built with `check=false`. `U` keeps its
+dimension, its targets and every one of its arrays; only `F`, the raw phases
+and the derived cache change. A warmed refill with a standard RNG allocates
+nothing, which suits random circuits: keep one operator per support and refill
+it for every layer. This is the one package operation that changes an
+operator's action in place.
+
+# Notes
+- If the RNG throws during a refill, `U` is unusable until a later refill
+  succeeds; nothing is rolled back.
+- A refill changes `==` and `hash`, so do not refill an operator that is a
+  dictionary key.
+- One operator must not be refilled or applied from several tasks at once, as
+  for [`apply!`](@ref); use independent copies instead.
+
+# Examples
+```julia
+using Random
+rng = Xoshiro(7)
+U = random_clifford(rng, 2, [3, 4])
+for layer in 1:10
+    apply!(tab, random_clifford!(rng, U))
+end
+```
+
+See also [`random_clifford`](@ref).
+"""
+function random_clifford!(rng::Random.AbstractRNG, U::CliffordOperator)
+    k = length(U.targets)
+    k == 0 && return U
+    d = U.d
+    F = _set_identity!(U.F)
+    # `v`, `vout`, `a` and `image_xdotz` are the sampler's scratch until the
+    # cache and the phases are rewritten below.
+    _sample_pairs!(rng, F, k, k, d, U.fast, U.v, U.vout, U.a, U.image_xdotz)
+    D = _image_xdotz_dense!(U.image_xdotz, F, k, d, U.fast)
+    a = U.a
+    if d == 2
+        # The two Hermitian phases a ≡ x·z (mod 2). D[i] is 0 or 1, so the sum
+        # is already reduced mod 4.
+        for i in 1:(2k)
+            a[i] = D[i] + 2 * _draw(rng, 2)
+        end
+    else
+        for i in 1:(2k)
+            a[i] = _draw(rng, d)
+        end
+    end
+    return U
+end
+
+random_clifford!(U::CliffordOperator) = random_clifford!(Random.default_rng(), U)

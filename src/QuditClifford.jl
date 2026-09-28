@@ -14,7 +14,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     is_pure,
     AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
     CliffordOperator,
-    apply!, conjugate
+    apply!, conjugate,
+    random_clifford, random_clifford!
 
 import Random, Primes
 import Random.rand!
