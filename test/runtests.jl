@@ -21,4 +21,5 @@ using Aqua
     include("unitaries.jl")
     include("clifford_operators.jl")
     include("random_clifford.jl")
+    include("dense_states.jl")
 end

@@ -1,0 +1,187 @@
+using QuditClifford
+using Test
+using LinearAlgebra
+using Random
+
+const QC = QuditClifford
+
+const DENSE_TABLEAU_TYPES = [("StabilizerTableau", StabilizerTableau),
+                             ("DestabilizerTableau", DestabilizerTableau)]
+
+# Independent reference implementation, `ref_*`. Built only from the documented
+# basis actions -- it never calls a production root, index or group-product
+# helper -- so agreement with it cannot come from sharing a convention mistake.
+#
+# Every top-level name in this file is prefixed `ref_` or `dense_`: runtests.jl
+# includes all test files into one module, and test/unitaries.jl already owns
+# `oracle_pauli`, `oracle_projector`, `oracle_embed` and a 0-based
+# `oracle_index`.
+
+ref_p(d) = d == 2 ? 4 : d
+ref_zeta(e, d) = cis(2π * e / ref_p(d))      # i^e for qubits, ω^e otherwise
+ref_omega(e, d) = cis(2π * e / d)
+
+function ref_shift(d)                           # X|j⟩ = |j+1 mod d⟩
+    X = zeros(ComplexF64, d, d)
+    for j in 0:d-1
+        X[mod(j + 1, d)+1, j+1] = 1
+    end
+    return X
+end
+ref_clock(d) = Matrix{ComplexF64}(Diagonal([ref_omega(j, d) for j in 0:d-1]))
+
+# ζ^a ⊗_q X_q^x_q Z_q^z_q, qudit 1 as the most significant kron factor.
+function ref_pauli(d, x, z, a)
+    X, Z = ref_shift(d), ref_clock(d)
+    M = ones(ComplexF64, 1, 1)
+    for q in eachindex(x)
+        M = kron(M, X^x[q] * Z^z[q])
+    end
+    return ref_zeta(a, d) * M
+end
+
+ref_index(c, d) = 1 + sum((c[q] * d^(length(c) - q) for q in eachindex(c)); init=0)
+ref_digits(i, d, n) = [div(i - 1, d^(n - q)) % d for q in 1:n]
+function ref_basis(c, d)
+    v = zeros(ComplexF64, d^length(c))
+    v[ref_index(c, d)] = 1
+    return v
+end
+
+# The code-space projector of the ORIGINAL generators, Π = ∏_j (Σ_t g_j^t)/d.
+function ref_projector(tab)
+    d, n = tab.d, tab.n
+    Π = Matrix{ComplexF64}(I, d^n, d^n)
+    for j in 1:tab.m
+        g = ref_pauli(d, tab.stab[1:n, j], tab.stab[(n+1):(2n), j], tab.stab[2n+1, j])
+        Π = Π * sum(g^t for t in 0:d-1) / d
+    end
+    return Π
+end
+
+# A preset driven through a seeded mix of the seven named gates and measure!,
+# as test/unitaries.jl prepares states. `mixed=true` starts maximally mixed and
+# keeps m < n; phase_policy=1 keeps every qubit generator Hermitian.
+function dense_random_tableau(TT, d, n, rng; mixed::Bool=false, steps::Int=12)
+    tab = TT(d, n; state=mixed ? :mixed : :product, basis=:Z)
+    mixed && n >= 2 && measure!(tab, SinglePauli(1, 0, 1); outcome=rand(rng, 0:d-1))
+    for _ in 1:steps
+        q = rand(rng, 1:n)
+        choice = rand(rng, 1:(n >= 2 ? 8 : 5))
+        if choice == 1
+            apply!(tab, Fourier(q))
+        elseif choice == 2
+            apply!(tab, Phase(q))
+        elseif choice == 3
+            apply!(tab, PauliGate(q, rand(rng, 0:d-1), rand(rng, 0:d-1)))
+        elseif choice == 4
+            d > 2 && apply!(tab, Multiplier(q, rand(rng, 1:d-1)))
+        elseif choice == 5
+            x, z = rand(rng, 0:d-1), rand(rng, 0:d-1)
+            (x, z) == (0, 0) && (z = 1)
+            if !mixed || tab.m < n - 1
+                measure!(tab, SinglePauli(q, x, z); outcome=rand(rng, 0:d-1), phase_policy=1)
+            end
+        else
+            q2 = rand(rng, setdiff(1:n, q))
+            choice == 6 && apply!(tab, SUM(q, q2, rand(rng, 1:d-1)))
+            choice == 7 && apply!(tab, CPhase(q, q2, rand(rng, 1:d-1)))
+            choice == 8 && apply!(tab, SWAP(q, q2))
+        end
+    end
+    return tab
+end
+
+# The exception `f()` throws, or `nothing` when it returns.
+function dense_thrown(f)
+    try
+        f()
+    catch e
+        return e
+    end
+    return nothing
+end
+
+# Every field of a tableau, deep-copied: stabilizers, destabilizers, inactive
+# capacity, flags, caches and workspaces alike.
+dense_snapshot(tab) = [deepcopy(getfield(tab, f)) for f in fieldnames(typeof(tab))]
+dense_same_field(a, b) = a == b
+dense_same_field(a::QC.PrecomputedInvMod, b::QC.PrecomputedInvMod) = a.lookuptable == b.lookuptable
+dense_same_field(::QC.JustInTimeInvMod, ::QC.JustInTimeInvMod) = true
+dense_unchanged(tab, snap) =
+    all(dense_same_field(getfield(tab, f), s) for (f, s) in zip(fieldnames(typeof(tab)), snap))
+
+# The contract each conversion enforces before touching the tableau: stored
+# phases (refused even maximally mixed), purity where it applies, Hermitian
+# qubit generators reported by original column, and a positive budget. The
+# non-Hermitian fixture is Z₂ then XZ on qubit 1 with phase 0: commuting and
+# independent, so the constructors accept it, and the conversions must not.
+function dense_check_contract(f, TT; needs_pure::Bool)
+    for state in (:ghz, :mixed)
+        @test_throws ArgumentError f(TT(2, 2; state, storephase=false))
+    end
+    needs_pure && @test_throws ArgumentError f(TT(3, 2; state=:mixed))
+    bad = TT(2, [0 1; 0 0; 0 1; 1 0; 0 0]; m=2)
+    err = dense_thrown(() -> f(bad))
+    @test err isa ArgumentError && occursin("column 2", err.msg)
+    for budget in (0, -1)
+        @test_throws ArgumentError f(TT(3, 2; state=:ghz); maxentries=budget)
+    end
+end
+
+##########################
+# State expansion kernels #
+##########################
+
+@testset "Overflow-safe powers" begin
+    @test QC._bounded_pow(3, 0, 1) == 1
+    @test QC._bounded_pow(3, 4, 81) == 81
+    @test QC._bounded_pow(3, 4, 80) == -1
+    @test QC._bounded_pow(3, 100, 1 << 24) == -1        # 3^100 is never formed
+    @test QC._bounded_pow(2, 30, typemax(Int)) == 2^30
+    @test QC._bounded_pow(2, Sys.WORD_SIZE - 1, typemax(Int)) == -1
+end
+
+@testset "Group walk visits each element once, in odometer order" begin
+    for (label, TT) in DENSE_TABLEAU_TYPES, d in (2, 3)
+        tab = dense_random_tableau(TT, d, 3, Xoshiro(10 + d))
+        n, m = tab.n, tab.m
+        G = tab.stab
+        gens = [ref_pauli(d, G[1:n, j], G[(n+1):(2n), j], G[2n+1, j]) for j in 1:m]
+        seen = Matrix{ComplexF64}[]
+        QC._walk_group(G, n, m, d, zeros(Int, 2n), zeros(Int, m)) do xz, a
+            push!(seen, ref_pauli(d, xz[1:n], xz[(n+1):(2n)], a))
+        end
+        # exponent vectors in lexicographic order, last one fastest; d = 3,
+        # m = 3 carries across one digit at step 3 and two at step 9
+        expected = [prod(gens[j]^u[j] for j in 1:m)
+                    for u in (ref_digits(w, d, m) for w in 1:d^m)]
+        @test length(seen) == d^m
+        @test all(isapprox.(seen, expected; atol=1e-10))
+    end
+    # no generators: the identity, once
+    visits = Ref(0)
+    QC._walk_group(zeros(Int, 5, 2), 2, 0, 3, zeros(Int, 4), Int[]) do xz, a
+        visits[] += 1
+        @test all(iszero, xz) && a == 0
+    end
+    @test visits[] == 1
+end
+
+@testset "Support preparation ($label, d=$d)" for (label, TT) in DENSE_TABLEAU_TYPES, d in (2, 3)
+    for trial in 1:6
+        tab = dense_random_tableau(TT, d, 3, Xoshiro(100d + trial))
+        before = dense_snapshot(tab)
+        G, k, cstar = QC._prepare_support(tab)
+        n = tab.n
+        @test dense_unchanged(tab, before)
+        @test G !== tab.stab
+        @test all(any(!iszero, G[1:n, j]) for j in 1:k)
+        @test all(all(iszero, G[1:n, j]) for j in (k+1):n)
+        # the support is exactly d^k labels, and cstar is the smallest
+        Π = ref_projector(tab)
+        support = [ref_digits(i, d, n) for i in 1:d^n if real(Π[i, i]) > 1e-9]
+        @test length(support) == d^k
+        @test cstar == first(support)
+    end
+end
