@@ -317,3 +317,48 @@ end
     @test length(ket(big; maxentries=303).phases) == 3
     @test_throws ArgumentError ket(big; maxentries=302)
 end
+
+################
+# state_vector #
+################
+
+@testset "state_vector ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    # |1,0⟩ pins the ordering; Bell and GHZ states are symmetric and cannot
+    tab = TT(2, 2; state=:product, basis=:Z)
+    apply!(tab, PauliGate(1, 1, 0))
+    @test state_vector(tab) == ComplexF64[0, 0, 1, 0]
+    @test state_vector(TT(2, 2; state=:product, basis=[:Z, :X])) ≈ kron([1, 0], [1, 1] / sqrt(2))
+    @test state_vector(TT(3, 0)) == ComplexF64[1]
+    @test state_vector(ket(TT(3, 0))) == ComplexF64[1]
+
+    for d in (2, 3), n in 1:3, trial in 1:3
+        tab = dense_random_tableau(TT, d, n, Xoshiro(2000d + 10n + trial))
+        k = ket(tab)
+        ψ = state_vector(tab)
+        @test length(ψ) == d^n
+        @test ψ ≈ state_vector(k)
+        @test norm(ψ) ≈ 1
+        i = findfirst(v -> abs(v) > 1e-12, ψ)
+        @test abs(imag(ψ[i])) < 1e-12 && real(ψ[i]) > 0
+        T = length(k.phases)
+        @test all(ψ[ref_index(k.labels[:, t], d)] ≈ ref_zeta(k.phases[t], d) / sqrt(T) for t in 1:T)
+        @test count(v -> abs(v) > 1e-12, ψ) == T
+    end
+end
+
+@testset "state_vector: contract ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    dense_check_contract(state_vector, TT; needs_pure=true)
+end
+
+@testset "state_vector: budgets are exact at the threshold ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    @test length(state_vector(TT(3, 2; state=:ghz); maxentries=9)) == 9
+    @test_throws ArgumentError state_vector(TT(3, 2; state=:ghz); maxentries=8)
+    # A full-support vector fits in D = 4 although its exact ket, (n + 1) D,
+    # does not: the tableau method must not route through ket.
+    plus = TT(2, 2; state=:product, basis=:X)
+    @test length(state_vector(plus; maxentries=4)) == 4
+    @test_throws ArgumentError state_vector(ket(plus); maxentries=3)
+    # d^n is never formed, so this is a clean refusal naming the power
+    err = dense_thrown(() -> state_vector(TT(3, 100; state=:ghz)))
+    @test err isa ArgumentError && occursin("3^100", err.msg)
+end

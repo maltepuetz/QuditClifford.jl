@@ -218,3 +218,123 @@ function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     end
     return StabilizerKet(_TrustedKet(), d, n, labels, phases)
 end
+
+####################
+# Basis and phases #
+####################
+
+# Qudit 1 is most significant: index(c) = 1 + Σ_q c_q d^(n-q). Only called
+# after a guard has established d^n <= maxentries, so no stride overflows.
+function _kron_strides(d::Int, n::Int)
+    strides = Vector{Int}(undef, n)
+    acc = 1
+    for q in n:-1:1
+        strides[q] = acc
+        q > 1 && (acc *= d)
+    end
+    return strides
+end
+
+@inline function _kron_index(label::AbstractVector{Int}, strides::Vector{Int})
+    idx = 1
+    for q in eachindex(strides)
+        idx += label[q] * strides[q]
+    end
+    return idx
+end
+
+# ζ^e for a reduced exponent. Exact for qubits; for odd d, the conversion
+# `_expect_from_exponent` uses. Evaluated per call rather than tabulated, so no
+# buffer ever scales with an unrestricted d.
+@inline function _zeta_power(e::Int, d::Int)
+    if d == 2
+        return e == 0 ? complex(1.0, 0.0) :
+               e == 1 ? complex(0.0, 1.0) :
+               e == 2 ? complex(-1.0, 0.0) : complex(0.0, -1.0)
+    end
+    return cis(2π * (Float64(e) / Float64(d)))
+end
+
+# The one scatter both state_vector methods share.
+@inline function _scatter_term!(psi::Vector{ComplexF64}, label::AbstractVector{Int},
+                                phase::Int, strides::Vector{Int}, d::Int, amp::Float64)
+    psi[_kron_index(label, strides)] = _zeta_power(phase, d) * amp
+    return nothing
+end
+
+################
+# state_vector #
+################
+
+"""
+    state_vector(tab::AbstractTableau; maxentries::Int=QuditClifford.DEFAULT_MAX_ENTRIES) -> Vector{ComplexF64}
+    state_vector(k::StabilizerKet; maxentries::Int=QuditClifford.DEFAULT_MAX_ENTRIES) -> Vector{ComplexF64}
+
+Return the dense state vector, of length `d^n`, of a pure tableau or a
+[`StabilizerKet`](@ref).
+
+Qudit 1 is the most significant digit, so basis label `(c₁, …, cₙ)` sits at
+index `1 + Σ_q c_q d^(n-q)` and product states agree with `kron`. The global
+phase is the one [`ket`](@ref) fixes: the first nonzero entry is real and
+positive.
+
+# Arguments
+- `tab::AbstractTableau`: A pure tableau (`m == n`) with `storephase=true`.
+  Not modified.
+- `k::StabilizerKet`: An exact ket.
+
+# Keyword Arguments
+- `maxentries::Int`: Largest number of complex entries the result may hold,
+  here `d^n`. The default is `2^24`, 256 MiB of `ComplexF64`.
+
+# Returns
+- `Vector{ComplexF64}` of length `d^n`.
+
+# Examples
+```julia
+tab = StabilizerTableau(2, 2; state=:product, basis=[:Z, :X])
+state_vector(tab)       # |0⟩ ⊗ |+⟩ = [1, 1, 0, 0] / √2
+```
+
+# Notes
+- The tableau method checks `d^n` against `maxentries` before canonicalizing,
+  and scatters the support directly: it never builds a `StabilizerKet`, so its
+  budget is `d^n` alone even when the exact ket would need more.
+- Throws `ArgumentError` under the same conditions as [`ket`](@ref), with
+  `d^n` as the size.
+"""
+function state_vector(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
+    _check_budget(maxentries)
+    _check_convertible(tab, "state_vector", true)
+    n, d = tab.n, tab.d
+    D = _bounded_pow(d, n, maxentries)
+    D < 0 && throw(_size_error("state_vector", "$d^$n", maxentries))
+    _check_bytes(D, sizeof(ComplexF64), "state_vector")
+    n == 0 && return ComplexF64[1]
+
+    G, k, cstar = _prepare_support(tab)
+    psi = zeros(ComplexF64, D)
+    strides = _kron_strides(d, n)
+    amp = 1 / sqrt(Float64(_bounded_pow(d, k, D)))   # d^k <= d^n = D
+    _emit_support(G, n, k, d, cstar) do label, phase
+        _scatter_term!(psi, label, phase, strides, d, amp)
+    end
+    return psi
+end
+
+function state_vector(k::StabilizerKet; maxentries::Int=DEFAULT_MAX_ENTRIES)
+    _check_budget(maxentries)
+    n, d = k.n, k.d
+    D = _bounded_pow(d, n, maxentries)
+    D < 0 && throw(_size_error("state_vector", "$d^$n", maxentries))
+    _check_bytes(D, sizeof(ComplexF64), "state_vector")
+
+    psi = zeros(ComplexF64, D)
+    strides = _kron_strides(d, n)
+    T = length(k.phases)
+    amp = 1 / sqrt(Float64(T))
+    for t in 1:T
+        _scatter_term!(psi, view(k.labels, :, t), k.phases[t], strides, d, amp)
+    end
+    return psi
+end
