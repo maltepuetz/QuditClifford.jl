@@ -215,7 +215,11 @@ shares.
 [`random_clifford!`](@ref) refills an existing operator in place, on the same
 dimension and support, and allocates nothing once warm. The new action never
 depends on the old one, and this is the one package operation that changes an
-operator in place.
+operator in place. A refill changes `==` and `hash`, so an operator used as a
+dictionary key should not be refilled. It borrows the same scratch as `apply!`,
+so the no-concurrent-use rule above covers refilling too; and if the RNG
+throws partway through, `U` is left unusable until a later refill succeeds,
+with nothing rolled back.
 
 [`random_state!`](@ref) replaces a tableau's state with a uniformly random
 stabilizer state that has `m` independent generators. The default, `m = n`,
