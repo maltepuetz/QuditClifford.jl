@@ -571,3 +571,107 @@ end
         @test_throws ArgumentError sprint(show, bell; context=:max_ket_label => bad)
     end
 end
+
+##################################################
+# Non-mutation, arithmetic envelope, allocation #
+##################################################
+
+# Bytes a call allocates net of the buffers it cannot avoid. Those are measured
+# the same way, so the allocator's rounding of large blocks -- whole 16 KiB
+# pages on Apple silicon -- cancels instead of being mistaken for waste. Every
+# thunk runs once first, so compilation is excluded.
+function dense_net_allocated(f, unavoidable...)
+    f()
+    total = @allocated f()
+    for g in unavoidable
+        g()
+        total -= @allocated g()
+    end
+    return total
+end
+
+
+@testset "Conversions leave the tableau untouched ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    for d in (2, 3), mixed in (false, true)
+        tab = dense_random_tableau(TT, d, 3, Xoshiro(6000d + mixed); mixed)
+        for phase in (:as_prepared, :canonical)
+            phase === :canonical && canonicalize!(tab)
+            snap = dense_snapshot(tab)
+            density_matrix(tab)
+            if !mixed
+                ket(tab)
+                state_vector(tab)
+            end
+            @test_throws ArgumentError ket(tab; maxentries=1)
+            @test_throws ArgumentError state_vector(tab; maxentries=1)
+            @test_throws ArgumentError density_matrix(tab; maxentries=1)
+            @test dense_unchanged(tab, snap)
+        end
+    end
+end
+
+@testset "Arithmetic envelope" begin
+    jit = QC.JustInTimeInvMod()
+    inside, past = Sys.WORD_SIZE == 64 ? (2147483647, 2147483659) : (32749, 32771)
+    @test inside <= QC.max_safe_dimension(2) < past
+
+    # The largest prime inside the n = 2 envelope, with a one-term ket: nothing
+    # may scale with d, so an all-roots table would show up here.
+    big = @test_logs StabilizerTableau(inside, 2; state=:product, basis=:Z, inversemod=jit)
+    k = ket(big)
+    @test k.labels == zeros(Int, 2, 1) && k.phases == [0]
+    @test repr(k) == "|0,0⟩"
+    @test dense_net_allocated(() -> ket(big)) < 4096
+
+    # The first prime past it is refused rather than computed inexactly.
+    over = @test_logs (:warn, r"overflow") StabilizerTableau(past, 2; state=:product, basis=:Z, inversemod=jit)
+    for f in (ket, state_vector, density_matrix)
+        err = dense_thrown(() -> f(over))
+        @test err isa ArgumentError && occursin(string(QC.max_safe_dimension(2)), err.msg)
+    end
+end
+
+@testset "Byte counts must be representable" begin
+    # Entry counts inside maxentries = typemax(Int) whose byte counts are not.
+    # The message is asserted, not just the type: Base's own array constructor
+    # also refuses such sizes with an ArgumentError, so the type alone would
+    # pass with the package's guard deleted.
+    W = Sys.WORD_SIZE
+    n = 0
+    while (n + 2) * big(2)^(n + 1) <= typemax(Int)
+        n += 1
+    end
+    @test (n + 1) * big(2)^n * sizeof(Int) > typemax(Int)
+    for (f, tab) in ((state_vector, StabilizerTableau(2, W - 4; state=:product)),
+                     (density_matrix, StabilizerTableau(2, (W - 4) ÷ 2; state=:mixed)),
+                     (ket, StabilizerTableau(2, n; state=:product, basis=:X)))
+        err = dense_thrown(() -> f(tab; maxentries=typemax(Int)))
+        @test err isa ArgumentError && occursin("byte count", err.msg)
+    end
+end
+
+@testset "Allocation sanity" begin
+    I8 = sizeof(Int)
+    # O(n) scratch per call, plus the result where it is small
+    small(n, extra=0) = I8 * (16n + extra) + 2048
+
+    # a basis state and a 100-qutrit GHZ: polynomial, nothing proportional to d^n
+    basis = StabilizerTableau(2, 64; state=:product, basis=:Z)
+    ghz = StabilizerTableau(3, 100; state=:ghz)
+    @test dense_net_allocated(() -> ket(basis), () -> copy(basis.stab)) < small(64, 65)
+    @test dense_net_allocated(() -> ket(ghz), () -> copy(ghz.stab)) < small(100, 3 * 101)
+
+    # full support: the dense vector alone. Routing through an exact ket would
+    # add I8 (n + 1) 2^n bytes -- 90 KB here, far past the slack.
+    plus = StabilizerTableau(2, 10; state=:product, basis=:X)
+    @test dense_net_allocated(() -> state_vector(plus),
+                        () -> copy(plus.stab), () -> zeros(ComplexF64, 2^10)) < small(10)
+
+    # maximally mixed: the output and O(n + m) scratch
+    mm = StabilizerTableau(2, 6; state=:mixed)
+    @test dense_net_allocated(() -> density_matrix(mm), () -> zeros(ComplexF64, 64, 64)) < small(6)
+
+    # display touches only the terms it prints, never all 2^16
+    wide = ket(StabilizerTableau(2, 16; state=:product, basis=:X))
+    @test dense_net_allocated(() -> repr(wide)) < 32_768
+end
