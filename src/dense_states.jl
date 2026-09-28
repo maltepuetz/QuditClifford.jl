@@ -45,8 +45,8 @@ power of ``\\zeta``, so the expansion is exact.
 - `n::Int`: number of qudits.
 - `labels::Matrix{Int}`: `n × T` digits; column `t` is the basis label of term
   `t`, qudit 1 in row 1.
-- `phases::Vector{Int}`: the `T` exponents of ``\\zeta``, reduced modulo
-  `phase_modulus(d)`.
+- `phases::Vector{Int}`: the `T` exponents of ``\\zeta``, reduced modulo 4 for
+  `d = 2` and modulo `d` otherwise.
 
 # Canonical form
 Labels are strictly increasing in lexicographic order and `phases[1] == 0`, so
@@ -300,8 +300,9 @@ state_vector(tab)       # |0⟩ ⊗ |+⟩ = [1, 1, 0, 0] / √2
 - The tableau method checks `d^n` against `maxentries` before canonicalizing,
   and scatters the support directly: it never builds a `StabilizerKet`, so its
   budget is `d^n` alone even when the exact ket would need more.
-- Throws `ArgumentError` under the same conditions as [`ket`](@ref), with
-  `d^n` as the size.
+- The tableau method throws `ArgumentError` under the same conditions as
+  [`ket`](@ref), with `d^n` as the size; the `StabilizerKet` method only for an
+  invalid or exceeded `maxentries`.
 """
 function state_vector(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
@@ -469,14 +470,13 @@ end
 # Display #
 ###########
 
-# Display caps come from IOContext properties rather than a global `Ref` like
-# `max_qudits_display`. That is a deliberate departure: a property is scoped to
-# one `show` call, composes with the caller's own IOContext, and leaves no
-# mutable global for concurrent callers to race on. `max_qudits_display` is
-# left as it is.
+# Display caps are IOContext properties, not a global `Ref` like
+# `max_qudits_display`: a property is scoped to one `show` call, composes with
+# the caller's own IOContext, and leaves no mutable global for concurrent
+# callers to race on.
 function _ket_display_cap(io::IO, key::Symbol, default::Int)
     v = get(io, key, default)
-    (v isa Integer && v > 0) || throw(ArgumentError(
+    (v isa Integer && !(v isa Bool) && v > 0) || throw(ArgumentError(
         "IOContext property :$key must be a positive integer, got $(repr(v))."))
     return Int(v)
 end

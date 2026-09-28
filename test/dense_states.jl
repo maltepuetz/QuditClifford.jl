@@ -566,7 +566,7 @@ end
     @test sprint(show, bell; context=(:limit => true, :displaysize => (24, 16))) == "(|00⟩ + |11⟩)/√2"
     @test sprint(show, bell; context=(:limit => true, :displaysize => (24, 15))) == "(|00⟩ + …)/√2"
 
-    for bad in (0, -2, "x", 1.5)
+    for bad in (0, -2, "x", 1.5, true)
         @test_throws ArgumentError sprint(show, bell; context=:max_ket_terms => bad)
         @test_throws ArgumentError sprint(show, bell; context=:max_ket_label => bad)
     end

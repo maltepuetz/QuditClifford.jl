@@ -177,7 +177,7 @@ state whose density matrix would not depend on phases.
 
 Each conversion takes a `maxentries` keyword bounding the scalar storage it
 returns — `(n+1)·d^k` integers for a ket, `d^n` entries for a state vector,
-`d^{2n}` for a density matrix — with a default of `2^24`, which is 256 MiB of
+`d^(2n)` for a density matrix — with a default of `2^24`, which is 256 MiB of
 `ComplexF64`. No bound ever forms `d^n`, so asking for the dense vector of a
 100-qutrit state fails cleanly instead of overflowing:
 
