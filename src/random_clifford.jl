@@ -340,7 +340,8 @@ its dual basis and cache, with no separate reconstruction.
 - For `m > 0`, each call allocates a `2n × 2n` scratch matrix and four
   length-`2n` vectors, and costs `O(n²m)`. Every draw happens before `tab` is
   modified, so an exception from the RNG leaves it unchanged, although the RNG
-  has advanced.
+  has advanced. An interrupt that arrives during the final copy is outside
+  this guarantee.
 - A fixed seed reproduces the state for the same RNG type, Julia version and
   package version.
 
