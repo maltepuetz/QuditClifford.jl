@@ -20,4 +20,5 @@ using Aqua
     include("initialization.jl")
     include("unitaries.jl")
     include("clifford_operators.jl")
+    include("random_clifford.jl")
 end

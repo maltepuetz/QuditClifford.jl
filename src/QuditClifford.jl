@@ -40,5 +40,6 @@ include("expectation_value.jl")
 include("clifford_gates.jl")
 include("apply_clifford.jl")
 include("clifford_operator.jl")
+include("random_clifford.jl")
 
 end
