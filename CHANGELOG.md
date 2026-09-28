@@ -27,7 +27,14 @@ dependency bump — carries the `skip-changelog` label instead.
   so Heisenberg evolution is `conjugate(inv(U), op)`. Construction validates the
   symplectic condition and, at `d = 2`, generator-image Hermiticity; `check=false`
   skips only those two algebraic checks. Warmed stored `apply!` allocates nothing.
-  Uniform random Clifford sampling is still to come.
+- Uniformly random Clifford operators and stabilizer states.
+  `random_clifford([rng,] d, targets)` returns a `CliffordOperator` drawn
+  uniformly from the Clifford group modulo global phase, and
+  `random_clifford!([rng,] U)` refills an existing operator in place, allocating
+  nothing once warm. `random_state!([rng,] tab; m = tab.n)` replaces a tableau's
+  state with a uniformly random stabilizer state with `m` generators: pure at
+  `m = n`, the normalized projector onto a random stabilizer code below. The
+  RNG comes first and defaults to `Random.default_rng()`.
 
 ## 0.2.0 - 2026-09-15
 
