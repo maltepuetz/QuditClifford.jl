@@ -185,3 +185,135 @@ end
         @test cstar == first(support)
     end
 end
+
+##########################
+# StabilizerKet and ket  #
+##########################
+
+@testset "ket is the state the generators fix ($label, d=$d)" for (label, TT) in DENSE_TABLEAU_TYPES, d in (2, 3)
+    for n in 1:3, trial in 1:3
+        tab = dense_random_tableau(TT, d, n, Xoshiro(1000d + 10n + trial))
+        k = ket(tab)
+        T = length(k.phases)
+        @test k.d == d && k.n == n
+        @test size(k.labels) == (n, T)
+        @test all(0 .<= k.labels .< d)
+        @test all(0 .<= k.phases .< ref_p(d))
+        # canonical form: strictly ascending labels, first phase zero
+        cols = collect(eachcol(k.labels))
+        @test issorted(cols) && allunique(cols)
+        @test k.phases[1] == 0
+        # the vector it denotes is fixed by the rank-one projector
+        ψ = sum(ref_zeta(k.phases[t], d) * ref_basis(k.labels[:, t], d) for t in 1:T) / sqrt(T)
+        @test ref_projector(tab) * ψ ≈ ψ atol = 1e-10
+    end
+end
+
+@testset "ket: known states ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    k = ket(TT(2, 4; state=:product, basis=:Z))
+    @test k.labels == zeros(Int, 4, 1) && k.phases == [0]
+
+    for d in (2, 3)
+        full = ket(TT(d, 2; state=:product, basis=:X))
+        @test full.labels == reduce(hcat, [ref_digits(i, d, 2) for i in 1:d^2])
+        @test full.phases == zeros(Int, d^2)
+
+        ghz = ket(TT(d, 3; state=:ghz))
+        @test ghz.labels == repeat((0:d-1)', 3)
+        @test ghz.phases == zeros(Int, d)
+    end
+
+    # the four qubit Bell sign/phase patterns
+    for (gates, phase) in ((AbstractClifford[], 0), ([PauliGate(1, 0, 1)], 2),
+                           ([Phase(1)], 1), ([Phase(1), PauliGate(1, 0, 1)], 3))
+        tab = TT(2, 2; state=:ghz)
+        foreach(g -> apply!(tab, g), gates)
+        @test ket(tab).labels == [0 1; 0 1]
+        @test ket(tab).phases == [0, phase]
+    end
+
+    # a nonzero affine offset: (|01⟩ + |10⟩)/√2 starts at cstar = (0, 1)
+    tab = TT(2, 2; state=:ghz)
+    apply!(tab, PauliGate(2, 1, 0))
+    @test ket(tab).labels == [0 1; 1 0]
+
+    # zero qudits: one empty label with phase 0
+    z = ket(TT(2, 0))
+    @test size(z.labels) == (0, 1) && z.phases == [0]
+end
+
+@testset "ket: sign fixtures ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    # Y = iXZ fixes (|0⟩ + i|1⟩)/√2 and -Y = i³XZ fixes (|0⟩ - i|1⟩)/√2
+    @test ket(TT(2, 1; state=:product, basis=:Y)).phases == [0, 1]
+    @test ket(TT(2, reshape([1, 1, 1], 3, 1))).phases == [0, 1]
+    @test ket(TT(2, reshape([1, 1, 3], 3, 1))).phases == [0, 3]
+    # -Z = i²Z: a Z-only qubit column whose even phase halves exactly
+    @test ket(TT(2, reshape([0, 1, 2], 3, 1))).labels == reshape([1], 1, 1)
+    # ωX at d = 3 fixes the X eigenvector of eigenvalue ω²
+    k = ket(TT(3, reshape([1, 0, 1], 3, 1)))
+    @test k.labels == [0 1 2] && k.phases == [0, 1, 2]
+    # ωZ fixes only |2⟩
+    @test ket(TT(3, reshape([0, 1, 1], 3, 1))).labels == reshape([2], 1, 1)
+end
+
+@testset "ket: exact equality across generator bases ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    for d in (2, 3), trial in 1:4
+        rng = Xoshiro(500d + trial)
+        tab = dense_random_tableau(TT, d, 3, rng)
+        before = ket(tab)
+        again = ket(deepcopy(tab))
+        @test again == before && isequal(again, before) && hash(again) == hash(before)
+        permuted = TT(d, tab.stab[:, randperm(rng, 3)]; m=3)
+        @test ket(permuted) == before && hash(ket(permuted)) == hash(before)
+        # canonicalize! returns nothing, so compare after the fact
+        canonicalize!(tab)
+        @test ket(tab) == before
+    end
+
+    # the same state by two preparations
+    for d in (2, 3)
+        viagates = TT(d, 3; state=:product, basis=:Z)
+        apply!(viagates, Fourier(1))
+        apply!(viagates, SUM(1, 2))
+        apply!(viagates, SUM(1, 3))
+        @test ket(viagates) == ket(TT(d, 3; state=:ghz))
+    end
+    flipped = TT(2, 1; state=:product, basis=:Z)
+    apply!(flipped, PauliGate(1, 1, 0))
+    @test ket(flipped) == ket(TT(2, reshape([0, 1, 2], 3, 1)))
+
+    # {X₁Z₂, X₁X₂Z₁Z₂} and {X₁Z₂, -Z₁X₂} generate one group, hence one state;
+    # the product's sign is what a phase-free tableau loses
+    A = TT(2, [1 1; 0 1; 0 1; 1 1; 0 0]; m=2)
+    B = TT(2, [1 0; 0 1; 0 1; 1 0; 0 2]; m=2)
+    B_unsigned = TT(2, [1 0; 0 1; 0 1; 1 0; 0 0]; m=2)
+    @test ket(A) == ket(B)
+    @test ket(A) != ket(B_unsigned)
+    @test Dict(ket(A) => :state)[ket(B)] == :state
+end
+
+@testset "ket owns its data" begin
+    tab = StabilizerTableau(3, 2; state=:ghz)
+    k = ket(tab)
+    frozen = deepcopy(k)
+    apply!(tab, Fourier(1))
+    measure!(tab, SinglePauli(2, 1, 0); outcome=1)
+    @test k == frozen
+    # no public constructor from raw data
+    @test_throws MethodError StabilizerKet(3, 2, zeros(Int, 2, 1), [0])
+end
+
+@testset "ket: contract ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    dense_check_contract(ket, TT; needs_pure=true)
+end
+
+@testset "ket: budgets are exact at the threshold ($label)" for (label, TT) in DENSE_TABLEAU_TYPES
+    @test length(ket(TT(3, 2; state=:ghz); maxentries=9).phases) == 3   # (n + 1) T = 9
+    @test_throws ArgumentError ket(TT(3, 2; state=:ghz); maxentries=8)
+    # full support needs (n + 1) d^n = 12 here
+    @test_throws ArgumentError ket(TT(2, 2; state=:product, basis=:X); maxentries=4)
+    # 100 qutrits: three terms of 100 digits and a phase each
+    big = TT(3, 100; state=:ghz)
+    @test length(ket(big; maxentries=303).phases) == 3
+    @test_throws ArgumentError ket(big; maxentries=302)
+end
