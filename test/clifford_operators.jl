@@ -312,7 +312,8 @@ Base.getindex(::UnreadableHugeTargets, ::Int) = error("input traversed before re
         end
         @test caught === LENGTH_FAILURE
     end
-    # Ranges of 64-bit or narrower integers are counted without allocating.
+    # Ranges of native-width or narrower integers are counted without
+    # allocating, on 32-bit hosts as well.
     count_allocations(r) = (QC._target_count(r); @allocated QC._target_count(r))
     for r in (1:8, UInt(1):UInt(8), Int32(9):Int32(-2):Int32(1), 1:0)
         @test count_allocations(r) == 0

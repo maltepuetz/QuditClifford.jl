@@ -822,18 +822,27 @@ end
     end
 end
 
+# The number of allocations and the bytes of one warmed call. Byte totals of
+# large arrays vary between calls on some platforms (Windows), so growth with m
+# is judged by the allocation count, and the bytes only against a budget.
 function rc_state_allocations(rng::AbstractRNG, tab, m::Int)
     for _ in 1:3
         random_state!(rng, tab; m)
     end
-    return @allocated random_state!(rng, tab; m)
+    return (@allocations random_state!(rng, tab; m)), (@allocated random_state!(rng, tab; m))
 end
 
 @testset "State scratch does not grow with m" begin
+    n = 12
+    # One 2n × 2n matrix and four length-2n vectors, with room for array headers.
+    budget = 2 * sizeof(Int) * ((2n)^2 + 4 * 2n)
     for (_, TT) in RC_TABLEAU_TYPES, d in (2, 3), storephase in (false, true)
-        tab = TT(d, 12; storephase)
+        tab = TT(d, n; storephase)
         rng = Xoshiro(3)
-        @test rc_state_allocations(rng, tab, 1) == rc_state_allocations(rng, tab, 12)
-        @test rc_state_allocations(rng, tab, 0) == 0
+        count1, bytes1 = rc_state_allocations(rng, tab, 1)
+        countn, bytesn = rc_state_allocations(rng, tab, n)
+        @test count1 == countn
+        @test bytes1 <= budget && bytesn <= budget
+        @test rc_state_allocations(rng, tab, 0) == (0, 0)
     end
 end

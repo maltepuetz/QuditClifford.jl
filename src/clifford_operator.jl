@@ -216,9 +216,12 @@ function _target_count(targets::AbstractVector{<:Integer})
     return Int(k)
 end
 
-# Int128 holds every endpoint difference and quotient of 64-bit or narrower
-# integers exactly, without allocating; wider integer types use BigInt.
-_exact_integer(x::Union{Bool,Int8,Int16,Int32,Int64,UInt8,UInt16,UInt32,UInt64}) = Int128(x)
+# A signed type of twice the width holds every endpoint difference and quotient
+# exactly: Int64 for 32-bit or narrower integers, Int128 for 64-bit ones, and
+# BigInt beyond. Int64 keeps the count of an `Int` range allocation-free on
+# 32-bit hosts too, where Base divides Int128 values through BigInt.
+_exact_integer(x::Union{Bool,Int8,Int16,Int32,UInt8,UInt16,UInt32}) = Int64(x)
+_exact_integer(x::Union{Int64,UInt64}) = Int128(x)
 _exact_integer(x::Integer) = big(x)
 
 # Copy `k` counted targets into owned dense storage, checking each value.
