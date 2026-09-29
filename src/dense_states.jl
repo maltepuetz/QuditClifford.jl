@@ -55,6 +55,9 @@ kets of the same state are therefore `==`, and hash equal, whichever generators
 they were computed from.
 
 # Notes
+- For inspecting and debugging small systems, not for computation. Work with
+  the tableau directly, through [`measure!`](@ref), [`expect!`](@ref),
+  [`entanglement_entropy`](@ref) and [`apply!`](@ref).
 - Labels are digits rather than linear indices, so a ket stays representable
   when `d^n` does not fit in an `Int`: a 100-qutrit GHZ ket is 300 digits and
   three phases. This is an exact support expansion, not a compressed form —
@@ -183,6 +186,9 @@ ket(tab)          # (|00…0⟩ + |11…1⟩ + |22…2⟩)/√3, three terms at 
 ```
 
 # Notes
+- For inspecting and debugging small systems, not for computation. Work with
+  the tableau directly, through [`measure!`](@ref), [`expect!`](@ref),
+  [`entanglement_entropy`](@ref) and [`apply!`](@ref).
 - Throws `ArgumentError` for a mixed tableau, for `storephase=false`, for a
   non-Hermitian qubit generator (naming its column), for `d` beyond the exact
   `Int` phase arithmetic at this `n`, or when the result exceeds `maxentries`.
@@ -297,6 +303,9 @@ state_vector(tab)       # |0⟩ ⊗ |+⟩ = [1, 1, 0, 0] / √2
 ```
 
 # Notes
+- For inspecting and debugging small systems, not for computation. Work with
+  the tableau directly, through [`measure!`](@ref), [`expect!`](@ref),
+  [`entanglement_entropy`](@ref) and [`apply!`](@ref).
 - The tableau method checks `d^n` against `maxentries` before canonicalizing,
   and scatters the support directly: it never builds a `StabilizerKet`, so its
   budget is `d^n` alone even when the exact ket would need more.
@@ -378,6 +387,9 @@ density_matrix(tab)     # (|00⟩ + |11⟩)(⟨00| + ⟨11|) / 2
 ```
 
 # Notes
+- For inspecting and debugging small systems, not for computation. Work with
+  the tableau directly, through [`measure!`](@ref), [`expect!`](@ref),
+  [`entanglement_entropy`](@ref) and [`apply!`](@ref).
 - Sums the `d^m` group elements of the original generators directly, without
   canonicalizing: `Θ(d^(2n))` in all, dominated by zeroing the output even when
   the state is maximally mixed.

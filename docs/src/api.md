@@ -72,7 +72,7 @@ expect_int!
 entanglement_entropy
 ```
 
-## Dense states
+## Inspecting states
 
 ```@docs
 StabilizerKet

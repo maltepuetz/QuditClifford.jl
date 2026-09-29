@@ -3,11 +3,19 @@ CurrentModule = QuditClifford
 DocTestSetup = :(using QuditClifford)
 ```
 
-# Dense and Exact States
+# Inspecting States
+
+!!! warning "For debugging and understanding, not for computation"
+    The conversions on this page expand a tableau in the computational basis
+    so that you can look at it: to debug a circuit on a few qudits, or to see
+    which state a set of generators describes. Their cost grows exponentially
+    with the number of qudits, which is exactly what the tableau
+    representation avoids. Simulations should stay on the tableau and use
+    [`apply!`](@ref), [`measure!`](@ref), [`expect!`](@ref) and
+    [`entanglement_entropy`](@ref).
 
 A tableau stores a state in ``O(n^2)`` integers. Three conversions expand it in
-the computational basis, for reading, for small-system verification, and for
-handing to other libraries:
+the computational basis:
 
 - [`ket`](@ref) returns the exact expansion of a pure state as a
   [`StabilizerKet`](@ref);

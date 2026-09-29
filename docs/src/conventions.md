@@ -108,7 +108,7 @@ making the amplitude of the lexicographically first label real and positive,
 and [`state_vector`](@ref) keeps that choice.
 
 All three conversions require `storephase=true`, because a phase-free tableau
-does not determine a state (see [Dense and Exact States](@ref)), and each
+does not determine a state (see [Inspecting States](@ref)), and each
 refuses a result larger than its `maxentries` keyword, `2^24` scalars by
 default. [`ket`](@ref) is exact. The dense arrays are floating point: a density
 matrix sums unit-modulus terms, so round-off and cancellation can leave small

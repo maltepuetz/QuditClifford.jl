@@ -35,16 +35,16 @@ dependency bump — carries the `skip-changelog` label instead.
   state with a uniformly random stabilizer state with `m` generators: pure at
   `m = n`, the normalized projector onto a random stabilizer code for `m < n`.
   The RNG comes first and defaults to `Random.default_rng()`.
-- Dense and exact state representations. `ket(tab)` returns a `StabilizerKet`,
-  the exact computational-basis expansion of a pure state: `d^k` terms with
-  integer phase exponents, printed in Dirac notation such as `(|00⟩ + |11⟩)/√2`,
-  and stored as digits, so a 100-qutrit GHZ state is three terms.
-  `state_vector` and `density_matrix` return dense `ComplexF64` arrays, the
-  latter for mixed states too, with qudit 1 as the most significant digit so
-  that product states agree with `kron`. All three leave the tableau untouched,
-  require `storephase=true`, and refuse a result larger than their `maxentries`
-  budget (`2^24` by default) without ever forming `d^n`.
-  `docs/src/dense-states.md` walks through them.
+- Tools for inspecting and debugging small systems, not for computation.
+  `ket(tab)` returns a `StabilizerKet`, the exact computational-basis expansion
+  of a pure state: `d^k` terms with integer phase exponents, printed in Dirac
+  notation such as `(|00⟩ + |11⟩)/√2`, and stored as digits, so a 100-qutrit
+  GHZ state is three terms. `state_vector` and `density_matrix` return dense
+  `ComplexF64` arrays, the latter for mixed states too, with qudit 1 as the most
+  significant digit so that product states agree with `kron`. All three leave
+  the tableau untouched, require `storephase=true`, and refuse a result larger
+  than their `maxentries` budget (`2^24` by default) without ever forming
+  `d^n`. `docs/src/dense-states.md` ("Inspecting States") walks through them.
 
 ## 0.2.0 - 2026-09-15
 

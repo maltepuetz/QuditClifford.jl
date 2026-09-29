@@ -23,7 +23,7 @@ makedocs(;
             "Representation and Conventions" => "conventions.md",
             "Measurements and Expectations" => "measurements.md",
             "Clifford Unitaries" => "unitaries.md",
-            "Dense and Exact States" => "dense-states.md",
+            "Inspecting States" => "dense-states.md",
         ],
         "API Reference" => "api.md",
     ],
