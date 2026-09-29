@@ -15,7 +15,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
     CliffordOperator,
     apply!, conjugate,
-    random_clifford, random_clifford!, random_state!
+    random_clifford, random_clifford!, random_state!,
+    StabilizerKet, ket, state_vector, density_matrix
 
 import Random, Primes
 import Random.rand!
@@ -42,5 +43,7 @@ include("clifford_gates.jl")
 include("apply_clifford.jl")
 include("clifford_operator.jl")
 include("random_clifford.jl")
+include("state_expansion.jl")
+include("dense_states.jl")
 
 end

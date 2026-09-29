@@ -178,6 +178,7 @@ Pages = [
     "conventions.md",
     "measurements.md",
     "unitaries.md",
+    "dense-states.md",
     "api.md",
 ]
 Depth = 2

@@ -71,3 +71,12 @@ expect!
 expect_int!
 entanglement_entropy
 ```
+
+## Inspecting states
+
+```@docs
+StabilizerKet
+ket
+state_vector
+density_matrix
+```
