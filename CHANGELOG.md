@@ -6,7 +6,7 @@ Every pull request with a user-facing change adds an entry under `## Unreleased`
 A pull request that genuinely needs no entry — a typo fix, a CI-only change, a
 dependency bump — carries the `skip-changelog` label instead.
 
-## Unreleased
+## 0.3.0 - 2026-09-30
 
 ### Added
 
@@ -16,10 +16,6 @@ dependency bump — carries the `skip-changelog` label instead.
   `GeneralPauli`). The gate set is qudit-native — `Fourier`, `Phase`,
   `Multiplier`, `PauliGate`, `SUM`, `CPhase`, `SWAP` — with no qubit aliases;
   `docs/src/unitaries.md` gives the `d = 2` translations.
-- Logo and favicon for the documentation site — three dots in the Julia colours
-  at the cube roots of unity, the three levels of a qutrit, swept by an arrow for
-  the cyclic shift. Each ships as a light/dark pair and follows the reader's
-  theme.
 - `CliffordOperator(d, targets, F, a; check)` stores an arbitrary Clifford on an
   ordered support at a fixed dimension, and `CliffordOperator(g, d)` materializes
   a named gate. Stored operators work with `apply!` and `conjugate` exactly as
@@ -45,6 +41,13 @@ dependency bump — carries the `skip-changelog` label instead.
   the tableau untouched, require `storephase=true`, and refuse a result larger
   than their `maxentries` budget (`2^24` by default) without ever forming
   `d^n`. `docs/src/dense-states.md` ("Inspecting States") walks through them.
+
+### Documentation
+
+- Logo and favicon for the documentation site — three dots in the Julia colours
+  at the cube roots of unity, the three levels of a qutrit, swept by an arrow for
+  the cyclic shift. Each ships as a light/dark pair and follows the reader's
+  theme.
 
 ## 0.2.0 - 2026-09-15
 
