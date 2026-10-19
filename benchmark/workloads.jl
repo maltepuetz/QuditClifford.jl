@@ -200,6 +200,34 @@ function bench_entropy(mk, sub)
     return @benchmarkable entanglement_entropy($tab, $sub)
 end
 
+# Dense, seeded states keep this comparison on the general elimination path.
+# Fixture generation is outside both timed bodies; neither body changes the
+# state, so repeated samples need no restore.
+function entropy_profile_fixture(T, d::Int, n::Int; m::Int=n, seed::Int=20261019)
+    tab = T(d, n)
+    random_state!(Random.MersenneTwister(seed), tab; m)
+    return tab
+end
+
+entropy_profile_loop(tab) = [entanglement_entropy(tab, 1:l) for l in 0:tab.n]
+
+# Keep the loop leaf on a 0.3 baseline that lacks entanglement_profile. Older
+# revisions without random_state! cannot build these fixtures and skip the
+# group altogether. Use d=3 to limit the cost of the full-profile loop at n=512.
+function register_entropy_profile_group!(suite, types, ns; api::Module=QuditClifford)
+    isdefined(api, :random_state!) || return suite
+    for T in types, n in ns, m in (n ÷ 2, n)
+        tab = entropy_profile_fixture(T, 3, n; m)
+        group = BenchmarkGroup()
+        group["loop"] = @benchmarkable entropy_profile_loop($tab)
+        if isdefined(api, :entanglement_profile)
+            group["profile"] = @benchmarkable QuditClifford.entanglement_profile($tab)
+        end
+        suite["entropy_profile"]["$(nameof(T))/d=3/n=$n/m=$m"] = group
+    end
+    return suite
+end
+
 # `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
 # nothing to benchmark in. The verifying form runs the commutation Gram and the
 # rank elimination. One probe leaf only, at a small n. See `micro_group`.

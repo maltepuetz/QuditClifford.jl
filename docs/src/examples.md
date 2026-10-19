@@ -152,6 +152,40 @@ julia> entanglement_entropy(state, [2, 3])
 Entropy is an integer in log-`d` units. For qubits it is measured in bits; for
 qutrits, one unit means ``\log(3)``.
 
+## Entropy across every cut
+
+Use [`entanglement_profile`](@ref) to compute the entropy of every prefix of a
+chain in one elimination. Entry `l + 1` is the entropy of sites `1:l`, so the
+vector includes both the empty prefix and the whole chain.
+
+```jldoctest
+julia> state = DestabilizerTableau(3, 4; state=:ghz);
+
+julia> entanglement_profile(state)
+5-element Vector{Int64}:
+ 0
+ 1
+ 1
+ 1
+ 0
+
+julia> entanglement_profile(state) == [entanglement_entropy(state, 1:l) for l in 0:4]
+true
+```
+
+The profile uses the same log-`d` units as [`entanglement_entropy`](@ref).
+It takes at most cubic time in the number of sites, compared with up to
+quartic time for the loop above. It also works with `storephase=false`.
+
+For pure states, a prefix and its complementary suffix have equal entropy.
+This does **not** imply that the prefix profile is symmetric: a Bell pair on
+sites 1 and 2 with an unentangled site 3 has profile `[0, 1, 0, 0]`.
+
+Mixed states are supported too. Their last entry is `n - m`, the entropy of
+the whole state; a maximally mixed chain has profile `[0, 1, ..., n]`.
+These mixed-state subsystem entropies include classical uncertainty and are
+not an entanglement measure.
+
 ## Purification by random two-qudit measurements
 
 A maximally mixed stabilizer state has no stabilizer generators. Projective

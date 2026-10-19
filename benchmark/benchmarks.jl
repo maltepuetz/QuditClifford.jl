@@ -84,6 +84,12 @@ register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
 register_random_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
                        ks = CONFIG.stored_ks, circuits = CONFIG.circuits)
 
+# --------------------------------------------------------- entropy profile
+# Compare one elimination with the loop over all prefixes, for pure and mixed
+# seeded qutrit states. The full sweep includes n=128 as well as 64, 256, 512.
+register_entropy_profile_group!(SUITE, TYPES,
+                               PROFILE == "full" ? (64, 128, 256, 512) : CONFIG.ns)
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in

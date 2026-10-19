@@ -6,6 +6,17 @@ Every pull request with a user-facing change adds an entry under `## Unreleased`
 A pull request that genuinely needs no entry — a typo fix, a CI-only change, a
 dependency bump — carries the `skip-changelog` label instead.
 
+## Unreleased
+
+### Added
+
+- `entanglement_profile(tab)` returns the entropies of every prefix of a
+  qudit chain, including the empty and full prefixes, in log-`d` units.
+  A single right-endpoint elimination computes the profile in at most cubic
+  time instead of the quartic worst case of repeated `entanglement_entropy`
+  calls. It supports pure and mixed states, both tableau types, and
+  `storephase=false`.
+
 ## 0.3.0 - 2026-09-30
 
 ### Added

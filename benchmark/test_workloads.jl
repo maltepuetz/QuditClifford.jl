@@ -2,6 +2,41 @@ using Test
 include(joinpath(@__DIR__, "workloads.jl"))
 
 @testset "Workloads" begin
+    @testset "Entropy profile comparison and baseline compatibility" begin
+        types = (StabilizerTableau, DestabilizerTableau)
+        for T in types, m in (4, 8)
+            tab = entropy_profile_fixture(T, 3, 8; m)
+            same = entropy_profile_fixture(T, 3, 8; m)
+            @test tab.stab == same.stab
+            @test tab.m == m
+            @test entropy_profile_loop(tab) == entanglement_profile(tab)
+            @test tab.stab == same.stab
+        end
+
+        no_api = Module(:NoEntropyAPI)
+        empty_suite = BenchmarkGroup()
+        register_entropy_profile_group!(empty_suite, types, (8,); api=no_api)
+        @test isempty(empty_suite)
+
+        # A 0.3 baseline can build the fixture and time the old loop, but has
+        # no profile API. Its existing comparison column must still run.
+        baseline_api = Module(:BaselineEntropyAPI)
+        Core.eval(baseline_api, :(random_state! = nothing))
+        for api in (baseline_api, QuditClifford)
+            suite = BenchmarkGroup()
+            register_entropy_profile_group!(suite, types, (8,); api)
+            @test length(suite["entropy_profile"]) == 4
+            for (_, group) in suite["entropy_profile"]
+                expected_keys = api === baseline_api ? ["loop"] : ["loop", "profile"]
+                @test Set(keys(group)) == Set(expected_keys)
+                for (_, leaf) in group
+                    trial = run(leaf; samples=1, evals=1, seconds=0.01)
+                    @test !isempty(trial.times)
+                end
+            end
+        end
+    end
+
     @testset "Purification is deterministic and reaches full rank" begin
         h1, l1 = purification_trajectory(d = 2, n = 8, seed = 42)
         h2, l2 = purification_trajectory(d = 2, n = 8, seed = 42)
