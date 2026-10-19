@@ -50,6 +50,123 @@ function entanglement_entropy(
     return N_A - m + rank_B
 end
 
+"""
+    entanglement_profile(tab::AbstractTableau) -> Vector{Int}
+
+Return the entropies of all prefixes of the qudit chain in log-`d` units.
+The result has length `tab.n + 1`: entry `l + 1` is the entropy of sites
+`1:l`, including the empty prefix at `l = 0` and the whole state at `l = n`.
+It agrees with `[entanglement_entropy(tab, 1:l) for l in 0:tab.n]` for both
+pure and mixed stabilizer states. The first entry is zero and the last is
+`tab.n - tab.m`.
+
+A single right-endpoint elimination computes the whole profile in
+`O(n*m^2 + n)` time (at most cubic in `n`), using the tableau's scratch
+`workspace` and allocating only the result vector. Stabilizers, destabilizers,
+phases and canonicalization caches are preserved. Phase storage is not required.
+Use [`entanglement_profile!`](@ref) to reuse an existing output vector.
+
+For a pure state, each prefix has the same entropy as its complementary
+suffix; the prefix profile itself need not be symmetric. For a mixed state,
+these are subsystem von Neumann entropies, not an entanglement measure.
+
+# Examples
+```julia
+entanglement_profile(StabilizerTableau(3, 4; state=:ghz)) # [0, 1, 1, 1, 0]
+entanglement_profile(StabilizerTableau(3, 3))             # [0, 1, 2, 3]
+```
+"""
+function entanglement_profile(tab::AbstractTableau)
+    return entanglement_profile!(Vector{Int}(undef, tab.n + 1), tab)
+end
+
+"""
+    entanglement_profile!(dest::AbstractVector{Int}, tab::AbstractTableau)
+
+Write all prefix entropies into `dest` and return `dest`. The values and units
+are the same as [`entanglement_profile`](@ref). Every entry is overwritten,
+so the vector can be reused after the tableau's state or generator count changes.
+
+`dest` must be writable, use one-based indexing, and have exactly `tab.n + 1`
+entries. It must not alias any of the tableau's storage. Length and indexing
+are checked before writing; the nonaliasing requirement is a caller precondition.
+Ordinary `Vector{Int}` buffers and views into independent arrays are supported.
+
+The method reuses `tab.workspace`, preserves generators and canonicalization
+caches, and allocates nothing once compiled for ordinary vectors and views.
+
+# Examples
+```julia
+tab = StabilizerTableau(3, 4; state=:ghz)
+dest = Vector{Int}(undef, tab.n + 1)
+entanglement_profile!(dest, tab) # dest is now [0, 1, 1, 1, 0]
+reset!(tab; state=:mixed)
+entanglement_profile!(dest, tab) # the same dest is now [0, 1, 2, 3, 4]
+```
+"""
+function entanglement_profile!(profile::AbstractVector{Int}, tab::AbstractTableau)
+    n, m, d = tab.n, tab.m, tab.d
+    Base.require_one_based_indexing(profile)
+    length(profile) == n + 1 || throw(DimensionMismatch(
+        "The entropy profile destination must have length $(n + 1); got $(length(profile))."))
+    if m == 0
+        for l in 0:n
+            profile[l + 1] = l
+        end
+        return profile
+    end
+    ws = tab.workspace
+    stab = tab.stab
+    # Site-local row order makes a bottom-up pivot identify the rightmost
+    # support of a generator. Copy only active columns and omit the phase row.
+    @turbo for j in 1:m, q in 1:n
+        ws[2q - 1, j] = stab[q, j]
+        ws[2q, j] = stab[n + q, j]
+    end
+
+    # Initially count generators by right endpoint in the result storage.
+    # Each reduced generator has a distinct bottommost nonzero (pivot) row.
+    # In any nontrivial combination, the largest pivot row involved cannot
+    # cancel. Thus a combination is supported in 1:l exactly when all its
+    # participating pivots are at rows <= 2l, so counting those pivots gives
+    # the number of independent stabilizers contained in the prefix.
+    fill!(profile, 0)
+    c = 1
+    for r in (2n):-1:1
+        c > m && break
+        j = c
+        while j <= m && ws[r, j] == 0
+            j += 1
+        end
+        j > m && continue
+
+        # Unprocessed columns are zero below r. Only rows 1:r need updating.
+        if j != c
+            @turbo for i in 1:r
+                t = ws[i, c]
+                ws[i, c] = ws[i, j]
+                ws[i, j] = t
+            end
+        end
+        scale_mod!(view(ws, 1:r, c), tab.inversemod(ws[r, c], d), d)
+        for jj in (c + 1):m
+            beta = ws[r, jj]
+            beta == 0 && continue
+            # jj > c, so the source and destination occupy disjoint columns.
+            submul_mod!(view(ws, 1:r, jj), view(ws, 1:r, c), beta, d)
+        end
+        profile[cld(r, 2) + 1] += 1
+        c += 1
+    end
+
+    contained = 0
+    for l in 1:n
+        contained += profile[l + 1]
+        profile[l + 1] = l - contained
+    end
+    return profile
+end
+
 function rank_subsystem_cols!(
     tab::AbstractTableau,
     subsystem::AbstractVector,

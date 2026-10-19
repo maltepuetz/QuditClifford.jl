@@ -68,7 +68,7 @@ mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     inversemod::T                      # inverse mod function for dimension d
 
     # workspaces
-    workspace::Matrix{Int}             # 2n×n (used by entanglement_entropy)
+    workspace::Matrix{Int}             # 2n×n (used by entropy calculations)
     generator_workspace::Vector{Int}   # length 2n + storephase
 
     # workspace for canonicalize!

@@ -9,7 +9,8 @@ stabilizer entanglement entropy.
 module QuditClifford
 
 export AbstractTableau, StabilizerTableau, DestabilizerTableau,
-    reset!, entanglement_entropy, measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
+    reset!, entanglement_entropy, entanglement_profile, entanglement_profile!,
+    measure!, AbstractPauli, FewQuditPauli, GeneralPauli,
     SinglePauli, DoublePauli, TriplePauli, NPauli, canonicalize!, expect!, expect_int!,
     is_pure,
     AbstractClifford, Fourier, Phase, Multiplier, PauliGate, SUM, CPhase, SWAP,
