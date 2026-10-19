@@ -22,12 +22,17 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # no profile API. Its existing comparison column must still run.
         baseline_api = Module(:BaselineEntropyAPI)
         Core.eval(baseline_api, :(random_state! = nothing))
-        for api in (baseline_api, QuditClifford)
+        allocating_api = Module(:AllocatingEntropyAPI)
+        Core.eval(allocating_api, :(random_state! = nothing))
+        Core.eval(allocating_api, :(entanglement_profile = nothing))
+        for api in (baseline_api, allocating_api, QuditClifford)
             suite = BenchmarkGroup()
             register_entropy_profile_group!(suite, types, (8,); api)
             @test length(suite["entropy_profile"]) == 4
             for (_, group) in suite["entropy_profile"]
-                expected_keys = api === baseline_api ? ["loop"] : ["loop", "profile"]
+                expected_keys = api === baseline_api ? ["loop"] :
+                                api === allocating_api ? ["loop", "profile"] :
+                                ["loop", "profile", "profile!"]
                 @test Set(keys(group)) == Set(expected_keys)
                 for (_, leaf) in group
                     trial = run(leaf; samples=1, evals=1, seconds=0.01)

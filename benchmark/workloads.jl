@@ -223,6 +223,10 @@ function register_entropy_profile_group!(suite, types, ns; api::Module=QuditClif
         if isdefined(api, :entanglement_profile)
             group["profile"] = @benchmarkable QuditClifford.entanglement_profile($tab)
         end
+        if isdefined(api, :entanglement_profile!)
+            dest = Vector{Int}(undef, n + 1)
+            group["profile!"] = @benchmarkable QuditClifford.entanglement_profile!($dest, $tab)
+        end
         suite["entropy_profile"]["$(nameof(T))/d=3/n=$n/m=$m"] = group
     end
     return suite

@@ -83,9 +83,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 172 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 351 | ~90 s (estimated; ~82 s measured before the entropy-profile leaves) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 855 | ~17 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 176 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 359 | ~90 s (estimated; ~82 s measured before the entropy-profile leaves) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 871 | ~17 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -111,12 +111,17 @@ which is what puts roughly half their calls on the Barrett path.
 
 ## Coverage
 
-The `entropy_profile` group compares `entanglement_profile` with a loop over
-`entanglement_entropy(tab, 1:l)` for every `l = 0:n`. Both leaves use the same
-seeded, uniformly random qutrit state, built outside the timed body, for both
-tableau types and `m = n ÷ 2` (mixed) or `m = n` (pure). The `full` profile
+The `entropy_profile` group compares `entanglement_profile` and
+`entanglement_profile!` with a loop over `entanglement_entropy(tab, 1:l)` for
+every `l = 0:n`. All three leaves use the same seeded, uniformly random qutrit
+state, built outside the timed body, for both tableau types and `m = n ÷ 2`
+(mixed) or `m = n` (pure). The `full` profile
 sweeps `n = 64, 128, 256, 512`. On a baseline without `entanglement_profile`,
-the loop still runs; a baseline without `random_state!` skips this group.
+the loop still runs; the in-place leaf is also omitted when its API is absent.
+A baseline without `random_state!` skips this group. The in-place leaf reuses
+an output vector allocated outside the timed body, so it should allocate zero
+bytes after compilation.
+
 Within one revision, divide the loop median by the profile median to measure
 the speedup from computing all cuts together. This differs from the usual
 base/head ratio, which compares the same leaf across revisions.

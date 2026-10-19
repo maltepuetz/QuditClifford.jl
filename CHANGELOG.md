@@ -15,7 +15,8 @@ dependency bump — carries the `skip-changelog` label instead.
   A single right-endpoint elimination computes the profile in at most cubic
   time instead of the quartic worst case of repeated `entanglement_entropy`
   calls. It supports pure and mixed states, both tableau types, and
-  `storephase=false`.
+  `storephase=false`. Use `entanglement_profile!(dest, tab)` with a reusable
+  `Int` vector of length `n + 1` to avoid allocating the result on each call.
 
 ## 0.3.0 - 2026-09-30
 

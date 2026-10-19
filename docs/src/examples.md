@@ -177,6 +177,32 @@ The profile uses the same log-`d` units as [`entanglement_entropy`](@ref).
 It takes at most cubic time in the number of sites, compared with up to
 quartic time for the loop above. It also works with `storephase=false`.
 
+For repeated measurements, reuse an output vector with
+[`entanglement_profile!`](@ref) to avoid allocating a result each time:
+
+```jldoctest
+julia> state = DestabilizerTableau(3, 4; state=:ghz);
+
+julia> profile = Vector{Int}(undef, state.n + 1);
+
+julia> entanglement_profile!(profile, state) === profile
+true
+
+julia> profile == [0, 1, 1, 1, 0]
+true
+
+julia> measure!(state, SinglePauli(1, 0, 1); outcome=0);
+
+julia> entanglement_profile!(profile, state);
+
+julia> profile == [0, 0, 0, 0, 0]
+true
+```
+
+The destination must be a writable, one-based `Int` vector of length `n + 1`
+that does not share storage with the tableau. Views into independent arrays
+also work. The function overwrites every entry and returns the destination.
+
 For pure states, a prefix and its complementary suffix have equal entropy.
 This does **not** imply that the prefix profile is symmetric: a Bell pair on
 sites 1 and 2 with an unentangled site 3 has profile `[0, 1, 0, 0]`.

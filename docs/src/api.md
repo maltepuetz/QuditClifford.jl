@@ -71,6 +71,7 @@ expect!
 expect_int!
 entanglement_entropy
 entanglement_profile
+entanglement_profile!
 ```
 
 ## Inspecting states

@@ -2,7 +2,65 @@ using QuditClifford
 using Test
 using Random
 
+# Warm each destination/tableau specialization before measuring allocations.
+function _profile_allocations(dest, tab)
+    entanglement_profile!(dest, tab)
+    return @allocated entanglement_profile!(dest, tab)
+end
+
+struct _ZeroBasedProfileVector <: AbstractVector{Int}
+    data::Vector{Int}
+end
+Base.size(v::_ZeroBasedProfileVector) = size(v.data)
+Base.axes(v::_ZeroBasedProfileVector) = (0:(length(v.data) - 1),)
+Base.getindex(v::_ZeroBasedProfileVector, i::Int) = v.data[i + 1]
+Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
+
 @testset "Entanglement profile" begin
+    @testset "Caller-owned output is overwritten and reused without allocation" begin
+        rng = MersenneTwister(20261020)
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 7),
+            storephase in (false, true), n in (0, 1, 8)
+            tab = TT(d, n; storephase)
+            dest = fill(-1, n + 1)
+            backing = fill(-1, 2n + 3)
+            strided = view(backing, 2:2:(2n + 2))
+            for m in unique((0, n ÷ 2, n)), output in (dest, strided)
+                random_state!(rng, tab; m)
+                expected = [entanglement_entropy(tab, 1:l) for l in 0:n]
+                fill!(output, -1)
+                @test (@inferred entanglement_profile!(output, tab)) === output
+                @test output == expected
+                @test _profile_allocations(output, tab) == 0
+                @test all(==(-1), view(backing, 1:2:length(backing)))
+            end
+            # Reuse a buffer filled by the general path on the m=0 fast path.
+            reset!(tab; state=:mixed)
+            @test entanglement_profile!(dest, tab) === dest
+            @test dest == collect(0:n)
+        end
+    end
+
+    @testset "Destination length is checked before any mutation" begin
+        for TT in (StabilizerTableau, DestabilizerTableau), state in (:mixed, :ghz)
+            tab = TT(3, 4; state)
+            before = deepcopy(tab)
+            for len in (0, 4, 6)
+                dest = fill(-1, len)
+                @test_throws DimensionMismatch entanglement_profile!(dest, tab)
+                @test dest == fill(-1, len)
+                @test tab.stab == before.stab
+                @test tab.workspace == before.workspace
+                TT === DestabilizerTableau && @test tab.destab == before.destab
+            end
+            offset = _ZeroBasedProfileVector(fill(-1, 5))
+            @test_throws ArgumentError entanglement_profile!(offset, tab)
+            @test offset.data == fill(-1, 5)
+            @test tab.stab == before.stab
+            @test tab.workspace == before.workspace
+        end
+    end
+
     @testset "Known profiles and empty boundaries" begin
         for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 7),
             storephase in (false, true)
@@ -52,6 +110,9 @@ using Random
             profile = @inferred entanglement_profile(tab)
             @test profile isa Vector{Int}
             @test profile == expected
+            dest = fill(-1, n + 1)
+            @test entanglement_profile!(dest, tab) === dest
+            @test dest == expected
             @test first(profile) == 0
             @test last(profile) == n - m
             if m == n
@@ -76,6 +137,9 @@ using Random
             fill!(tab.c_workspace, d - 1)
             profile = entanglement_profile(tab)
             @test profile == expected
+            dest = fill(-1, 7)
+            @test entanglement_profile!(dest, tab) === dest
+            @test dest == expected
             @test tab.stab == reference.stab
             @test tab.m == reference.m
             @test tab.iscanonical == reference.iscanonical
