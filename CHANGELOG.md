@@ -6,7 +6,7 @@ Every pull request with a user-facing change adds an entry under `## Unreleased`
 A pull request that genuinely needs no entry — a typo fix, a CI-only change, a
 dependency bump — carries the `skip-changelog` label instead.
 
-## Unreleased
+## 0.3.1 - 2026-10-20
 
 ### Added
 
