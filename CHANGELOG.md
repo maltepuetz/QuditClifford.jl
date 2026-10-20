@@ -6,6 +6,17 @@ Every pull request with a user-facing change adds an entry under `## Unreleased`
 A pull request that genuinely needs no entry — a typo fix, a CI-only change, a
 dependency bump — carries the `skip-changelog` label instead.
 
+## Unreleased
+
+### Added
+
+- `entanglement_profile(tab, order)` and `entanglement_profile!(dest, tab,
+  order)` take the prefixes along a site `order`, a permutation of `1:n`:
+  entry `l + 1` is the entropy of `order[1:l]`. Cyclic shifts give every arc
+  from one starting site of a periodic chain, and other nested subsystems
+  work the same way, at the cost of the natural-order profile and still
+  without allocating. An invalid `order` throws before anything is written.
+
 ## 0.3.1 - 2026-10-20
 
 ### Added

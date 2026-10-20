@@ -7,6 +7,10 @@ function _profile_allocations(dest, tab)
     entanglement_profile!(dest, tab)
     return @allocated entanglement_profile!(dest, tab)
 end
+function _profile_allocations(dest, tab, order)
+    entanglement_profile!(dest, tab, order)
+    return @allocated entanglement_profile!(dest, tab, order)
+end
 
 struct _ZeroBasedProfileVector <: AbstractVector{Int}
     data::Vector{Int}
@@ -174,6 +178,137 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             random_state!(rng, tab; m)
             @test entanglement_profile(tab) ==
                   [entanglement_entropy(tab, 1:l) for l in 0:7]
+        end
+    end
+
+    @testset "Site orders agree with subsystem entropy" begin
+        rng = MersenneTwister(20261021)
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 7),
+            storephase in (false, true), n in (1, 2, 5, 9),
+            m in unique((0, 1, n ÷ 2, n)), trial in 1:2
+            tab = TT(d, n; storephase)
+            random_state!(rng, tab; m)
+            perm = randperm(rng, n)
+            orders = Any[collect(1:n), 1:n, collect(n:-1:1),
+                         circshift(1:n, n ÷ 2), perm, Int32.(perm),
+                         view([0; perm; 0], 2:(n + 1))]
+            for order in orders
+                expected = [entanglement_entropy(tab, collect(order[1:l])) for l in 0:n]
+                profile = @inferred entanglement_profile(tab, order)
+                @test profile isa Vector{Int}
+                @test profile == expected
+                dest = fill(-1, n + 1)
+                @test (@inferred entanglement_profile!(dest, tab, order)) === dest
+                @test dest == expected
+                @test last(profile) == n - m
+                if m == n
+                    # The prefix and its complementary suffix in the order.
+                    @test profile == [entanglement_entropy(tab, collect(order[(l + 1):n]))
+                                      for l in 0:n]
+                end
+            end
+            @test entanglement_profile(tab, 1:n) == entanglement_profile(tab)
+            dest = fill(-1, n + 1)
+            @test _profile_allocations(dest, tab, perm) == 0
+            @test _profile_allocations(dest, tab, view(perm, 1:n)) == 0
+        end
+    end
+
+    @testset "Known profiles along site orders" begin
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 7),
+            storephase in (false, true)
+            # Bell pair on sites 1 and 2, site 3 unentangled. Splitting the
+            # pair by putting site 3 in between keeps the cut entropy at 1.
+            bell = TT(d, 3; state=:product, storephase)
+            apply!(bell, Fourier(1))
+            apply!(bell, SUM(1, 2))
+            @test entanglement_profile(bell, [1, 2, 3]) == [0, 1, 0, 0]
+            @test entanglement_profile(bell, [1, 3, 2]) == [0, 1, 1, 0]
+            @test entanglement_profile(bell, [3, 1, 2]) == [0, 0, 1, 0]
+
+            # Bell pairs on the opposite bonds (1, 4) and (2, 3) of a ring of
+            # four: arcs of length 2 cut two pairs or none, by starting point.
+            ring = TT(d, 4; state=:product, storephase)
+            for (a, b) in ((1, 4), (2, 3))
+                apply!(ring, Fourier(a))
+                apply!(ring, SUM(a, b))
+            end
+            @test entanglement_profile(ring, [1, 2, 3, 4]) == [0, 1, 2, 1, 0]
+            @test entanglement_profile(ring, [2, 3, 4, 1]) == [0, 1, 0, 1, 0]
+
+            # Mixed states: the maximally mixed chain is order-independent.
+            mixed = TT(d, 4; storephase)
+            @test entanglement_profile(mixed, [4, 2, 1, 3]) == collect(0:4)
+            empty = TT(d, 0; storephase)
+            @test entanglement_profile(empty, Int[]) == [0]
+        end
+    end
+
+    @testset "Site order is checked before any mutation" begin
+        for TT in (StabilizerTableau, DestabilizerTableau), state in (:mixed, :ghz)
+            tab = TT(3, 4; state)
+            before = deepcopy(tab)
+            bad_orders = [
+                (DimensionMismatch, [1, 2, 3]),
+                (DimensionMismatch, [1, 2, 3, 4, 1]),
+                (ArgumentError, [0, 1, 2, 3]),
+                (ArgumentError, [1, 2, 3, 5]),
+                (ArgumentError, [1, 2, 2, 4]),
+                (ArgumentError, _ZeroBasedProfileVector([1, 2, 3, 4])),
+            ]
+            for (E, order) in bad_orders
+                dest = fill(-1, 5)
+                @test_throws E entanglement_profile!(dest, tab, order)
+                @test_throws E entanglement_profile(tab, order)
+                @test dest == fill(-1, 5)
+                @test tab.stab == before.stab
+                @test tab.m == before.m
+                @test tab.workspace == before.workspace
+                TT === DestabilizerTableau && @test tab.destab == before.destab
+            end
+            # The destination is still checked first.
+            @test_throws DimensionMismatch entanglement_profile!(fill(-1, 4), tab, [1, 2, 2])
+        end
+    end
+
+    @testset "Site order preserves state and canonical caches" begin
+        rng = MersenneTwister(7124)
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+            storephase in (false, true), m in (0, 3, 6), canonical in (false, true)
+            tab = TT(d, 6; storephase)
+            random_state!(rng, tab; m)
+            canonical && canonicalize!(tab)
+            reference = deepcopy(tab)
+            order = randperm(rng, 6)
+            expected = [entanglement_entropy(reference, order[1:l]) for l in 0:6]
+            fill!(tab.workspace, d - 1)
+            fill!(tab.c_workspace, d - 1)
+            @test entanglement_profile(tab, order) == expected
+            @test tab.stab == reference.stab
+            @test tab.m == reference.m
+            @test tab.iscanonical == reference.iscanonical
+            @test tab.pivcol_of_row == reference.pivcol_of_row
+            @test tab.xdotz_cache == reference.xdotz_cache
+            TT === DestabilizerTableau && @test tab.destab == reference.destab
+            # c_workspace residue from the order check must not leak into the
+            # next caller of the shared workspaces.
+            @test entanglement_entropy(tab, [2, 4, 6]) ==
+                  entanglement_entropy(reference, [2, 4, 6])
+            op = SinglePauli(2, 1, 0)
+            @test expect!(tab, op) == expect!(reference, op)
+        end
+    end
+
+    @testset "Site orders across modular arithmetic tiers" begin
+        rng = MersenneTwister(443132)
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (5, 131, 443),
+            inversemod in (QuditClifford.PrecomputedInvMod(d), QuditClifford.JustInTimeInvMod()),
+            m in (3, 7)
+            tab = TT(d, 7; inversemod)
+            random_state!(rng, tab; m)
+            order = randperm(rng, 7)
+            @test entanglement_profile(tab, order) ==
+                  [entanglement_entropy(tab, order[1:l]) for l in 0:7]
         end
     end
 end

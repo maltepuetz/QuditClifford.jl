@@ -212,6 +212,33 @@ the whole state; a maximally mixed chain has profile `[0, 1, ..., n]`.
 These mixed-state subsystem entropies include classical uncertainty and are
 not an entanglement measure.
 
+Pass a site order to take the prefixes along a permutation of the sites
+instead; entry `l + 1` is then the entropy of `order[1:l]`. On a periodic
+chain, a cyclic shift gives every arc that starts at a chosen site. Here two
+Bell pairs sit on the opposite bonds `(1, 4)` and `(2, 3)` of a ring of four:
+
+```jldoctest
+julia> ring = StabilizerTableau(3, 4; state=:product);
+
+julia> for (a, b) in ((1, 4), (2, 3))
+           apply!(ring, Fourier(a))
+           apply!(ring, SUM(a, b))
+       end
+
+julia> entanglement_profile(ring) == [0, 1, 2, 1, 0]
+true
+
+julia> entanglement_profile(ring, [2, 3, 4, 1]) == [0, 1, 0, 1, 0]
+true
+
+julia> entanglement_profile(ring, [2, 3, 4, 1]) ==
+           [entanglement_entropy(ring, [2, 3, 4, 1][1:l]) for l in 0:4]
+true
+```
+
+The cost and the allocation behaviour are those of the natural order, and
+[`entanglement_profile!`](@ref) accepts the same `order` argument.
+
 ## Purification by random two-qudit measurements
 
 A maximally mixed stabilizer state has no stabilizer generators. Projective
