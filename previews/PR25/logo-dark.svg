@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400"
+     role="img" aria-labelledby="qc-title qc-desc">
+  <title id="qc-title">QuditClifford.jl</title>
+  <desc id="qc-desc">Variant for dark backgrounds. Three dots in the Julia colours sit at the cube roots of unity on a
+    ring — the three levels of a qutrit — and an arrow sweeps one level onto
+    the next, the cyclic shift operator.</desc>
+  <path d="M308.0 305.6 A141 141 0 1 0 229.3 352.9"
+        fill="none" stroke="#DFDFD6" stroke-width="26"/>
+  <path d="M234.3 376.4 L276.3 342.9 L224.3 329.4 Z"
+        fill="#DFDFD6"/>
+  <circle cx="200"   cy="74"    r="43" fill="#CB3C33"/>
+  <circle cx="77.9"  cy="285.5" r="43" fill="#9558B2"/>
+  <circle cx="322.1" cy="285.5" r="43" fill="#389826"/>
+</svg>
