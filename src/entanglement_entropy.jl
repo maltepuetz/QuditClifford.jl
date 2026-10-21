@@ -52,6 +52,7 @@ end
 
 """
     entanglement_profile(tab::AbstractTableau) -> Vector{Int}
+    entanglement_profile(tab::AbstractTableau, order::AbstractVector{<:Integer}) -> Vector{Int}
 
 Return the entropies of all prefixes of the qudit chain in log-`d` units.
 The result has length `tab.n + 1`: entry `l + 1` is the entropy of sites
@@ -59,6 +60,12 @@ The result has length `tab.n + 1`: entry `l + 1` is the entropy of sites
 It agrees with `[entanglement_entropy(tab, 1:l) for l in 0:tab.n]` for both
 pure and mixed stabilizer states. The first entry is zero and the last is
 `tab.n - tab.m`.
+
+With a site `order`, a permutation of `1:tab.n`, the prefixes follow that
+order instead: entry `l + 1` is the entropy of sites `order[1:l]`, in
+agreement with `entanglement_entropy(tab, order[1:l])`. A cyclic shift of
+`1:n`, for example, gives every arc that starts at one site of a periodic
+chain. The cost is the same as for the natural order.
 
 A single right-endpoint elimination computes the whole profile in
 `O(n*m^2 + n)` time (at most cubic in `n`), using the tableau's scratch
@@ -74,26 +81,42 @@ these are subsystem von Neumann entropies, not an entanglement measure.
 ```julia
 entanglement_profile(StabilizerTableau(3, 4; state=:ghz)) # [0, 1, 1, 1, 0]
 entanglement_profile(StabilizerTableau(3, 3))             # [0, 1, 2, 3]
+entanglement_profile(StabilizerTableau(3, 4; state=:ghz), [3, 4, 1, 2]) # [0, 1, 1, 1, 0]
 ```
 """
 function entanglement_profile(tab::AbstractTableau)
     return entanglement_profile!(Vector{Int}(undef, tab.n + 1), tab)
 end
 
+function entanglement_profile(tab::AbstractTableau, order::AbstractVector{<:Integer})
+    return entanglement_profile!(Vector{Int}(undef, tab.n + 1), tab, order)
+end
+
 """
     entanglement_profile!(dest::AbstractVector{Int}, tab::AbstractTableau)
+    entanglement_profile!(dest::AbstractVector{Int}, tab::AbstractTableau, order::AbstractVector{<:Integer})
 
-Write all prefix entropies into `dest` and return `dest`. The values and units
-are the same as [`entanglement_profile`](@ref). Every entry is overwritten,
-so the vector can be reused after the tableau's state or generator count changes.
+Write all prefix entropies into `dest` and return `dest`. The values, units
+and the optional site `order` are the same as for
+[`entanglement_profile`](@ref). Every entry is overwritten, so the vector can
+be reused after the tableau's state or generator count changes.
 
 `dest` must be writable, use one-based indexing, and have exactly `tab.n + 1`
 entries. It must not alias any of the tableau's storage. Length and indexing
 are checked before writing; the nonaliasing requirement is a caller precondition.
 Ordinary `Vector{Int}` buffers and views into independent arrays are supported.
 
-The method reuses `tab.workspace`, preserves generators and canonicalization
-caches, and allocates nothing once compiled for ordinary vectors and views.
+`order` must use one-based indexing and contain every site in `1:tab.n`
+exactly once. This is checked before `dest` is written: a wrong length throws
+a `DimensionMismatch`, and an out-of-range or repeated site throws an
+`ArgumentError`. The check uses `tab.c_workspace` as its scratch mask, so a
+rejected `order` leaves `dest`, the generators and the caches unchanged but
+not that workspace. An `order` that shares memory with `tab.workspace` or
+`tab.c_workspace` is copied before either is written, which allocates.
+
+The method reuses `tab.workspace` (and `tab.c_workspace` to check `order`),
+preserves generators and canonicalization caches, and allocates nothing once
+compiled for ordinary vectors and views of independent arrays.
 
 # Examples
 ```julia
@@ -102,13 +125,58 @@ dest = Vector{Int}(undef, tab.n + 1)
 entanglement_profile!(dest, tab) # dest is now [0, 1, 1, 1, 0]
 reset!(tab; state=:mixed)
 entanglement_profile!(dest, tab) # the same dest is now [0, 1, 2, 3, 4]
+entanglement_profile!(dest, tab, [4, 3, 2, 1]) # also [0, 1, 2, 3, 4]
 ```
 """
 function entanglement_profile!(profile::AbstractVector{Int}, tab::AbstractTableau)
+    return _entanglement_profile!(profile, tab, nothing)
+end
+
+function entanglement_profile!(
+    profile::AbstractVector{Int},
+    tab::AbstractTableau,
+    order::AbstractVector{<:Integer},
+)
+    return _entanglement_profile!(profile, tab, order)
+end
+
+# Throw unless `order` is a permutation of `1:tab.n`. `c_workspace` serves as
+# the visited mask, so the check allocates nothing and writes no output.
+function _check_site_order!(tab::AbstractTableau, order::AbstractVector{<:Integer})
+    n = tab.n
+    Base.require_one_based_indexing(order)
+    length(order) == n || throw(DimensionMismatch(
+        "The site order must have length $n; got $(length(order))."))
+    seen = tab.c_workspace
+    fill!(seen, 0)
+    @inbounds for k in 1:n
+        s = order[k]
+        1 <= s <= n || throw(ArgumentError(
+            "The site order must contain sites in 1:$n; got $s at position $k."))
+        seen[s] == 0 || throw(ArgumentError(
+            "The site order must contain each site once; site $s is repeated."))
+        seen[s] = 1
+    end
+    return nothing
+end
+
+# `order === nothing` selects the natural order 1:n, the specialization the
+# two-argument method compiles to.
+function _entanglement_profile!(
+    profile::AbstractVector{Int},
+    tab::AbstractTableau,
+    order::Union{Nothing,AbstractVector{<:Integer}},
+)
     n, m, d = tab.n, tab.m, tab.d
     Base.require_one_based_indexing(profile)
     length(profile) == n + 1 || throw(DimensionMismatch(
         "The entropy profile destination must have length $(n + 1); got $(length(profile))."))
+    if order !== nothing
+        # The check writes c_workspace and the copy below writes workspace
+        # while both read `order`, so an `order` stored in either is copied.
+        order = Base.unalias(tab.c_workspace, Base.unalias(tab.workspace, order))
+        _check_site_order!(tab, order)
+    end
     if m == 0
         for l in 0:n
             profile[l + 1] = l
@@ -118,18 +186,28 @@ function entanglement_profile!(profile::AbstractVector{Int}, tab::AbstractTablea
     ws = tab.workspace
     stab = tab.stab
     # Site-local row order makes a bottom-up pivot identify the rightmost
-    # support of a generator. Copy only active columns and omit the phase row.
-    @turbo for j in 1:m, q in 1:n
-        ws[2q - 1, j] = stab[q, j]
-        ws[2q, j] = stab[n + q, j]
+    # support of a generator: rows 2k-1 and 2k hold the X and Z exponents of
+    # the k-th site in the order. Copy only active columns and omit the phase row.
+    if order === nothing
+        @turbo for j in 1:m, q in 1:n
+            ws[2q - 1, j] = stab[q, j]
+            ws[2q, j] = stab[n + q, j]
+        end
+    else
+        @turbo for j in 1:m, k in 1:n
+            q = order[k]
+            ws[2k - 1, j] = stab[q, j]
+            ws[2k, j] = stab[n + q, j]
+        end
     end
 
     # Initially count generators by right endpoint in the result storage.
     # Each reduced generator has a distinct bottommost nonzero (pivot) row.
     # In any nontrivial combination, the largest pivot row involved cannot
-    # cancel. Thus a combination is supported in 1:l exactly when all its
-    # participating pivots are at rows <= 2l, so counting those pivots gives
-    # the number of independent stabilizers contained in the prefix.
+    # cancel. Thus a combination is supported on the first l sites of the
+    # order exactly when all its participating pivots are at rows <= 2l, so
+    # counting those pivots gives the number of independent stabilizers
+    # contained in the prefix.
     fill!(profile, 0)
     c = 1
     for r in (2n):-1:1
