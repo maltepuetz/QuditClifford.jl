@@ -18,6 +18,16 @@ dependency bump — carries the `skip-changelog` label instead.
   without allocating. An invalid `order` throws before the destination is
   written.
 
+### Fixed
+
+- `measure!` reduces a Pauli's exponents and phase mod `d` before taking
+  commutators with the generators. A sparse Pauli or `GeneralPauli` with huge
+  exponents, such as `typemin(Int)`, could overflow there for odd `d` and take
+  the wrong branch: a commuting Pauli was measured as noncommuting and
+  replaced a generator, a `DestabilizerTableau` could build a wrong
+  destabilizer or throw on an appended generator, and the stored or returned
+  phase could be wrong.
+
 ## 0.3.1 - 2026-10-20
 
 ### Added
