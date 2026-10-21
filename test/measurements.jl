@@ -292,3 +292,60 @@ end
         @test stab.stab == destab.stab
     end
 end
+
+@testset "Pure phase-free tableaux answer commuting Paulis without canonicalizing" begin
+    # A Pauli commuting with all n generators of a pure state lies in the
+    # stabilizer group, so `measure!` and `expect_int!` can answer from the
+    # commutation alone and leave the generator matrix as it was.
+    rng = Xoshiro(26)
+    n = 6
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3, 5)
+        @testset "$label d=$d" begin
+            tab = random_state!(rng, TT(d, n; storephase=false))
+            before = copy(tab.stab)
+
+            # products of generators with random, mostly nontrivial exponents
+            for _ in 1:5
+                xz = mod.(tab.stab * rand(rng, 0:(d - 1), n), d)
+                @test measure!(tab, GeneralPauli(xz, 0); outcome=d - 1) == 0
+                @test expect_int!(tab, GeneralPauli(xz, 0)) == 0
+            end
+
+            xz = rand(rng, 0:(d - 1), 2n)
+            while all(i -> mod(QuditClifford.commutation_col(tab.stab, i, xz), d) == 0, 1:n)
+                xz = rand(rng, 0:(d - 1), 2n)
+            end
+            @test expect_int!(tab, GeneralPauli(xz, 0)) == -1
+
+            @test tab.m == n
+            @test tab.stab == before
+            @test !tab.iscanonical
+
+            canonicalize!(tab)
+            canonical = copy(tab.stab)
+            @test measure!(tab, SinglePauli(1, 0, 0)) == 0
+            @test tab.iscanonical
+            @test tab.stab == canonical
+        end
+    end
+end
+
+@testset "Mixed phase-free tableaux still resolve the span" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3)
+        @testset "$label d=$d" begin
+            n = 3
+            raw = zeros(Int, 2n, n)
+            raw[n + 1, 1] = 1  # Z₁
+            raw[n + 2, 2] = 1  # Z₂
+            tab = TT(d, raw; m=2, storephase=false)
+
+            @test measure!(tab, DoublePauli(1, 0, 1, 2, 0, d - 1); outcome=1) == 0
+            @test tab.m == 2
+            @test expect_int!(tab, SinglePauli(3, 0, 1)) == -1
+            @test measure!(tab, SinglePauli(3, 0, 1); outcome=d - 1) == d - 1
+            @test tab.m == 3
+        end
+    end
+end

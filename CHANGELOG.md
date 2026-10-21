@@ -18,6 +18,17 @@ dependency bump — carries the `skip-changelog` label instead.
   without allocating. An invalid `order` throws before the destination is
   written.
 
+### Changed
+
+- On a pure tableau with `storephase=false`, `measure!`, `expect_int!` and
+  `expect!` settle a commuting Pauli from the commutation check alone, in
+  `O(km)` for a sparse Pauli on `k` qudits (`O(nm)` for a dense Pauli),
+  instead of decomposing it over the generators. A
+  `StabilizerTableau` no longer canonicalizes on such deterministic outcomes,
+  which dominated monitored circuits at large `n` (#26). Outcomes and the
+  stabilizer group are unchanged, but the generator basis and `iscanonical`
+  are now left as they were.
+
 ## 0.3.1 - 2026-10-20
 
 ### Added
