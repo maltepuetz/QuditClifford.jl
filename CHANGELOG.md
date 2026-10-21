@@ -8,6 +8,8 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+## 0.3.2 - 2026-10-21
+
 ### Added
 
 - `entanglement_profile(tab, order)` and `entanglement_profile!(dest, tab,
