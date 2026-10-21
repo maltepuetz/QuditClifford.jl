@@ -1,6 +1,41 @@
 using QuditClifford
 using Test
 
+@testset "Phase-free expectations reduce exponents before commutation" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
+        n = 3
+        raw = zeros(Int, 2n, n)
+        for j in 1:n
+            raw[j, j] = d - 1  # Independent X generators; large products can overflow.
+        end
+        tab = TT(d, raw; storephase=false)
+        before = copy(tab.stab)
+        canonical_before = tab.iscanonical
+        dual_before = TT === DestabilizerTableau ? copy(tab.destab) : nothing
+
+        # Multiples of d represent identity in Z, even near the Int limits.
+        for large in (typemax(Int) - mod(typemax(Int), d),
+                      typemin(Int) + mod(-mod(typemin(Int), d), d))
+            z0 = Int(large)
+            for (z, want) in ((z0, 0), (z0 + 1, -1))
+                x = typemin(Int)
+                dense = Int[x, 0, 0, z, 0, 0]
+                for op in (SinglePauli(1, x, z, 1),
+                           DoublePauli(1, x, z, 2, 0, 0, 1),
+                           TriplePauli(1, x, z, 2, 0, 0, 3, 0, 0, 1),
+                           NPauli((1, 2, 3), (x, 0, 0), (z, 0, 0), 1),
+                           GeneralPauli(copy(dense), 1), vcat(dense, 1))
+                    @test expect_int!(tab, op) == want
+                    @test expect!(tab, op) == (want == 0 ? 1.0 + 0im : 0.0 + 0im)
+                end
+            end
+        end
+        @test tab.stab == before
+        @test tab.iscanonical == canonical_before
+        TT === DestabilizerTableau && @test tab.destab == dual_before
+    end
+end
+
 @testset "Expectation values" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
         @testset "$label" begin

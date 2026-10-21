@@ -131,6 +131,34 @@ include(joinpath(@__DIR__, "workloads.jl"))
         @test tab.stab == before
     end
 
+    @testset "Phase-free deterministic measurement starts noncanonical" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
+            n = 16
+            mk = tableau_maker(T, d, n; storephase=false)
+            tab = mk(:ghz)
+            i, j = spread_sites(n)
+            op = DoublePauli(i, 0, 1, j, 0, d - 1)
+            before = copy(tab.stab)
+            snap = snapshot(tab)
+
+            @test tab.m == n
+            @test !tab.storephase
+            @test !tab.iscanonical
+            @test measure!(tab, op; outcome=d - 1) == 0
+            @test tab.stab == before
+            @test !tab.iscanonical
+
+            canonicalize!(tab)
+            @test tab.stab != before  # The data, not only the flag, is noncanonical.
+            restore!(snap)
+            @test tab.stab == before
+            @test !tab.iscanonical
+
+            trial = run(bench_measure(mk, :ghz, op); samples=2, evals=1, seconds=0.01)
+            @test length(trial.times) == 2
+        end
+    end
+
     @testset "Measurements stay quiet at d = 2" begin
         # phase_policy = 2 everywhere: the default policy @warns on every
         # non-Hermitian qubit Pauli, which a random circuit produces constantly.
