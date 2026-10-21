@@ -18,11 +18,24 @@ dependency bump — carries the `skip-changelog` label instead.
   without allocating. An invalid `order` throws before the destination is
   written.
 
+### Changed
+
+- On a pure tableau with `storephase=false`, `measure!`, `expect_int!` and
+  `expect!` settle a commuting Pauli from the commutation check alone, in
+  `O(km)` for a sparse Pauli on `k` qudits (`O(nm)` for a dense Pauli),
+  instead of decomposing it over the generators. A
+  `StabilizerTableau` no longer canonicalizes on such deterministic outcomes,
+  which dominated monitored circuits at large `n` (#26). Outcomes and the
+  stabilizer group are unchanged, but the generator basis and `iscanonical`
+  are now left as they were.
+
 ### Fixed
 
-- `measure!` reduces a Pauli's exponents and phase mod `d` before taking
-  commutators with the generators. A sparse Pauli or `GeneralPauli` with huge
-  exponents, such as `typemin(Int)`, could overflow there for odd `d` and take
+- `measure!` reduces a Pauli's exponents modulo `d` before taking
+  commutators with the generators, and reduces its phase modulo `d`
+  (modulo 4 for qubits) before outcome arithmetic. A sparse Pauli or
+  `GeneralPauli` with huge exponents, such as `typemin(Int)`, could overflow
+  there for odd `d` and take
   the wrong branch: a commuting Pauli was measured as noncommuting and
   replaced a generator, a `DestabilizerTableau` could build a wrong
   destabilizer or throw on an appended generator, and the stored or returned

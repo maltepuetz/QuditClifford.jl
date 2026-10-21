@@ -83,9 +83,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 176 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 359 | ~90 s (estimated; ~82 s measured before the entropy-profile leaves) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 871 | ~17 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 178 | seconds | local sanity check |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 361 | ~90 s (estimated; ~82 s measured before the entropy-profile leaves) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 873 | ~17 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -110,6 +110,10 @@ The mid-circuit leaves run a scrambling circuit first and hold general residues,
 which is what puts roughly half their calls on the Barrett path.
 
 ## Coverage
+
+The phase-free deterministic measurement probes use `Z_i Z_j^-1` on a pure GHZ
+state for both tableau types. Each sample restores the noncanonical tableau,
+so unnecessary canonicalization cannot be hidden by an earlier sample (#26).
 
 The `entropy_profile` group compares `entanglement_profile` and
 `entanglement_profile!` with a loop over `entanglement_entropy(tab, 1:l)` for

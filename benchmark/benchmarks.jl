@@ -105,6 +105,10 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         mk = tableau_maker(T, d, n; storephase = false)
         tag = "storephase=false/$(nameof(T))"
         g["$tag/measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
+        # GHZ is noncanonical, and Z_i Z_j^-1 is deterministic. Restore it for
+        # every sample so a regression cannot hide behind prior canonicalization.
+        g["$tag/measure!/deterministic"] = bench_measure(mk, :ghz,
+            DoublePauli(s1, 0, 1, s2, 0, d - 1))
         g["$tag/canonicalize!"] = bench_canonicalize(mk)
         g["$tag/expect!"] = bench_expect(mk, spread_z(n))
     end

@@ -61,6 +61,7 @@ end
 @inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::GeneralPauli)
     return commutation_col(A, col, op.xz)
 end
+
 @inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::SinglePauli)
     N = size(A, 1) ÷ 2
     comm = A[op.qudit, col] * op.z - A[op.qudit+N, col] * op.x
@@ -100,6 +101,16 @@ end
 @inline function _commutation_operand!(tab::AbstractTableau, op::AbstractPauli)
     set_operator!(tab.res_workspace, tab, op)
     return tab.res_workspace
+end
+
+# Whether `op` commutes with every active generator of `tab`.
+function _commutes_with_generators(tab::AbstractTableau, op::AbstractPauli)
+    normalized = _commutation_operand!(tab, op)
+    d = tab.d
+    for i in 1:tab.m
+        mod(commutation_col(tab.stab, i, normalized), d) == 0 || return false
+    end
+    return true
 end
 
 #########################################################
@@ -356,6 +367,13 @@ t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchang
 - If `op` commutes with all generators, the outcome is deterministic when `op` lies
   in the stabilizer span; otherwise a new generator is appended (if `m < n`).
 - If `storephase=false`, deterministic outcomes return `0` by convention.
+- For a pure tableau (`m == n`) with `storephase=false`, a commuting `op` is settled by
+  the commutation check alone and the tableau, including its generator basis, is left
+  as it was. This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a
+  dense Pauli. Otherwise a deterministic outcome needs `op`'s decomposition over the
+  generators: a `StabilizerTableau` canonicalizes for it unless it is already canonical,
+  at `O(n²m)`, while a [`DestabilizerTableau`](@ref) reads it off its dual basis. Prefer
+  the latter for measurement-heavy circuits with phases.
 """
 function measure!(tab::AbstractTableau, op::AbstractVector{<:Integer};
     outcome::Int=rand(0:tab.d-1),
@@ -451,6 +469,11 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
         tab.iscanonical = false
         return outcome
     end
+
+    # A pure state's n independent generators span a Lagrangian subspace (d
+    # prime), so a Pauli commuting with all of them lies in the span: the outcome
+    # is deterministic, and without phases it is `0` by convention.
+    tab.m == n && !tab.storephase && return 0
 
     #########################################################
     # Commuting branch (comm0 == 0): mixed-state semantics. #

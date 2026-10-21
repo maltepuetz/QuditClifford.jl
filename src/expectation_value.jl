@@ -19,10 +19,21 @@ Uses shared span decomposition helpers:
 1. `coeffs_from_generators!`
 2. `residual_from_coeffs!`
 3. `phase_exponent_from_coeffs!`
+
+A pure tableau (`m == n`) with `storephase=false` skips them: there `op` is in the
+span exactly when it commutes with every generator. The generator basis and
+`iscanonical` are unchanged; dense operators reuse the residual workspace.
+This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a dense Pauli.
 """
 function expect_int!(tab::AbstractTableau, op::AbstractPauli)
     d = tab.d
     kP = op.phase
+
+    # Pure state: the span is exactly the Paulis commuting with every generator
+    # (see `measure!`), and without phases the in-span answer is `0`.
+    if tab.m == tab.n && !tab.storephase
+        return _commutes_with_generators(tab, op) ? 0 : -1
+    end
 
     in_span_and_coeffs!(tab, op) || return -1
     tab.storephase || return 0
