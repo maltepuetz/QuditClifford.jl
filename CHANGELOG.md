@@ -15,7 +15,8 @@ dependency bump — carries the `skip-changelog` label instead.
   entry `l + 1` is the entropy of `order[1:l]`. Cyclic shifts give every arc
   from one starting site of a periodic chain, and other nested subsystems
   work the same way, at the cost of the natural-order profile and still
-  without allocating. An invalid `order` throws before anything is written.
+  without allocating. An invalid `order` throws before the destination is
+  written.
 
 ## 0.3.1 - 2026-10-20
 

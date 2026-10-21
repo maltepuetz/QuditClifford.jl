@@ -107,13 +107,16 @@ are checked before writing; the nonaliasing requirement is a caller precondition
 Ordinary `Vector{Int}` buffers and views into independent arrays are supported.
 
 `order` must use one-based indexing and contain every site in `1:tab.n`
-exactly once. This is checked before `dest` or the tableau is touched:
-a wrong length throws a `DimensionMismatch`, and an out-of-range or repeated
-site throws an `ArgumentError`.
+exactly once. This is checked before `dest` is written: a wrong length throws
+a `DimensionMismatch`, and an out-of-range or repeated site throws an
+`ArgumentError`. The check uses `tab.c_workspace` as its scratch mask, so a
+rejected `order` leaves `dest`, the generators and the caches unchanged but
+not that workspace. An `order` that shares memory with `tab.workspace` or
+`tab.c_workspace` is copied before either is written, which allocates.
 
 The method reuses `tab.workspace` (and `tab.c_workspace` to check `order`),
 preserves generators and canonicalization caches, and allocates nothing once
-compiled for ordinary vectors and views.
+compiled for ordinary vectors and views of independent arrays.
 
 # Examples
 ```julia
@@ -145,9 +148,7 @@ function _check_site_order!(tab::AbstractTableau, order::AbstractVector{<:Intege
     length(order) == n || throw(DimensionMismatch(
         "The site order must have length $n; got $(length(order))."))
     seen = tab.c_workspace
-    @turbo for i in 1:n
-        seen[i] = 0
-    end
+    fill!(seen, 0)
     @inbounds for k in 1:n
         s = order[k]
         1 <= s <= n || throw(ArgumentError(
@@ -170,7 +171,12 @@ function _entanglement_profile!(
     Base.require_one_based_indexing(profile)
     length(profile) == n + 1 || throw(DimensionMismatch(
         "The entropy profile destination must have length $(n + 1); got $(length(profile))."))
-    order === nothing || _check_site_order!(tab, order)
+    if order !== nothing
+        # The check writes c_workspace and the copy below writes workspace
+        # while both read `order`, so an `order` stored in either is copied.
+        order = Base.unalias(tab.c_workspace, Base.unalias(tab.workspace, order))
+        _check_site_order!(tab, order)
+    end
     if m == 0
         for l in 0:n
             profile[l + 1] = l

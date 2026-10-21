@@ -241,6 +241,8 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             @test entanglement_profile(mixed, [4, 2, 1, 3]) == collect(0:4)
             empty = TT(d, 0; storephase)
             @test entanglement_profile(empty, Int[]) == [0]
+            @test entanglement_profile(empty, 1:0) == [0]
+            @test entanglement_profile!([-1], empty, Int[]) == [0]
         end
     end
 
@@ -268,6 +270,37 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             end
             # The destination is still checked first.
             @test_throws DimensionMismatch entanglement_profile!(fill(-1, 4), tab, [1, 2, 2])
+        end
+    end
+
+    @testset "Site order stored in the tableau's workspaces" begin
+        rng = MersenneTwister(20261022)
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3),
+            m in (2, 4), trial in 1:3
+            tab = TT(d, 4)
+            random_state!(rng, tab; m)
+            reference = deepcopy(tab)
+            perm = randperm(rng, 4)
+            expected = [entanglement_entropy(reference, perm[1:l]) for l in 0:4]
+            stores = Any[(tab.workspace, ws -> view(ws, 1:4, 1)),
+                         (tab.workspace, ws -> view(ws, 5:8, m)),
+                         (tab.c_workspace, identity),
+                         (tab.c_workspace, cws -> view(cws, 1:4))]
+            for (storage, place) in stores
+                order = place(storage)
+                order .= perm
+                @test entanglement_profile(tab, order) == expected
+                order .= perm
+                dest = fill(-1, 5)
+                @test entanglement_profile!(dest, tab, order) === dest
+                @test dest == expected
+                @test tab.stab == reference.stab
+                TT === DestabilizerTableau && @test tab.destab == reference.destab
+                # A stored order is still validated.
+                order .= perm
+                order[2] = order[1]
+                @test_throws ArgumentError entanglement_profile(tab, order)
+            end
         end
     end
 
