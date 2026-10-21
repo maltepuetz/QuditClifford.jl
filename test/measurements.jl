@@ -293,6 +293,153 @@ end
     end
 end
 
+# Largest-magnitude Int of the given sign congruent to `r` mod `d`.
+function _huge_representative(r::Int, d::Int, negative::Bool)
+    negative && return typemin(Int) + mod(r - mod(typemin(Int), d), d)
+    return typemax(Int) - mod(mod(typemax(Int), d) - r, d)
+end
+
+# Representatives of `xs`, alternating in sign so that sums of products wrap too.
+_huge_tuple(xs::NTuple{D,Int}, d::Int, offset::Int) where D =
+    ntuple(i -> _huge_representative(xs[i], d, isodd(i + offset)), D)
+
+# The operator with exponents `xs`, `zs` on `qudits` and phase `phase`, of the
+# given `kind`, written with reduced or with huge exponents.
+function _huge_measurement_op(kind::Symbol, n::Int, d::Int, qudits, xs, zs, phase::Int, huge::Bool)
+    pm = d == 2 ? 4 : d
+    if huge
+        xs = _huge_tuple(xs, d, 0)
+        zs = _huge_tuple(zs, d, 1)
+        phase = _huge_representative(phase, pm, true)
+    end
+    D = length(qudits)
+    if kind === :single
+        return SinglePauli(qudits[1], xs[1], zs[1], phase)
+    elseif kind === :double
+        return DoublePauli(qudits[1], xs[1], zs[1], qudits[2], xs[2], zs[2], phase)
+    elseif kind === :triple
+        return TriplePauli(qudits[1], xs[1], zs[1], qudits[2], xs[2], zs[2],
+                           qudits[3], xs[3], zs[3], phase)
+    elseif kind === :npauli
+        return NPauli(qudits, xs, zs, phase)
+    end
+    # Dense forms: every unsupported exponent is a huge representative of 0.
+    xz = huge ? collect(_huge_tuple(ntuple(_ -> 0, 2n), d, 0)) : zeros(Int, 2n)
+    for i in 1:D
+        xz[qudits[i]] = xs[i]
+        xz[qudits[i]+n] = zs[i]
+    end
+    kind === :general && return GeneralPauli(xz, phase)
+    return vcat(xz, phase) # :vector
+end
+
+# Bytes allocated by measuring `op` on X₁ᵃ, X₂ᵃ, X₃ᵃ (`m == 3`) or X₁ᵃX₂ᵃX₃ᵃ
+# (`m == 1`), after a warm-up on an identical tableau.
+function _huge_measure_allocated(TT, d::Int, storephase::Bool, op, m::Int)
+    n = 3
+    raw = zeros(Int, 2n + storephase, n)
+    if m == n
+        for q in 1:n
+            raw[q, q] = d - 1
+        end
+    else
+        raw[1:n, 1] .= d - 1
+    end
+    warm = TT(d, copy(raw); m=m, storephase=storephase)
+    tab = TT(d, copy(raw); m=m, storephase=storephase)
+    measure!(warm, op; outcome=1, phase_policy=2)
+    return @allocated measure!(tab, op; outcome=1, phase_policy=2)
+end
+
+@testset "Measurement reduces huge exponents before commutation" begin
+    n = 3
+    support = Dict(
+        :single => (1,), :double => (1, 2), :triple => (1, 2, 3),
+        :npauli => (1, 3), :general => (1, 2, 3), :vector => (1, 2, 3),
+    )
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3, 5), storephase in (false, true)
+
+        a = d - 1 # generator exponent, ≠ 1 for odd d so products overflow
+        rows = 2n + storephase
+        pure = zeros(Int, rows, n) # X₁ᵃ, X₂ᵃ, X₃ᵃ
+        for q in 1:n
+            pure[q, q] = a
+        end
+        mixed = zeros(Int, rows, n) # X₁ᵃX₂ᵃX₃ᵃ
+        mixed[1:n, 1] .= a
+
+        @testset "$label d=$d storephase=$storephase $kind" for kind in keys(support)
+            qudits = support[kind]
+            D = length(qudits)
+            ones_ = ntuple(_ -> 1, D)
+            zeros_ = ntuple(_ -> 0, D)
+            first_ = ntuple(i -> i == 1 ? 1 : 0, D)
+            cases = (
+                # Commutes with every Xᵃ and lies in their span.
+                (:inspan, pure, n, ones_, zeros_),
+                # Anticommutes with each generator on its support.
+                (:noncommuting, pure, n, zeros_, ones_),
+                # Commutes with X₁ᵃX₂ᵃX₃ᵃ but is not a power of it.
+                (:append, mixed, 1, first_, zeros_),
+            )
+            for (branch, raw, m, xs, zs) in cases
+                outcome = d - 1
+                phase = 1
+                tab = TT(d, copy(raw); m=m, storephase=storephase)
+                ref = TT(d, copy(raw); m=m, storephase=storephase)
+                op = _huge_measurement_op(kind, n, d, qudits, xs, zs, phase, true)
+                op_ref = _huge_measurement_op(kind, n, d, qudits, xs, zs, phase, false)
+
+                expected = measure!(ref, op_ref; outcome=outcome, phase_policy=2)
+                if branch === :inspan
+                    @test expected == (storephase ? phase : 0)
+                    @test ref.m == m
+                else
+                    @test expected == outcome
+                    @test ref.m == (branch === :append ? m + 1 : m)
+                end
+
+                @test measure!(tab, op; outcome=outcome, phase_policy=2) == expected
+                @test tab.m == ref.m
+                @test tab.stab == ref.stab
+                if TT === DestabilizerTableau
+                    @test tab.destab == ref.destab
+                    @test tab.xdotz_cache == ref.xdotz_cache
+                end
+            end
+        end
+    end
+
+    @testset "Sparse operands stay allocation-free" begin
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), storephase in (false, true)
+            for (kind, m, xs, zs) in ((:triple, 3, (1, 1, 1), (0, 0, 0)), # in span
+                                      (:triple, 3, (0, 0, 0), (1, 1, 1)), # noncommuting
+                                      (:triple, 1, (1, 0, 0), (0, 0, 0)), # append
+                                      (:npauli, 1, (1, 0), (0, 0)))
+                qudits = kind === :triple ? (1, 2, 3) : (1, 3)
+                op = _huge_measurement_op(kind, 3, d, qudits, xs, zs, 1, true)
+                @test _huge_measure_allocated(TT, d, storephase, op, m) == 0
+            end
+        end
+    end
+
+    @testset "Reproducer: d=3, generators X₁², X₂², X₃²" begin
+        for TT in (StabilizerTableau, DestabilizerTableau)
+            raw = zeros(Int, 6, 3)
+            raw[1, 1] = raw[2, 2] = raw[3, 3] = 2
+            tab = TT(3, copy(raw); m=3, storephase=false)
+            ref = TT(3, copy(raw); m=3, storephase=false)
+            x = typemin(Int)                          # ≡ 1 mod 3
+            z = typemax(Int) - mod(typemax(Int), 3)   # ≡ 0 mod 3
+            @test measure!(tab, SinglePauli(1, x, z); outcome=1) == 0
+            canonicalize!(tab)
+            canonicalize!(ref)
+            @test tab.stab == ref.stab
+        end
+    end
+end
+
 @testset "Pure phase-free tableaux answer commuting Paulis without canonicalizing" begin
     # A Pauli commuting with all n generators of a pure state lies in the
     # stabilizer group, so `measure!` and `expect_int!` can answer from the

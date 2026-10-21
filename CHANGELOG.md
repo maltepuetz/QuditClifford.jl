@@ -29,6 +29,18 @@ dependency bump — carries the `skip-changelog` label instead.
   stabilizer group are unchanged, but the generator basis and `iscanonical`
   are now left as they were.
 
+### Fixed
+
+- `measure!` reduces a Pauli's exponents modulo `d` before taking
+  commutators with the generators, and reduces its phase modulo `d`
+  (modulo 4 for qubits) before outcome arithmetic. A sparse Pauli or
+  `GeneralPauli` with huge exponents, such as `typemin(Int)`, could overflow
+  there for odd `d` and take
+  the wrong branch: a commuting Pauli was measured as noncommuting and
+  replaced a generator, a `DestabilizerTableau` could build a wrong
+  destabilizer or throw on an appended generator, and the stored or returned
+  phase could be wrong.
+
 ## 0.3.1 - 2026-10-20
 
 ### Added

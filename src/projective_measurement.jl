@@ -257,7 +257,6 @@ end
 @inline function _after_append_measurement!(
     tab::AbstractTableau,
     _newcol::Int,
-    _op::AbstractPauli,
     _res::AbstractVector{Int},
 )
     return nothing
@@ -266,7 +265,6 @@ end
 @inline function _after_append_measurement!(
     tab::DestabilizerTableau,
     newcol::Int,
-    op::AbstractPauli,
     res::AbstractVector{Int},
 )
     n = tab.n
@@ -303,8 +301,8 @@ end
         submul_mod!(v, view(tab.destab, 1:(2n), j), t, d)
     end
 
-    # β = <v, op>
-    β = mod(commutation_vec_op(v, op), d)
+    # β = <v, op>, read from the new column, which holds op with reduced exponents.
+    β = mod(_symplectic_vec_col(v, tab.stab, newcol, n), d)
     β == 0 && throw(ArgumentError("Failed to construct destabilizer: β = 0."))
     invβ = tab.inversemod(β, d)
 
@@ -393,8 +391,10 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     n = tab.n
     m = tab.m
 
-    # get phase of the operator (if available)
+    # get phase of the operator (if available), reduced so that the outcome
+    # arithmetic below cannot overflow
     kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
+    kop = mod(kop, phase_modulus(d))
 
     # phase exponent of the generator we should store so that it stabilizes the post-measurement state
     # If P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome} P_xz) |ψ'> = |ψ'>.
@@ -412,10 +412,15 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     comm0 = 0  # commutation with the first non-commuting generator
     pivot = 0
 
+    # Dot products with unreduced exponents can overflow. A dense operand lives
+    # in res_workspace, which nothing in this loop writes; the commuting branch
+    # below overwrites it from `op` again.
+    opc = _commutation_operand!(tab, op)
+
     for i in 1:m
 
         # commutator of generator i with the operator
-        commutator = mod(commutation_col(tab.stab, i, op), d)
+        commutator = mod(commutation_col(tab.stab, i, opc), d)
 
         ### case a: if they commute we continue
         commutator == 0 && continue
@@ -502,7 +507,7 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     if tab.storephase
         tab.stab[2n+1, newcol] = kgen
     end
-    _after_append_measurement!(tab, newcol, op, res)
+    _after_append_measurement!(tab, newcol, res)
 
     tab.iscanonical = false
     return outcome
