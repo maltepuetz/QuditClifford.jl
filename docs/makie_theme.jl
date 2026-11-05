@@ -52,4 +52,3 @@ theme = Theme(
 
 theme = merge(theme, theme_latexfonts())
 update_theme!(theme)
-CairoMakie.activate!(type="svg")
