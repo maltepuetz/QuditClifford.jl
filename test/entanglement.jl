@@ -3,6 +3,29 @@ using Test
 using Random
 
 @testset "Entanglement entropy" begin
+    @testset "Subsystem validation" begin
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            # Mixed state too: it takes the complement path for every size.
+            for tab in (TT(d, 4; state=:ghz), TT(d, 4; state=:mixed))
+                for bad in ([5], [0], [-1], [1, 1], [2, 1, 2], [1, 2, 3, 9])
+                    @test_throws ArgumentError entanglement_entropy(tab, bad)
+                end
+                @test_throws ArgumentError entanglement_entropy(tab, [1.5])
+                @test entanglement_entropy(tab, Int[]) == 0
+                @test entanglement_entropy(tab, [3, 1]) ==
+                      entanglement_entropy(tab, [1, 3]; check=false)
+                @test entanglement_entropy(tab, 1:4) == 4 - tab.m
+                # A subsystem stored in the scratch mask is copied, not clobbered.
+                tab.c_workspace[1:2] .= (2, 1)
+                @test entanglement_entropy(tab, view(tab.c_workspace, 1:2)) ==
+                      entanglement_entropy(tab, [1, 2])
+            end
+        end
+        tab = StabilizerTableau(3, 4; state=:ghz)
+        entanglement_entropy(tab, [1, 2])
+        @test @allocated(entanglement_entropy(tab, [1, 2])) <= @allocated([1, 2])
+    end
+
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
         @testset "$label" begin
             @testset "Qubit (d=2)" begin

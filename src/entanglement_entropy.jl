@@ -1,5 +1,5 @@
 """
-    entanglement_entropy(tab::AbstractTableau, subsystem::AbstractVector)
+    entanglement_entropy(tab::AbstractTableau, subsystem::AbstractVector; check::Bool=true)
 
 Compute the stabilizer entanglement entropy of a subsystem.
 
@@ -7,6 +7,11 @@ Compute the stabilizer entanglement entropy of a subsystem.
 - `tab::AbstractTableau`: Destabilizer or stabilizer tableau describing the
   (possibly mixed) state.
 - `subsystem::AbstractVector{<:Integer}`: 1-based qudit indices defining subsystem `A`.
+- `check::Bool=true`: verify that `subsystem` holds distinct sites in `1:tab.n`
+  and throw an `ArgumentError` otherwise. The check costs `O(n)` and overwrites
+  `tab.c_workspace`. With `check=false` it is skipped, and an invalid
+  `subsystem` gives a wrong result or reads and writes out of bounds, which can
+  crash Julia.
 
 # Returns
 - An integer `S(A)` in log-`d` units (so `S=1` means entropy `log(d)`).
@@ -21,13 +26,17 @@ S2 = entanglement_entropy(tab, [1, 2])   # 1
 # Notes
 - For pure stabilizer states (`m == n`), the function uses `S(A) = S(B)` and computes the rank on the smaller side.
 - For mixed stabilizer states (`m < n`), the function traces out the complement and uses the mixed-state stabilizer formula.
-- `subsystem` should contain distinct indices; repeated indices lead to undefined results.
 """
 function entanglement_entropy(
     tab::AbstractTableau,
-    subsystem::T
+    subsystem::T;
+    check::Bool=true,
 ) where T<:AbstractVector
 
+    # The check and the complement rank both write c_workspace while reading
+    # `subsystem`, so a `subsystem` stored there is copied first.
+    subsystem = Base.unalias(tab.c_workspace, subsystem)
+    check && _check_subsystem!(tab, subsystem)
     N_A = length(subsystem)
     n = tab.n
     m = tab.m
@@ -155,6 +164,24 @@ function _check_site_order!(tab::AbstractTableau, order::AbstractVector{<:Intege
             "The site order must contain sites in 1:$n; got $s at position $k."))
         seen[s] == 0 || throw(ArgumentError(
             "The site order must contain each site once; site $s is repeated."))
+        seen[s] = 1
+    end
+    return nothing
+end
+
+# Throw unless `subsystem` holds distinct sites in `1:tab.n`. `c_workspace`
+# serves as the visited mask, so the check allocates nothing.
+function _check_subsystem!(tab::AbstractTableau, subsystem::AbstractVector)
+    n = tab.n
+    seen = tab.c_workspace
+    fill!(seen, 0)
+    @inbounds for s in subsystem
+        s isa Integer || throw(ArgumentError(
+            "The subsystem must contain integer sites; got $(repr(s))."))
+        1 <= s <= n || throw(ArgumentError(
+            "The subsystem must contain sites in 1:$n; got $s."))
+        seen[s] == 0 || throw(ArgumentError(
+            "The subsystem must contain each site once; site $s is repeated."))
         seen[s] = 1
     end
     return nothing
