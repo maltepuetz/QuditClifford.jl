@@ -22,8 +22,10 @@ using Random
             end
         end
         tab = StabilizerTableau(3, 4; state=:ghz)
-        entanglement_entropy(tab, [1, 2])
-        @test @allocated(entanglement_entropy(tab, [1, 2])) <= @allocated([1, 2])
+        sub = [1, 2]
+        ee_allocs(t, s) = @allocated entanglement_entropy(t, s)
+        ee_allocs(tab, sub)
+        @test ee_allocs(tab, sub) == 0
     end
 
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
