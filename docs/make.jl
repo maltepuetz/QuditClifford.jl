@@ -2,6 +2,8 @@ using QuditClifford
 using Documenter
 using DocumenterVitepress
 
+include("figure_theme.jl")
+
 DocMeta.setdocmeta!(QuditClifford, :DocTestSetup, :(using QuditClifford); recursive=true)
 
 makedocs(;
