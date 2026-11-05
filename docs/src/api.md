@@ -18,6 +18,9 @@ StabilizerTableau
 reset!
 canonicalize!
 is_pure
+Base.copy(::StabilizerTableau)
+Base.copy!(::StabilizerTableau, ::StabilizerTableau)
+Base.:(==)(::AbstractTableau, ::AbstractTableau)
 ```
 
 ## Pauli operators
