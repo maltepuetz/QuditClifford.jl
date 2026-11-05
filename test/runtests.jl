@@ -23,4 +23,5 @@ using Aqua
     include("clifford_operators.jl")
     include("random_clifford.jl")
     include("dense_states.jl")
+    include("tableau_copy_equality.jl")
 end

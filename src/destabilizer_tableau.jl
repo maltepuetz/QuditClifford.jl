@@ -561,6 +561,40 @@ function reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
     return reset!(tab; state=state, basis=basis)
 end
 
+# Documented together with the `StabilizerTableau` methods.
+function Base.copy(tab::DestabilizerTableau{T}) where {T}
+    return DestabilizerTableau{T}(
+        tab.d,
+        tab.n,
+        tab.m,
+        copy(tab.stab),
+        copy(tab.destab),
+        tab.storephase,
+        tab.iscanonical,
+        tab.inversemod,
+        zero(tab.workspace),
+        zero(tab.generator_workspace),
+        copy(tab.pivcol_of_row),
+        copy(tab.xdotz_cache),
+        zero(tab.res_workspace),
+        zero(tab.c_workspace),
+        zero(tab.zacc_workspace),
+        zero(tab.support_workspace),
+    )
+end
+
+function Base.copy!(dst::DestabilizerTableau, src::DestabilizerTableau)
+    _check_copy_compatible(dst, src)
+    dst === src && return dst
+    copyto!(dst.stab, src.stab)
+    copyto!(dst.destab, src.destab)
+    copyto!(dst.pivcol_of_row, src.pivcol_of_row)
+    copyto!(dst.xdotz_cache, src.xdotz_cache)
+    dst.m = src.m
+    dst.iscanonical = src.iscanonical
+    return dst
+end
+
 # give the struct a nice standard presentation (stabilizers + destabilizers)
 function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "Destabilizer Tableau:")

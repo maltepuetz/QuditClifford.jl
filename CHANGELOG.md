@@ -8,6 +8,20 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Added
+
+- `copy(tab)` returns an independent `StabilizerTableau` or
+  `DestabilizerTableau` with the same state and generator basis, and
+  `copy!(dst, src)` overwrites an existing tableau of the same kind, `d`, `n`
+  and `storephase` without allocating, for branching trajectories off one
+  state. Previously `copy` threw a `MethodError`.
+- `==` and `hash` on tableaux compare the stabilizer state: two tableaux are
+  equal when they have the same `d`, `n` and `storephase` and their generators
+  span the same group with the same phases, whatever the generator basis and
+  across the two tableau types. Destabilizers and `iscanonical` are ignored,
+  and neither function modifies its arguments. Previously `==` fell back to
+  object identity.
+
 ### Documentation
 
 - The figures in the documentation follow the light/dark theme toggle: each is

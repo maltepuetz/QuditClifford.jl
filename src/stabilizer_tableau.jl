@@ -269,6 +269,83 @@ function reset!(tab::StabilizerTableau, state::Symbol; basis=:Z)
     return reset!(tab; state=state, basis=basis)
 end
 
+"""
+    copy(tab::StabilizerTableau) -> StabilizerTableau
+    copy(tab::DestabilizerTableau) -> DestabilizerTableau
+
+An independent tableau holding the same state in the same generator basis.
+
+The copy has the same type, `d`, `n`, `m`, `storephase` and `iscanonical`, and
+equal generator columns, phases and (for a [`DestabilizerTableau`](@ref))
+destabilizers, so it continues exactly where `tab` stands. It shares no arrays
+with `tab`: measuring or applying gates to one leaves the other unchanged. The
+inversion strategy, which is never mutated, is shared. Workspaces start zeroed.
+
+Use `copy!(dst, tab)` to overwrite an existing tableau instead of allocating a
+new one, for example when branching many trajectories off one state.
+
+# Examples
+```julia
+tab = DestabilizerTableau(3, 4; state=:ghz)
+branch = copy(tab)
+measure!(branch, SinglePauli(1, 1, 0))   # tab is unchanged
+```
+"""
+function Base.copy(tab::StabilizerTableau{T}) where {T}
+    return StabilizerTableau{T}(
+        tab.d,
+        tab.n,
+        tab.m,
+        copy(tab.stab),
+        tab.storephase,
+        tab.iscanonical,
+        tab.inversemod,
+        zero(tab.workspace),
+        zero(tab.generator_workspace),
+        copy(tab.pivcol_of_row),
+        copy(tab.xdotz_cache),
+        zero(tab.res_workspace),
+        zero(tab.c_workspace),
+        zero(tab.zacc_workspace),
+    )
+end
+
+"""
+    copy!(dst::StabilizerTableau, src::StabilizerTableau) -> dst
+    copy!(dst::DestabilizerTableau, src::DestabilizerTableau) -> dst
+
+Overwrite `dst` with the state and generator basis of `src`, in place and
+without allocating, and return `dst`.
+
+Afterwards `dst` matches `copy(src)` in everything but identity: same `m`, `iscanonical`, generator columns, phases and
+(for a [`DestabilizerTableau`](@ref)) destabilizers. `dst` keeps its own arrays,
+inversion strategy and workspaces. Both tableaux must be of the same kind.
+
+# Throws
+`ArgumentError` unless `dst` and `src` have the same `d`, `n` and `storephase`,
+before `dst` is modified.
+
+# Examples
+```julia
+tab = StabilizerTableau(2, 8; state=:ghz)
+branch = StabilizerTableau(2, 8)
+for _ in 1:100
+    copy!(branch, tab)
+    measure!(branch, SinglePauli(1, 1, 0))
+end
+```
+"""
+function Base.copy!(dst::StabilizerTableau, src::StabilizerTableau)
+    _check_copy_compatible(dst, src)
+    dst === src && return dst
+    copyto!(dst.stab, src.stab)
+    copyto!(dst.pivcol_of_row, src.pivcol_of_row)
+    copyto!(dst.xdotz_cache, src.xdotz_cache)
+    dst.m = src.m
+    dst.iscanonical = src.iscanonical
+    return dst
+end
+
 @inline function _canonical_basis_symbol(basis::Symbol)::Symbol
     if basis === :X || basis === :x
         return :X
