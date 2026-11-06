@@ -17,6 +17,7 @@ using Aqua
     include("destabilizers.jl")
     include("entanglement.jl")
     include("entanglement_profile.jl")
+    include("entanglement_negativity.jl")
     include("purity.jl")
     include("initialization.jl")
     include("unitaries.jl")

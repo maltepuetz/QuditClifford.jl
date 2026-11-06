@@ -239,6 +239,43 @@ true
 The cost and the allocation behaviour are those of the natural order, and
 [`entanglement_profile!`](@ref) accepts the same `order` argument.
 
+## Entanglement in mixed states: negativity
+
+Mutual information `S(A) + S(B) - S(AB)` counts classical correlations as
+well as entanglement. [`entanglement_negativity`](@ref) returns the
+logarithmic negativity `log_d ‖ρ_ABᵀᴮ‖₁` of the state of `A ∪ B` with the
+other qudits traced out, which vanishes when the correlations are classical.
+A qutrit GHZ state shows the difference: two of its three qutrits share one
+unit of mutual information but no entanglement.
+
+```jldoctest
+julia> ghz = StabilizerTableau(3, 3; state=:ghz);
+
+julia> entanglement_entropy(ghz, [1]) + entanglement_entropy(ghz, [2]) -
+           entanglement_entropy(ghz, [1, 2])
+1
+
+julia> entanglement_negativity(ghz, [1], [2])
+0
+
+julia> entanglement_negativity(ghz, [1], [2, 3])
+1
+```
+
+With only one subsystem, the second is its complement. For a pure state the
+negativity then equals the entanglement entropy:
+
+```jldoctest
+julia> ghz = StabilizerTableau(3, 3; state=:ghz);
+
+julia> entanglement_negativity(ghz, [1]) == entanglement_entropy(ghz, [1])
+true
+```
+
+The negativity uses the same log-`d` units as the entropy. It takes at most
+cubic time in the number of sites, allocates nothing, works for both tableau
+types and with `storephase=false`, and leaves the generators unchanged.
+
 ## Purification by random two-qudit measurements
 
 A maximally mixed stabilizer state has no stabilizer generators. Projective
