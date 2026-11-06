@@ -6,6 +6,13 @@ Every pull request with a user-facing change adds an entry under `## Unreleased`
 A pull request that genuinely needs no entry — a typo fix, a CI-only change, a
 dependency bump — carries the `skip-changelog` label instead.
 
+### Fixed
+
+- `entanglement_entropy` checks that the subsystem holds distinct sites in
+  `1:n` and throws an `ArgumentError` otherwise. An out-of-range site used to
+  read out of bounds and return a wrong value or crash Julia, and a repeated
+  site gave a wrong entropy. `check=false` skips the `O(n)` check.
+
 ## Unreleased
 
 ### Added
