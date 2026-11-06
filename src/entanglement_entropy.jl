@@ -170,19 +170,36 @@ function _check_site_order!(tab::AbstractTableau, order::AbstractVector{<:Intege
 end
 
 # Throw unless `subsystem` holds distinct sites in `1:tab.n`. `c_workspace`
-# serves as the visited mask, so the check allocates nothing.
+# serves as the visited mask, so the check allocates nothing. On return the
+# mask holds 1 at the sites of `subsystem` and 0 elsewhere.
 function _check_subsystem!(tab::AbstractTableau, subsystem::AbstractVector)
+    fill!(tab.c_workspace, 0)
+    _mark_subsystem!(tab, subsystem, 1, "subsystem")
+    return nothing
+end
+
+# Write `label` (nonzero) into `c_workspace` at every site of `subsystem`,
+# throwing unless each site is an integer in `1:tab.n` that is not marked yet.
+# The caller zeroes the mask once and then marks one or more subsystems, so a
+# site already carrying another label belongs to an earlier subsystem.
+function _mark_subsystem!(
+    tab::AbstractTableau,
+    subsystem::AbstractVector,
+    label::Int,
+    name::String,
+)
     n = tab.n
     seen = tab.c_workspace
-    fill!(seen, 0)
     @inbounds for s in subsystem
         s isa Integer || throw(ArgumentError(
-            "The subsystem must contain integer sites; got $(repr(s))."))
+            "The $name must contain integer sites; got $(repr(s))."))
         1 <= s <= n || throw(ArgumentError(
-            "The subsystem must contain sites in 1:$n; got $s."))
+            "The $name must contain sites in 1:$n; got $s."))
+        seen[s] == label && throw(ArgumentError(
+            "The $name must contain each site once; site $s is repeated."))
         seen[s] == 0 || throw(ArgumentError(
-            "The subsystem must contain each site once; site $s is repeated."))
-        seen[s] = 1
+            "The subsystems must be disjoint; site $s is in more than one."))
+        seen[s] = label
     end
     return nothing
 end
@@ -336,18 +353,30 @@ end
 # `coeffs_from_generators!` reads coefficients from pivot rows -- that is a
 # separate implementation and this shortcut must not be carried over to it.)
 #
+# Pivots are taken from rows `1:pivot_rows` only, while the column operations
+# act on whole columns. With `piv` pivots found, columns `piv+1:m` are then
+# zero on rows `1:pivot_rows`: a row without a pivot was zero in every column
+# from the current one on, and only those columns are combined afterwards. As
+# the operations are invertible, those columns are a basis of the combinations
+# of the input columns that vanish on `1:pivot_rows`.
+#
 # `{Int}` is the real contract, not a narrowing for convenience: the inner
 # loops go through `src/modular.jl`, whose primitives take `AbstractVector{Int}`
 # and whose tiers assume Int arithmetic. Declaring it here makes a wrong
 # element type a signature mismatch at the call, rather than a MethodError
 # raised from inside `scale_mod!`.
-function rank_fp_cols!(A::AbstractMatrix{Int}, d::Int, inversemod::InverseMod)
-    n, m = size(A)
+function rank_fp_cols!(
+    A::AbstractMatrix{Int},
+    d::Int,
+    inversemod::InverseMod,
+    pivot_rows::Int=size(A, 1),
+)
+    m = size(A, 2)
 
     r = 1
     c = 1
     piv = 0
-    while r <= n && c <= m
+    while r <= pivot_rows && c <= m
         # find a pivot in row r
         j = c
         while j <= m && A[r, j] == 0
