@@ -320,6 +320,50 @@ complement; for a pure state that gives twice the entanglement entropy. Like
 the negativity, both functions allocate nothing, leave the generators
 unchanged and work for both tableau types and with `storephase=false`.
 
+## Conditional mutual information
+
+[`conditional_mutual_information`](@ref)`(tab, A, B, C)` returns
+
+```math
+I(A:B|C) = S_{AC} + S_{BC} - S_C - S_{ABC},
+```
+
+the correlation between `A` and `B` that `C` does not account for, again in
+log-`d` units with every other qudit traced out. It is never negative, and it
+vanishes exactly when ``A - C - B`` is a quantum Markov chain. Conditioning
+can remove correlation or create it. In the GHZ state, qudit 3 holds the same
+classical value that qudits 1 and 2 share, so given qudit 3 nothing is left:
+
+```jldoctest
+julia> ghz = StabilizerTableau(3, 4; state=:ghz);
+
+julia> mutual_information(ghz, [1], [2]), conditional_mutual_information(ghz, [1], [2], [3])
+(1, 0)
+```
+
+In the absolutely maximally entangled state above, qudits 1 and 2 are
+uncorrelated on their own, but together with qudit 3 they hold two units of
+correlation. The difference is the tripartite information,
+``I_3(A:B:C) = I(A:B) - I(A:B|C)``:
+
+```jldoctest
+julia> ame = StabilizerTableau(3, 4; state=:product);
+
+julia> for g in (Fourier(1), Fourier(2), SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2))
+           apply!(ame, g)
+       end
+
+julia> mutual_information(ame, [1], [2]), conditional_mutual_information(ame, [1], [2], [3])
+(0, 2)
+
+julia> tripartite_information(ame, [1], [2], [3])
+-2
+```
+
+The result equals four [`entanglement_entropy`](@ref) calls but needs only
+one elimination, which makes it several times faster on mixed states. With
+`C` empty it is the mutual information of `A` and `B`.
+
 ## Purification by random two-qudit measurements
 
 A maximally mixed stabilizer state has no stabilizer generators. Projective
