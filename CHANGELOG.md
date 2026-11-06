@@ -29,6 +29,14 @@ dependency bump — carries the `skip-changelog` label instead.
   every prime `d` and `storephase=false`, allocate nothing and leave the
   generators unchanged. Invalid, repeated or overlapping sites throw an
   `ArgumentError`.
+- `conditional_mutual_information(tab, A, B, C)` returns
+  `I(A:B|C) = S(AC) + S(BC) - S(C) - S(ABC)` in log-`d` units, with every
+  other qudit traced out. It agrees with the sum of four
+  `entanglement_entropy` calls but takes one elimination, which makes it about
+  three times as fast on mixed states and at least as fast on pure ones. It
+  supports pure and mixed states, both tableau types, every prime `d` and
+  `storephase=false`, allocates nothing and leaves the generators unchanged.
+  Invalid, repeated or overlapping sites throw an `ArgumentError`.
 - `copy(tab)` returns an independent `StabilizerTableau` or
   `DestabilizerTableau` with the same state and generator basis, and
   `copy!(dst, src)` overwrites an existing tableau of the same kind, `d`, `n`

@@ -78,6 +78,7 @@ entanglement_profile!
 entanglement_negativity
 mutual_information
 tripartite_information
+conditional_mutual_information
 ```
 
 ## Inspecting states
