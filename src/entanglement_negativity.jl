@@ -36,6 +36,21 @@ scratch arrays `tab.workspace` and `tab.c_workspace`, and allocates nothing
 unless `A` or `B` shares memory with `tab.c_workspace`, in which case it is
 copied first.
 
+# References
+- S. Sang, Y. Li, T. Zhou, X. Chen, T. H. Hsieh and M. P. A. Fisher,
+  *Entanglement Negativity at Measurement-Induced Criticality*,
+  PRX Quantum **2**, 030313 (2021), arXiv:2012.00031. Derives
+  `E = rank(K)/2` for qubit stabilizer states, with `K` the anticommutation
+  matrix over `F_2`.
+- D. Fattal, T. S. Cubitt, Y. Yamamoto, S. Bravyi and I. L. Chuang,
+  *Entanglement in the stabilizer formalism*, arXiv:quant-ph/0406168 (2004).
+  The local reduction of bipartite stabilizer states to EPR pairs, which
+  underlies the formula.
+
+The qudit form used here, with the symplectic product `x_i·z_j - z_i·x_j`
+over `F_d`, is the same construction for prime `d`. The package tests check
+it against a dense partial transpose for `d = 2, 3, 5, 7`.
+
 # Examples
 ```julia
 bell = StabilizerTableau(3, 2; state=:ghz)
