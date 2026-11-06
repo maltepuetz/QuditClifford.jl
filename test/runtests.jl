@@ -18,6 +18,7 @@ using Aqua
     include("entanglement.jl")
     include("entanglement_profile.jl")
     include("entanglement_negativity.jl")
+    include("mutual_information.jl")
     include("purity.jl")
     include("initialization.jl")
     include("unitaries.jl")
