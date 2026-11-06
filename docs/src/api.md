@@ -76,6 +76,8 @@ entanglement_entropy
 entanglement_profile
 entanglement_profile!
 entanglement_negativity
+mutual_information
+tripartite_information
 ```
 
 ## Inspecting states

@@ -32,9 +32,9 @@ elements commute, that matrix is minus the one restricted to `B`, so the
 smaller side is used. This takes at most `O(n*m^2)` time,
 cubic in `n`, reads only the X and Z rows, and leaves the generators, phases,
 destabilizers and canonicalization caches unchanged. It overwrites the
-scratch arrays `tab.workspace` and `tab.c_workspace`, and allocates nothing
-unless `A` or `B` shares memory with `tab.c_workspace`, in which case it is
-copied first.
+scratch arrays `tab.workspace`, `tab.c_workspace` and `tab.zacc_workspace`,
+and allocates nothing unless `A` or `B` shares memory with
+`tab.c_workspace`, in which case it is copied first.
 
 # References
 - S. Sang, Y. Li, T. Zhou, X. Chen, T. H. Hsieh and M. P. A. Fisher,
@@ -78,13 +78,65 @@ end
 
 function entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
+    _mark_with_complement!(tab, A)
+    return _negativity_from_mask!(tab, length(A), tab.n - length(A))
+end
+
+# Validate `A` and label it 1 in `c_workspace`, and every other site 2.
+function _mark_with_complement!(tab::AbstractTableau, A::AbstractVector)
     _check_subsystem!(tab, A)
-    # Every site outside A belongs to B.
     mask = tab.c_workspace
     @inbounds for q in 1:tab.n
         mask[q] = mask[q] == 1 ? 1 : 2
     end
-    return _negativity_from_mask!(tab, length(A), tab.n - length(A))
+    return nothing
+end
+
+# Group the sites by their label in `c_workspace`, given `counts[l + 1]`
+# sites with each label `l` in 0:3: write them to `tab.zacc_workspace`, label
+# by label and increasing within a label, and return the index at which each
+# label's block starts. Copying rows through this list goes column by column,
+# like the copy in `rank_subsystem_cols!`, instead of one strided row at a time.
+function _group_sites_by_label!(tab::AbstractTableau, counts::NTuple{4,Int})
+    mask = tab.c_workspace
+    sites = tab.zacc_workspace
+    first = (1, 1 + counts[1], 1 + counts[1] + counts[2],
+             1 + counts[1] + counts[2] + counts[3])
+    p0, p1, p2, p3 = first
+    @inbounds for q in 1:tab.n
+        label = mask[q]
+        if label == 0
+            sites[p0] = q
+            p0 += 1
+        elseif label == 1
+            sites[p1] = q
+            p1 += 1
+        elseif label == 2
+            sites[p2] = q
+            p2 += 1
+        else
+            sites[p3] = q
+            p3 += 1
+        end
+    end
+    return first
+end
+
+# Copy the X and Z rows of the `N` sites listed in `tab.zacc_workspace` from
+# index `first` on into `tab.workspace` after row `offset`: X exponents to rows
+# offset+1:offset+N and Z exponents to offset+N+1:offset+2N, columns 1:m.
+# Returns the last row written, offset + 2N.
+function _copy_site_rows!(tab::AbstractTableau, first::Int, N::Int, offset::Int)
+    n, m = tab.n, tab.m
+    stab = tab.stab
+    ws = tab.workspace
+    sites = tab.zacc_workspace
+    @turbo for j in 1:m, r in 1:N
+        q = sites[first + r - 1]
+        ws[offset + r, j] = stab[q, j]
+        ws[offset + N + r, j] = stab[n + q, j]
+    end
+    return offset + 2N
 end
 
 # `c_workspace[q]` labels site `q`: 1 for A, 2 for B and 0 for a traced-out
@@ -92,8 +144,6 @@ end
 function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     n, m, d = tab.n, tab.m, tab.d
     (NA == 0 || NB == 0 || m == 0) && return 0
-    mask = tab.c_workspace
-    stab = tab.stab
     ws = tab.workspace
 
     # E(A:B) = E(B:A), so the generators are restricted to the smaller side S.
@@ -101,28 +151,11 @@ function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     NS = min(NA, NB)
     NC = n - NA - NB
 
-    # Rows 1:NC and NC+1:2NC hold the X and Z exponents on the traced-out
-    # sites, rows R0+1:R0+NS and R0+NS+1:R starting at R0 = 2NC those on S.
-    R0 = 2NC
-    R = R0 + 2NS
-    rc = 0
-    rs = 0
-    @inbounds for q in 1:n
-        label = mask[q]
-        if label == 0
-            rc += 1
-            @turbo for j in 1:m
-                ws[rc, j] = stab[q, j]
-                ws[NC + rc, j] = stab[n + q, j]
-            end
-        elseif label == side
-            rs += 1
-            @turbo for j in 1:m
-                ws[R0 + rs, j] = stab[q, j]
-                ws[R0 + NS + rs, j] = stab[n + q, j]
-            end
-        end
-    end
+    # Rows 1:2NC hold the X and Z exponents on the traced-out sites, rows
+    # R0+1:R0+NS and R0+NS+1:R starting at R0 = 2NC those on S.
+    first = _group_sites_by_label!(tab, (NC, NA, NB, 0))
+    R0 = _copy_site_rows!(tab, first[1], NC, 0)
+    R = _copy_site_rows!(tab, first[side + 1], NS, R0)
 
     # Pivoting on the traced-out rows alone leaves columns piv+1:m zero there,
     # and those columns are a basis of the stabilizer group of ρ_AB.
