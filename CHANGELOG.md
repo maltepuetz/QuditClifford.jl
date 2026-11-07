@@ -66,6 +66,11 @@ dependency bump — carries the `skip-changelog` label instead.
 - A manual section on `dephase!`, `traceout!` and `reset!` explains the
   difference between recording a measurement outcome and forgetting it, with a
   qutrit Bell pair example.
+- An example reproduces, qualitatively, the open monitored circuit of
+  Weinstein, Bao and Altman (PRL 129, 080501 (2022)): random Clifford gates and
+  `Z` measurements on a chain whose two ends are dephased with `dephase!`. It
+  plots the half-chain negativity and mutual information against the chain
+  length for qubits and qutrits, computed during the docs build.
 - The figures in the documentation follow the light/dark theme toggle: each is
   rendered once as before and once restyled for the dark theme.
 - The glow behind the logo on the documentation's home page is a dithered
