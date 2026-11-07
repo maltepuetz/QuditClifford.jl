@@ -106,6 +106,13 @@ function chan_xz(op, d, n)
     return xz
 end
 
+struct chan_ZeroBased <: AbstractVector{Symbol}
+    v::Vector{Symbol}
+end
+Base.axes(a::chan_ZeroBased) = (0:(length(a.v) - 1),)
+Base.size(a::chan_ZeroBased) = size(a.v)
+Base.getindex(a::chan_ZeroBased, i::Int) = a.v[i + 1]
+
 chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
 
 @testset "dephase!" begin
@@ -236,6 +243,7 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
                     chan_allocs_dephase(copy(t), op)
                     fresh = copy(t)
                     @test chan_allocs_dephase(fresh, op) == 0
+                    @test fresh.m == t.m - 1
                 end
             end
         end
@@ -480,12 +488,33 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                 end
             end
 
+            @testset "reset! tuple basis" for d in (2, 3)
+                rng = Xoshiro(1600 + d)
+                t = TT(d, 3)
+                random_state!(rng, t; m=2)
+                @test reset!(copy(t), [1, 3]; basis=(:X, :Z)) ==
+                      reset!(copy(t), [1, 3]; basis=[:X, :Z])
+                @test reset!(copy(t), 2; basis=(:Y,)) == reset!(copy(t), 2; basis=:Y)
+                before = copy(t)
+                @test_throws ArgumentError reset!(t, [1, 2]; basis=(:X,))
+                @test_throws ArgumentError reset!(t, [1, 2]; basis=(:X, :Z, :Y))
+                @test t.stab == before.stab && t.m == before.m
+            end
+
+            @testset "reset! offset-axis basis" for d in (2, 3)
+                t = TT(d, 3; state=:ghz)
+                before = copy(t)
+                @test_throws ArgumentError reset!(t, [1, 2];
+                    basis=chan_ZeroBased([:X, :Z]))
+                @test t.stab == before.stab && t.m == before.m
+            end
+
             @testset "reset! allocates nothing" for d in (2, 3)
                 rng = Xoshiro(1400 + d)
                 t = TT(d, 4)
                 random_state!(rng, t; m=3)
                 sites = [1, 3]
-                for basis in (:Y, [:X, :Z])
+                for basis in (:Y, [:X, :Z], (:X, :Z))
                     chan_allocs_reset(copy(t), sites, basis)
                     fresh = copy(t)
                     @test chan_allocs_reset(fresh, sites, basis) == 0

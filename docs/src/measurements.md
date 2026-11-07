@@ -55,8 +55,8 @@ outcomes and `phase_policy`.
 [`measure!`](@ref) records an outcome: the tableau follows one pure trajectory.
 When the outcome is not kept, the state is the average over all outcomes, which
 is mixed. [`dephase!`](@ref) applies this averaged channel for a Pauli
-operator `P`: it keeps the generators that commute with `P` and drops those that
-do not. At most one generator is lost, because the noncommuting generators can
+operator `P`: the stabilizer group shrinks to its subgroup of elements that
+commute with `P`. At most one generator is lost, because the noncommuting generators can
 be multiplied by powers of the first one until only that one anticommutes. The
 Pauli's phase does not matter, nothing is sampled, and a state that already
 commutes with `P` is left unchanged.
@@ -67,7 +67,8 @@ which leaves qudit `q` maximally mixed and uncorrelated with the rest, while
 followed by fixing each site in the chosen basis eigenstate, again without
 recording an outcome, so qudits that were entangled with the site stay mixed.
 
-The example below dephases one half of a qutrit Bell pair. The mutual
+The example below dephases one half of a qutrit Bell pair. Entropy, mutual
+information and negativity are in units of ``\log d``, here trits. The mutual
 information drops from `2` to `1` and the negativity from `1` to `0`: the
 remaining correlations are classical. A trace-out removes all correlations, and
 a reset leaves the partner maximally mixed.

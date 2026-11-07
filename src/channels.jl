@@ -86,7 +86,9 @@ with `op`, and the generator basis is no longer canonical.
 
 Unlike [`measure!`](@ref), nothing is sampled, so `dephase!` draws no random
 numbers, adds no generator and needs no phase handling, which makes it valid for
-`storephase=false` and non-Hermitian qubit operators alike. It allocates nothing.
+`storephase=false` and non-Hermitian qubit operators alike. It allocates nothing
+for an `AbstractPauli`; a raw exponent vector is wrapped in a `GeneralPauli`
+first, as in `measure!`, which allocates a small wrapper.
 The commutation pass costs `O(km)` for a `k`-qudit sparse Pauli, and removing a
 generator adds `O(nm)`.
 
@@ -179,10 +181,12 @@ end
 # The canonical basis symbol for the k-th site; `basis` is one symbol for all
 # sites or a vector with one symbol per site.
 @inline _reset_basis_at(basis::Symbol, ::Int) = _canonical_basis_symbol(basis)
-@inline _reset_basis_at(basis::AbstractVector, k::Int) = _canonical_basis_symbol(basis[k])
+@inline _reset_basis_at(basis::Union{AbstractVector,Tuple}, k::Int) =
+    _canonical_basis_symbol(basis[k])
 
 _check_reset_basis(basis::Symbol, ::Int) = (_canonical_basis_symbol(basis); nothing)
-function _check_reset_basis(basis::AbstractVector, nsites::Int)
+function _check_reset_basis(basis::Union{AbstractVector,Tuple}, nsites::Int)
+    basis isa AbstractVector && Base.require_one_based_indexing(basis)
     length(basis) == nsites || throw(ArgumentError(
         "basis has length $(length(basis)) but there are $nsites sites."))
     for b in basis
@@ -192,7 +196,7 @@ function _check_reset_basis(basis::AbstractVector, nsites::Int)
     return nothing
 end
 _check_reset_basis(::Any, ::Int) = throw(ArgumentError(
-    "basis must be a Symbol or a vector of Symbols."))
+    "basis must be a Symbol, or a vector or tuple of Symbols."))
 
 # Give each of `sites`, already traced out, a fresh generator of its target
 # basis. No generator touches a traced-out site, so the new column index is at
@@ -223,9 +227,9 @@ becomes mixed if it was entangled with `sites`.
 
 `sites` is a single qudit index or an `AbstractVector` of them (a range such as
 `2:3` included). `basis` is `:X`, `:Y` or `:Z` (lower case accepted), applied to
-every site, or a vector of them with one entry per site. Sites outside `1:n`,
-repeated sites, an unknown basis symbol and a `basis` vector whose length differs
-from the number of sites throw an `ArgumentError` before `tab` is modified. An
+every site, or a vector or tuple of them with one entry per site. Sites outside
+`1:n`, repeated sites, an unknown basis symbol, a `basis` collection whose length
+differs from the number of sites and a `basis` vector with offset axes throw an `ArgumentError` before `tab` is modified. An
 empty collection leaves `tab` unchanged.
 
 Unlike [`measure!`](@ref) followed by a correction, no outcome is sampled or

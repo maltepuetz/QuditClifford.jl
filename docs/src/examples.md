@@ -740,7 +740,7 @@ curves change little beyond `L = 16`: from `L = 16` to `L = 32` the negativity
 gains about a tenth of a bit, against about seven tenths at `p = 0.1`. That is
 consistent with the area law the paper finds above ``p_c``, although at these
 sizes slow growth cannot be told apart from saturation. The qutrit curves at
-`p = 0.3` keep rising up to `L = 24` before they level off, which suggests that
+`p = 0.3` rise more slowly beyond `L = 24`, which suggests that
 the qutrit transition lies at a larger `p`; this example does not locate it.
 The mutual information, which also counts classical correlations, exceeds the
 negativity wherever either is nonzero, and it shows the same three regimes.
