@@ -50,6 +50,54 @@ nondeterministic qubit measurement, outcome `0` selects eigenvalue `+1` and
 outcome `1` selects eigenvalue `-1`. See [`measure!`](@ref) for deterministic
 outcomes and `phase_policy`.
 
+## Forgetting outcomes, discarding and resetting
+
+[`measure!`](@ref) records an outcome: the tableau follows one pure trajectory.
+When the outcome is not kept, the state is the average over all outcomes, which
+is mixed. [`dephase!`](@ref) applies this averaged channel for a Pauli
+operator `P`: it keeps the generators that commute with `P` and drops those that
+do not. At most one generator is lost, because the noncommuting generators can
+be multiplied by powers of the first one until only that one anticommutes. The
+Pauli's phase does not matter, nothing is sampled, and a state that already
+commutes with `P` is left unchanged.
+
+[`traceout!`](@ref) discards qudits. It is dephasing by `X_q` and then by `Z_q`,
+which leaves qudit `q` maximally mixed and uncorrelated with the rest, while
+`n` stays the same. [`reset!`](@ref)`(tab, sites; basis)` is a trace-out
+followed by fixing each site in the chosen basis eigenstate, again without
+recording an outcome, so qudits that were entangled with the site stay mixed.
+
+The example below dephases one half of a qutrit Bell pair. The mutual
+information drops from `2` to `1` and the negativity from `1` to `0`: the
+remaining correlations are classical. A trace-out removes all correlations, and
+a reset leaves the partner maximally mixed.
+
+```jldoctest forgetting
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
+(2, 1, 2, 1)
+
+julia> dephase!(tab, SinglePauli(1, 0, 1)); # Forget the outcome of Z on qutrit 1.
+
+julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
+(1, 1, 1, 0)
+
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> traceout!(tab, 1);
+
+julia> (tab.m, mutual_information(tab, [1], [2]))
+(0, 0)
+
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> reset!(tab, 1);
+
+julia> (tab.m, entanglement_entropy(tab, [1]), entanglement_entropy(tab, [2]))
+(1, 0, 1)
+```
+
 ## Expectation values
 
 Use [`expect!`](@ref) for expectation values. It returns the physical value as

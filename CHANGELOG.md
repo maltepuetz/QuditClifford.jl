@@ -63,6 +63,9 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Documentation
 
+- A manual section on `dephase!`, `traceout!` and `reset!` explains the
+  difference between recording a measurement outcome and forgetting it, with a
+  qutrit Bell pair example.
 - The figures in the documentation follow the light/dark theme toggle: each is
   rendered once as before and once restyled for the dark theme.
 - The glow behind the logo on the documentation's home page is a dithered
