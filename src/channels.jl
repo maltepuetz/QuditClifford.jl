@@ -198,6 +198,7 @@ _check_reset_basis(::Any, ::Int) = throw(ArgumentError(
 # basis. No generator touches a traced-out site, so the new column index is at
 # most n, and the dual built for it needs no projection.
 function _prepare_sites!(tab::AbstractTableau, sites, basis)
+    isempty(sites) && return tab
     n = tab.n
     k = 0
     for q in sites

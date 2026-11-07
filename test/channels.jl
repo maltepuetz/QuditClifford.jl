@@ -453,6 +453,21 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                       TT(d, 4; state=:product, basis=:Y)
             end
 
+            @testset "reset! of no sites is a no-op" for d in (2, 3)
+                rng = Xoshiro(1500 + d)
+                t = TT(d, 3)
+                random_state!(rng, t; m=2)
+                canonicalize!(t)
+                before = copy(t)
+                @test t.iscanonical
+                for basis in (:Z, Symbol[])
+                    reset!(t, Int[]; basis)
+                    @test t.stab == before.stab
+                    @test t.m == before.m
+                    @test t.iscanonical == true
+                end
+            end
+
             @testset "reset! validation" for d in (2, 3)
                 tab = TT(d, 3; state=:ghz)
                 before = copy(tab)
