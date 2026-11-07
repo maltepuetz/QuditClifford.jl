@@ -134,3 +134,44 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
     tab.iscanonical = false
     return tab
 end
+
+"""
+    traceout!(tab::AbstractTableau, sites)
+
+Discard the qudits `sites` and return `tab`: the register keeps its `n` qudits,
+the sites are left maximally mixed, and the state becomes `Tr_A ρ ⊗ I/d^|A|` for
+`A = sites`. The stabilizer group shrinks to its subgroup supported on the
+complement of `A`.
+
+`sites` is a single qudit index or an `AbstractVector` of them (a range such as
+`2:3` included). Every site must be an integer in `1:n` and no site may repeat;
+otherwise an `ArgumentError` is thrown before `tab` is modified. An empty
+collection leaves `tab` unchanged.
+
+Tracing out qudit `q` equals dephasing by `X_q` and then by `Z_q`, which is how
+it is computed, so it supports both tableau types, every prime `d` and
+`storephase=false`, and allocates nothing. The cost is `O(|sites|·nm)`.
+
+# Examples
+```julia
+tab = DestabilizerTableau(3, 3; state=:ghz)
+traceout!(tab, 1)                # qudit 1 becomes maximally mixed
+entanglement_entropy(tab, [1])   # 1
+```
+"""
+function traceout!(tab::AbstractTableau, sites::AbstractVector)
+    _check_subsystem!(tab, sites)
+    for q in sites
+        dephase!(tab, SinglePauli(Int(q), 1, 0))
+        dephase!(tab, SinglePauli(Int(q), 0, 1))
+    end
+    return tab
+end
+
+function traceout!(tab::AbstractTableau, site::Integer)
+    1 <= site <= tab.n || throw(ArgumentError(
+        "The site must be in 1:$(tab.n); got $site."))
+    dephase!(tab, SinglePauli(Int(site), 1, 0))
+    dephase!(tab, SinglePauli(Int(site), 0, 1))
+    return tab
+end

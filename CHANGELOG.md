@@ -10,6 +10,10 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- `traceout!(tab, sites)` discards qudits, leaving them maximally mixed while
+  keeping `n`; supported for both tableau types, every prime `d` and
+  `storephase=false`, allocation-free; invalid or repeated sites throw an
+  `ArgumentError`.
 - `dephase!(tab, op)` measures a Pauli and forgets the outcome, applying the
   complete dephasing channel in `op`'s eigenbasis. It supports both tableau
   types, every prime `d`, `storephase=false` and sparse and dense Paulis, is

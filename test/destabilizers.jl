@@ -126,6 +126,17 @@ end
         end
     end
 
+    @testset "Trace-out preserves duality" begin
+        rng = Xoshiro(2025)
+        for d in (2, 3), m in (3, 5), _ in 1:5
+            n = 5
+            tab = DestabilizerTableau(d, n)
+            random_state!(rng, tab; m)
+            traceout!(tab, randperm(rng, n)[1:rand(rng, 1:n)])
+            _assert_duality(tab)
+        end
+    end
+
     @testset "Noncommuting replacement duality for x-only and z-only ops" begin
         # The measured operator's support must be read from BOTH halves of the
         # tableau column. Each case below is built so the pivot is qudit 2 and

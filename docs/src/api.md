@@ -66,6 +66,7 @@ random_state!
 ```@docs
 measure!
 dephase!
+traceout!
 ```
 
 ## Expectation values and entropy

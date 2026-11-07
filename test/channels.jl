@@ -241,3 +241,130 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
         end
     end
 end
+
+# Tr_q ρ ⊗ I/d on each site q: dephasing by X_q and then Z_q.
+function chan_traceout_oracle(rho::AbstractMatrix, d::Int, n::Int, sites)
+    out = rho
+    for q in sites
+        for (x, z) in ((1, 0), (0, 1))
+            xz = zeros(Int, 2n)
+            xz[q] = x
+            xz[n+q] = z
+            out = chan_dephase_oracle(out, d, n, xz)
+        end
+    end
+    return out
+end
+
+chan_allocs_traceout(t, sites) = @allocated traceout!(t, sites)
+
+@testset "traceout!" begin
+    for (label, TT) in CHAN_TABLEAU_TYPES
+        @testset "$label" begin
+            @testset "matches the dense channel" for d in (2, 3, 5)
+                rng = Xoshiro(300 + d)
+                for n in 1:4, m in (0, n ÷ 2, n), _ in 1:2
+                    tab0 = TT(d, n)
+                    random_state!(rng, tab0; m)
+                    rho0 = density_matrix(tab0)
+                    subsets = Any[collect(1:n), filter(_ -> rand(rng, Bool), 1:n)]
+                    for sites in subsets
+                        tab = copy(tab0)
+                        @test traceout!(tab, sites) === tab
+                        @test isapprox(density_matrix(tab),
+                                       chan_traceout_oracle(rho0, d, n, sites); atol=1e-10)
+                        chan_assert_invariants(tab)
+                    end
+                end
+            end
+
+            @testset "equals sequential dephasing" for d in (2, 3, 5)
+                rng = Xoshiro(400 + d)
+                for _ in 1:5
+                    t = TT(d, 4)
+                    random_state!(rng, t; m=rand(rng, 0:4))
+                    A = randperm(rng, 4)[1:rand(rng, 0:4)]
+                    t2 = copy(t)
+                    for q in A
+                        dephase!(t2, SinglePauli(q, 1, 0))
+                        dephase!(t2, SinglePauli(q, 0, 1))
+                    end
+                    @test traceout!(copy(t), A) == t2
+                end
+            end
+
+            @testset "entropies" for d in (2, 3)
+                rng = Xoshiro(500 + d)
+                for _ in 1:5
+                    t = TT(d, 5)
+                    random_state!(rng, t; m=rand(rng, 1:5))
+                    A = sort(randperm(rng, 5)[1:rand(rng, 1:4)])
+                    B = setdiff(1:5, A)
+                    traceout!(t, A)
+                    @test entanglement_entropy(t, A) == length(A)
+                    @test mutual_information(t, A, B) == 0
+                end
+            end
+
+            @testset "every site" for d in (2, 3, 5)
+                rng = Xoshiro(600 + d)
+                t = TT(d, 3)
+                random_state!(rng, t; m=3)
+                traceout!(t, 1:3)
+                @test t == TT(d, 3; state=:mixed)
+                @test t.m == 0
+            end
+
+            @testset "site forms" for d in (2, 3)
+                rng = Xoshiro(700 + d)
+                t0 = TT(d, 4)
+                random_state!(rng, t0; m=3)
+                @test traceout!(copy(t0), 2) == traceout!(copy(t0), [2]) ==
+                      traceout!(copy(t0), 2:2)
+                @test traceout!(copy(t0), 2:3) == traceout!(copy(t0), [2, 3])
+                before = copy(t0)
+                traceout!(t0, Int[])
+                @test t0.stab == before.stab
+                @test t0.m == before.m
+                @test t0.iscanonical == before.iscanonical
+            end
+
+            @testset "validation" for d in (2, 3)
+                tab = TT(d, 3; state=:ghz)
+                before = copy(tab)
+                for sites in ([0], [4], [1, 1], [1, 4], 0, 4, [1.5], [1, 2, 1])
+                    @test_throws ArgumentError traceout!(tab, sites)
+                    @test tab.stab == before.stab
+                    @test tab.m == before.m
+                end
+            end
+
+            @testset "allocates nothing" for d in (2, 3)
+                rng = Xoshiro(800 + d)
+                t = TT(d, 4)
+                random_state!(rng, t; m=3)
+                for sites in ([1, 3], 2, 1:2)
+                    chan_allocs_traceout(copy(t), sites)
+                    fresh = copy(t)
+                    @test chan_allocs_traceout(fresh, sites) == 0
+                end
+            end
+
+            @testset "storephase=false" for d in (2, 3, 5)
+                rng = Xoshiro(900 + d)
+                for n in 1:4, m in 0:n, _ in 1:2
+                    phased = TT(d, n)
+                    random_state!(rng, phased; m)
+                    A = randperm(rng, n)[1:rand(rng, 0:n)]
+                    b = traceout!(copy(phased), A)
+                    a = traceout!(chan_strip(phased), A)
+                    @test chan_strip(b) == a
+                    free = TT(d, n; storephase=false)
+                    random_state!(rng, free; m)
+                    traceout!(free, A)
+                    chan_assert_invariants(free)
+                end
+            end
+        end
+    end
+end
