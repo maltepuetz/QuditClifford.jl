@@ -10,6 +10,11 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- `dephase!(tab, op)` measures a Pauli and forgets the outcome, applying the
+  complete dephasing channel in `op`'s eigenbasis. It supports both tableau
+  types, every prime `d`, `storephase=false` and sparse and dense Paulis, is
+  deterministic and allocates nothing. Paulis outside the register throw an
+  `ArgumentError`.
 - `entanglement_negativity(tab, A, B)` returns the logarithmic negativity
   `E(A:B) = log_d ‖ρ_ABᵀᴮ‖₁` between disjoint subsystems `A` and `B`, with
   every other qudit traced out, as an integer in log-`d` units;

@@ -109,6 +109,23 @@ end
         end
     end
 
+    @testset "Dephasing preserves duality" begin
+        rng = Xoshiro(2024)
+        n, d = 6, 3
+        tab = DestabilizerTableau(d, n)
+        random_state!(rng, tab; m=4)
+        for _ in 1:30
+            q = randperm(rng, n)
+            op = DoublePauli(q[1], rand(rng, 0:d-1), rand(rng, 0:d-1),
+                             q[2], rand(rng, 0:d-1), rand(rng, 0:d-1))
+            dephase!(tab, op)
+            _assert_duality(tab)
+            q = rand(rng, 1:n)
+            measure!(tab, SinglePauli(q, rand(rng, 0:d-1), rand(rng, 0:d-1)); outcome=rand(rng, 0:d-1))
+            _assert_duality(tab)
+        end
+    end
+
     @testset "Noncommuting replacement duality for x-only and z-only ops" begin
         # The measured operator's support must be read from BOTH halves of the
         # tableau column. Each case below is built so the pivot is qudit 2 and
