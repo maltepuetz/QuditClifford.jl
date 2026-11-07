@@ -600,8 +600,8 @@ and the `Z` measurements commute with the dephasing. The paper evolves for ``O(L
 steps without a prefactor; the depth of `4L` steps is our choice.
 
 The first function runs one trajectory and returns the logarithmic negativity
-and the mutual information between the left and right halves of the chain.
-Phases do not affect either quantity, so the tableau stores none. The gates are
+and the mutual information between the left and right halves of the chain,
+the two quantities the paper reports for this geometry. Phases do not affect either quantity, so the tableau stores none. The gates are
 preallocated, one per bond, and refilled with fresh random Cliffords as the
 circuit runs.
 
@@ -646,7 +646,9 @@ an argument, so one seed reproduces the whole figure.
 
 ```@example boundary_dephasing
 # Average the half-chain negativity and mutual information over trajectories.
-function boundary_dephasing_averages(rng, d, L; p, depth=4L, trajectories=100)
+function boundary_dephasing_averages(rng, d, L; p, depth=4L, trajectories=200)
+    # These draws only allocate the per-bond operators; every gate is refilled
+    # before it is applied.
     gates = [random_clifford(rng, d, [i, i + 1]) for i in 1:(L - 1)]
     negativity = zeros(trajectories)
     information = zeros(trajectories)
@@ -734,13 +736,14 @@ carry each stabilizer generator to the ends, where the dephasing removes it,
 nothing adds generators back, and after `4L` steps the chain is maximally
 mixed. At `p = 0.1` the measurements keep restoring information, and both
 quantities grow with `L` for qubits and qutrits alike. At `p = 0.3` the qubit
-curves rise only over the smallest sizes and then stay flat within their error
-bars, near half a bit of negativity: the area law above ``p_c``. The qutrit
-curves at `p = 0.3` keep rising up to `L = 24` before they level off, which
-suggests that the qutrit transition lies at a larger `p`; this example does not
-locate it. The mutual information, which also counts classical correlations,
-exceeds the negativity throughout but shows the same three regimes; the paper
-reports it for the same two halves.
+curves change little beyond `L = 16`: from `L = 16` to `L = 32` the negativity
+gains about a tenth of a bit, against about seven tenths at `p = 0.1`. That is
+consistent with the area law the paper finds above ``p_c``, although at these
+sizes slow growth cannot be told apart from saturation. The qutrit curves at
+`p = 0.3` keep rising up to `L = 24` before they level off, which suggests that
+the qutrit transition lies at a larger `p`; this example does not locate it.
+The mutual information, which also counts classical correlations, exceeds the
+negativity wherever either is nonzero, and it shows the same three regimes.
 
 The paper's central result is that the negativity grows as ``L^{1/3}`` for
 ``0 < p < p_c``. At these sizes such a power law cannot be told apart from a
