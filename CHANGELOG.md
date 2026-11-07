@@ -10,6 +10,9 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- `reset!(tab, sites; basis=:Z)` resets qudits to the product preset's eigenstate
+  in the chosen basis without recording an outcome, leaving the rest of the
+  system mixed if it was entangled with them.
 - `traceout!(tab, sites)` discards qudits, leaving them maximally mixed while
   keeping `n`; supported for both tableau types, every prime `d` and
   `storephase=false`, allocation-free; invalid or repeated sites throw an

@@ -609,3 +609,19 @@ end
         end
     end
 end
+
+@testset "Reset preserves duality" begin
+    for d in (2, 3)
+        rng = Xoshiro(2100 + d)
+        for _ in 1:20
+            n = rand(rng, 1:5)
+            tab = DestabilizerTableau(d, n)
+            random_state!(rng, tab; m=rand(rng, 0:n))
+            sites = sort(randperm(rng, n)[1:rand(rng, 1:n)])
+            bases = [rand(rng, (:X, :Y, :Z)) for _ in sites]
+            reset!(tab, sites; basis=bases)
+            _assert_duality(tab)
+            _assert_active_cache(tab)
+        end
+    end
+end

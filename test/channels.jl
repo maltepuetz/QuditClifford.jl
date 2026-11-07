@@ -368,3 +368,114 @@ chan_allocs_traceout(t, sites) = @allocated traceout!(t, sites)
         end
     end
 end
+
+# d^|A| Π (Tr_A ρ ⊗ I/d^|A|) Π, with Π projecting each reset site onto its
+# target eigenstate of the product preset.
+function chan_reset_oracle(rho::AbstractMatrix, d::Int, n::Int, sites, bases)
+    rho_tr = chan_traceout_oracle(rho, d, n, sites)
+    target = Dict(zip(sites, bases))
+    Pi = ones(ComplexF64, 1, 1)
+    for q in 1:n
+        local_proj = if haskey(target, q)
+            density_matrix(StabilizerTableau(d, 1; state=:product, basis=target[q]))
+        else
+            Matrix{ComplexF64}(I, d, d)
+        end
+        Pi = kron(Pi, local_proj)
+    end
+    return d^length(sites) .* (Pi * rho_tr * Pi)
+end
+
+chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
+
+@testset "reset!" begin
+    for (label, TT) in CHAN_TABLEAU_TYPES
+        @testset "$label" begin
+            @testset "reset! of every site equals the product preset" for d in (2, 3, 5)
+                rng = Xoshiro(1000 + d)
+                for storephase in (true, false)
+                    for b in (:X, :Y, :Z, [:X, :Y, :Z])
+                        t = TT(d, 3; storephase)
+                        random_state!(rng, t; m=rand(rng, 0:3))
+                        preset = reset!(copy(t); state=:product, basis=b)
+                        @test reset!(t, 1:3; basis=b) == preset
+                        chan_assert_invariants(t)
+                    end
+                end
+            end
+
+            @testset "reset! matches the dense channel" for d in (2, 3, 5)
+                rng = Xoshiro(1100 + d)
+                for n in 1:3, m in (0, n ÷ 2, n), _ in 1:2
+                    tab0 = TT(d, n)
+                    random_state!(rng, tab0; m)
+                    rho0 = density_matrix(tab0)
+                    sites = sort(randperm(rng, n)[1:rand(rng, 1:n)])
+                    bases = [rand(rng, (:X, :Y, :Z)) for _ in sites]
+                    tab = copy(tab0)
+                    @test reset!(tab, sites; basis=bases) === tab
+                    @test isapprox(density_matrix(tab),
+                                   chan_reset_oracle(rho0, d, n, sites, bases); atol=1e-10)
+                    chan_assert_invariants(tab)
+                end
+            end
+
+            @testset "reset! rank and entropies" for d in (2, 3)
+                rng = Xoshiro(1200 + d)
+                for _ in 1:5
+                    t0 = TT(d, 5)
+                    random_state!(rng, t0; m=rand(rng, 1:5))
+                    A = sort(randperm(rng, 5)[1:rand(rng, 1:4)])
+                    B = setdiff(1:5, A)
+                    t = reset!(copy(t0), A; basis=:Y)
+                    @test t.m == traceout!(copy(t0), A).m + length(A)
+                    @test entanglement_entropy(t, A) == 0
+                    @test mutual_information(t, A, B) == 0
+                end
+            end
+
+            @testset "reset! of a site already in the target state" for d in (2, 3, 5)
+                t = TT(d, 3; state=:Z)
+                @test reset!(t, 2) == TT(d, 3; state=:Z)
+                t = TT(d, 3; state=:X)
+                @test reset!(t, 2; basis=:X) == TT(d, 3; state=:X)
+            end
+
+            @testset "reset! site forms and presets" for d in (2, 3)
+                rng = Xoshiro(1300 + d)
+                t = TT(d, 4)
+                random_state!(rng, t; m=3)
+                @test reset!(copy(t), 2:3) == reset!(copy(t), [2, 3])
+                @test reset!(copy(t), 2; basis=:X) == reset!(copy(t), [2]; basis=[:X])
+                @test reset!(copy(t), 2; basis=:X) == reset!(copy(t), 2:2; basis=:x)
+                @test reset!(copy(t), :ghz) == TT(d, 4; state=:ghz)
+                @test reset!(copy(t); state=:product, basis=:Y) ==
+                      TT(d, 4; state=:product, basis=:Y)
+            end
+
+            @testset "reset! validation" for d in (2, 3)
+                tab = TT(d, 3; state=:ghz)
+                before = copy(tab)
+                for (sites, basis) in (([0], :Z), ([4], :Z), ([1, 1], :Z), (0, :Z),
+                                       (4, :Z), ([1, 2], :W), ([1, 2], [:X]),
+                                       ([1, 2], [:X, :W]), (1, [:X, :Z]), ([1, 4], :X))
+                    @test_throws ArgumentError reset!(tab, sites; basis)
+                    @test tab.stab == before.stab
+                    @test tab.m == before.m
+                end
+            end
+
+            @testset "reset! allocates nothing" for d in (2, 3)
+                rng = Xoshiro(1400 + d)
+                t = TT(d, 4)
+                random_state!(rng, t; m=3)
+                sites = [1, 3]
+                for basis in (:Y, [:X, :Z])
+                    chan_allocs_reset(copy(t), sites, basis)
+                    fresh = copy(t)
+                    @test chan_allocs_reset(fresh, sites, basis) == 0
+                end
+            end
+        end
+    end
+end

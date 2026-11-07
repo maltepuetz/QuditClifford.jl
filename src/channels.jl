@@ -175,3 +175,83 @@ function traceout!(tab::AbstractTableau, site::Integer)
     dephase!(tab, SinglePauli(Int(site), 0, 1))
     return tab
 end
+
+# The canonical basis symbol for the k-th site; `basis` is one symbol for all
+# sites or a vector with one symbol per site.
+@inline _reset_basis_at(basis::Symbol, ::Int) = _canonical_basis_symbol(basis)
+@inline _reset_basis_at(basis::AbstractVector, k::Int) = _canonical_basis_symbol(basis[k])
+
+_check_reset_basis(basis::Symbol, ::Int) = (_canonical_basis_symbol(basis); nothing)
+function _check_reset_basis(basis::AbstractVector, nsites::Int)
+    length(basis) == nsites || throw(ArgumentError(
+        "basis has length $(length(basis)) but there are $nsites sites."))
+    for b in basis
+        b isa Symbol || throw(ArgumentError("basis entries must be Symbols."))
+        _canonical_basis_symbol(b)
+    end
+    return nothing
+end
+_check_reset_basis(::Any, ::Int) = throw(ArgumentError(
+    "basis must be a Symbol or a vector of Symbols."))
+
+# Give each of `sites`, already traced out, a fresh generator of its target
+# basis. No generator touches a traced-out site, so the new column index is at
+# most n, and the dual built for it needs no projection.
+function _prepare_sites!(tab::AbstractTableau, sites, basis)
+    n = tab.n
+    k = 0
+    for q in sites
+        k += 1
+        newcol = tab.m + 1
+        _set_site_column!(tab.stab, tab.d, n, newcol, Int(q),
+                          _reset_basis_at(basis, k), tab.storephase)
+        tab.m = newcol
+        _after_append_measurement!(tab, newcol, view(tab.stab, 1:(2n), newcol))
+    end
+    tab.iscanonical = false
+    return tab
+end
+
+"""
+    reset!(tab::AbstractTableau, sites; basis=:Z)
+
+Reset the qudits `sites` to a fixed eigenstate without recording an outcome, and
+return `tab`: the channel traces out `sites` and prepares each one in the state
+that `state=:product` gives it for the same basis, so the rest of the register
+becomes mixed if it was entangled with `sites`.
+
+`sites` is a single qudit index or an `AbstractVector` of them (a range such as
+`2:3` included). `basis` is `:X`, `:Y` or `:Z` (lower case accepted), applied to
+every site, or a vector of them with one entry per site. Sites outside `1:n`,
+repeated sites, an unknown basis symbol and a `basis` vector whose length differs
+from the number of sites throw an `ArgumentError` before `tab` is modified. An
+empty collection leaves `tab` unchanged.
+
+Unlike [`measure!`](@ref) followed by a correction, no outcome is sampled or
+returned, so `reset!` draws no random numbers and needs no phase handling beyond
+the product preset's own. It supports both tableau types, every prime `d` and
+`storephase=false`, and allocates nothing. The generator basis is no longer
+canonical afterwards, and `tab.m` equals the rank after tracing out `sites` plus
+`length(sites)`.
+
+# Examples
+```julia
+tab = DestabilizerTableau(3, 3; state=:ghz)
+reset!(tab, 1)                      # qudit 1 is |0⟩, the other two are correlated but mixed
+reset!(tab, [2, 3]; basis=[:X, :Y]) # per-site bases
+```
+"""
+function reset!(tab::AbstractTableau, sites::AbstractVector; basis=:Z)
+    _check_subsystem!(tab, sites)
+    _check_reset_basis(basis, length(sites))
+    traceout!(tab, sites)
+    return _prepare_sites!(tab, sites, basis)
+end
+
+function reset!(tab::AbstractTableau, site::Integer; basis=:Z)
+    1 <= site <= tab.n || throw(ArgumentError(
+        "The site must be in 1:$(tab.n); got $site."))
+    _check_reset_basis(basis, 1)
+    traceout!(tab, site)
+    return _prepare_sites!(tab, (Int(site),), basis)
+end

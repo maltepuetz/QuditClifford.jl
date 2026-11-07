@@ -421,20 +421,26 @@ function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis
     throw(ArgumentError("Unknown preset state: $state."))
 end
 
-@inline function _set_product_column!(tab::Matrix{Int}, d::Int, n::Int, col::Int, basis::Symbol, storephase::Bool)
+# Write the single-qudit eigenstate generator of `basis` on qudit `site` into
+# column `col`. The column must be zero beforehand.
+@inline function _set_site_column!(stab::Matrix{Int}, d::Int, n::Int, col::Int, site::Int, basis::Symbol, storephase::Bool)
     if basis === :X
-        tab[col, col] = 1
+        stab[site, col] = 1
     elseif basis === :Z
-        tab[n + col, col] = 1
+        stab[n + site, col] = 1
     else
         @assert basis === :Y
-        tab[col, col] = 1
-        tab[n + col, col] = 1
+        stab[site, col] = 1
+        stab[n + site, col] = 1
         if storephase && d == 2
-            tab[2n + 1, col] = 1
+            stab[2n + 1, col] = 1
         end
     end
     return nothing
+end
+
+@inline function _set_product_column!(tab::Matrix{Int}, d::Int, n::Int, col::Int, basis::Symbol, storephase::Bool)
+    return _set_site_column!(tab, d, n, col, col, basis, storephase)
 end
 
 function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis::Symbol, storephase::Bool)
