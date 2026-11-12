@@ -24,7 +24,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: Examples
-      link: /examples
+      link: /examples/qutrit-measurement
     - theme: alt
       text: API Reference
       link: /api
@@ -173,7 +173,7 @@ encoding the sampled eigenvalue and updates the dual destabilizers. The local
 projection also removes the entanglement between the two qutrits.
 
 Continue with [Getting Started](@ref) for state and operator construction,
-explore complete workflows in [Examples](@ref), and read
+explore complete workflows in the [Examples](@ref), and read
 [Representation and Phase Conventions](@ref) before constructing raw tableaux
 or interpreting phase exponents.
 
@@ -182,12 +182,26 @@ or interpreting phase exponents.
 ```@contents
 Pages = [
     "getting-started.md",
-    "examples.md",
-    "conventions.md",
-    "measurements.md",
-    "unitaries.md",
-    "dense-states.md",
+    "manual/conventions.md",
+    "manual/measurements.md",
+    "manual/unitaries.md",
+    "manual/dense-states.md",
     "api.md",
 ]
 Depth = 2
+```
+
+## Examples
+
+```@contents
+Pages = [
+    "examples/qutrit-measurement.md",
+    "examples/ghz-measurement.md",
+    "examples/entropy-cuts.md",
+    "examples/mixed-correlations.md",
+    "examples/purification.md",
+    "examples/boundary-dephasing.md",
+    "examples/measurement-only-ising.md",
+]
+Depth = 1
 ```

@@ -64,6 +64,11 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Documentation
 
+- The documentation is organized into Getting Started, a Manual chapter
+  (`docs/src/manual/`), an Examples chapter with one page per example
+  (`docs/src/examples/`) and the API reference. Links to the old
+  `/examples`, `/conventions`, `/measurements`, `/unitaries` and
+  `/dense-states` pages move under `/examples/…` and `/manual/…`.
 - A manual section on `dephase!`, `traceout!` and `reset!` explains the
   difference between recording a measurement outcome and forgetting it, with a
   qutrit Bell pair example.
