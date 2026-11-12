@@ -1,4 +1,4 @@
-# VitePress embeds Makie output at its logical PNG size. Scale every visual
+# The docs show a figure at its size in figure units, one unit per CSS pixel. Scale every visual
 # dimension together so the plots retain their original proportions at 1.5x.
 figure_scale = 1.5
 scaled(value) = figure_scale * value

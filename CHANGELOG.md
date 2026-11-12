@@ -14,6 +14,11 @@ dependency bump — carries the `skip-changelog` label instead.
   `10.5281/zenodo.24170577`, which resolves to the latest archived release;
   each release also has its own version DOI. `CITATION.cff` carries the same
   concept DOI, so GitHub's "Cite this repository" entry includes it.
+- The figures in the documentation are vector SVGs instead of PNGs, so they stay
+  sharp at any zoom level. In the dark theme, axis ticks take the color of the
+  spines; error-bar caps are drawn without an outline in both themes.
+- The boundary-dephasing example writes the logarithmic negativity as
+  ℰ (`\mathcal{E}`), as in the reference paper.
 
 ## 0.4.0 - 2026-11-12
 
