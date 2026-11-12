@@ -5,6 +5,7 @@
 [![Build Status](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/maltepuetz/QuditClifford.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/graph/badge.svg)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24170577.svg)](https://doi.org/10.5281/zenodo.24170577)
 
 QuditClifford.jl is a Julia package for simulating qudit Clifford circuits. It
 provides stabilizer-tableau tools for prime-dimensional qudits, including
@@ -129,7 +130,10 @@ before constructing raw tableaux or interpreting phase exponents.
 
 When using QuditClifford in research, cite it with the metadata in
 [`CITATION.cff`](CITATION.cff) (GitHub's "Cite this repository" button exports
-it as BibTeX or APA) and include the package version used.
+it as BibTeX or APA) and include the package version used. Every release is
+archived on Zenodo: [10.5281/zenodo.24170577](https://doi.org/10.5281/zenodo.24170577)
+always resolves to the latest version, and each version's record carries its
+own DOI for citing the exact release.
 
 QuditClifford is maintained by Malte Pütz and distributed under the
 [MIT License](LICENSE).

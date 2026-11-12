@@ -8,6 +8,12 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Documentation
+
+- The README shows a Zenodo DOI badge and gives the concept DOI
+  `10.5281/zenodo.24170577`, which resolves to the latest archived release;
+  each release also has its own version DOI.
+
 ## 0.4.0 - 2026-11-12
 
 ### Breaking
