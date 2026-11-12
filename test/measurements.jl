@@ -496,3 +496,149 @@ end
         end
     end
 end
+
+# Throws on every draw, so a call that reaches a random branch fails there.
+struct MeasNoDrawRNG <: AbstractRNG end
+struct MeasDrawAttempted <: Exception end
+QuditClifford._draw(::MeasNoDrawRNG, ::Int) = throw(MeasDrawAttempted())
+
+# A measurement trajectory driven by `rng` alone: a random mixed start, then
+# random one- and two-qudit Paulis, which reach all three `measure!` branches.
+function _meas_rng_trajectory(rng::AbstractRNG, TT, d::Int; n::Int=4, steps::Int=40)
+    tab = random_state!(rng, TT(d, n); m=1)
+    outcomes = Int[]
+    for _ in 1:steps
+        i, j = rand(rng, 1:n), rand(rng, 1:n)
+        x, z = rand(rng, 0:(d - 1)), rand(rng, 0:(d - 1))
+        op = i == j ? SinglePauli(i, x, z) :
+             DoublePauli(i, x, z, j, rand(rng, 0:(d - 1)), rand(rng, 0:(d - 1)))
+        push!(outcomes, measure!(rng, tab, op; phase_policy=2))
+    end
+    return tab, outcomes
+end
+
+# Bytes allocated by a drawing measurement on a warmed tableau built from `raw`.
+function _meas_rng_allocated(rng::AbstractRNG, TT, d::Int, raw::Matrix{Int}, m::Int, op)
+    warm = TT(d, copy(raw); m=m, storephase=true)
+    tab = TT(d, copy(raw); m=m, storephase=true)
+    measure!(rng, warm, op; phase_policy=2)
+    return @allocated measure!(rng, tab, op; phase_policy=2)
+end
+
+@testset "Measurement with an explicit RNG" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3)
+        @testset "$label d=$d" begin
+            @testset "A seed reproduces the trajectory" begin
+                tab1, out1 = _meas_rng_trajectory(Xoshiro(2026 + d), TT, d)
+                tab2, out2 = _meas_rng_trajectory(Xoshiro(2026 + d), TT, d)
+                @test out1 == out2
+                @test tab1.m == tab2.m
+                @test tab1.stab == tab2.stab
+                if TT === DestabilizerTableau
+                    @test tab1.destab == tab2.destab
+                end
+                @test length(unique(out1)) > 1
+            end
+
+            @testset "The RNG-free form draws from the default RNG" begin
+                Random.seed!(77)
+                rng = copy(Random.default_rng())
+                a = TT(d, 3; state=:product)
+                b = TT(d, 3; state=:product)
+                for q in 1:3
+                    @test measure!(a, SinglePauli(q, 1, 0)) ==
+                          measure!(rng, b, SinglePauli(q, 1, 0))
+                end
+                @test a.stab == b.stab
+                @test rng == Random.default_rng()
+            end
+
+            @testset "Random branches draw exactly once" begin
+                # Anticommuting: X₁ on |0…0⟩.
+                rng = Xoshiro(5)
+                ref = copy(rng)
+                tab = TT(d, 3; state=:product)
+                t = measure!(rng, tab, SinglePauli(1, 1, 0))
+                @test t == rand(ref, 0:(d - 1))
+                @test rng == ref
+                @test tab.stab[2tab.n+1, 1] == (d == 2 ? 2t : mod(-t, d))
+
+                # Commuting but outside the span: Z₃ on the mixed Z₁, Z₂ state.
+                raw = zeros(Int, 7, 3)
+                raw[4, 1] = raw[5, 2] = 1
+                tab = TT(d, copy(raw); m=2, storephase=true)
+                t = measure!(rng, tab, SinglePauli(3, 0, 1))
+                @test t == rand(ref, 0:(d - 1))
+                @test rng == ref
+                @test tab.m == 3
+
+                # The vector form forwards the same RNG.
+                tab = TT(d, 3; state=:product)
+                t = measure!(rng, tab, [1, 0, 0, 0, 0, 0])
+                @test t == rand(ref, 0:(d - 1))
+                @test rng == ref
+            end
+
+            @testset "Deterministic measurements leave the RNG untouched" begin
+                for storephase in (false, true)
+                    pure = TT(d, 3; state=:product, storephase=storephase)
+                    raw = zeros(Int, 6 + storephase, 3)
+                    raw[4, 1] = raw[5, 2] = 1
+                    mixed = TT(d, raw; m=2, storephase=storephase)
+                    for (tab, op) in ((pure, SinglePauli(2, 0, 1)),
+                                      (pure, DoublePauli(1, 0, 1, 3, 0, d - 1)),
+                                      (mixed, DoublePauli(1, 0, 1, 2, 0, 1)))
+                        rng = Xoshiro(9)
+                        before = copy(rng)
+                        @test measure!(rng, tab, op) == 0
+                        @test rng == before
+                        @test measure!(MeasNoDrawRNG(), tab, op) == 0
+                    end
+                end
+            end
+
+            @testset "An explicit outcome replaces the draw" begin
+                for k in 0:(d - 1)
+                    tab = TT(d, 3; state=:product)
+                    @test measure!(MeasNoDrawRNG(), tab, SinglePauli(1, 1, 0); outcome=k) == k
+                    @test expect_int!(tab, SinglePauli(1, 1, 0)) == (d == 2 ? 2k : k)
+
+                    raw = zeros(Int, 7, 3)
+                    raw[4, 1] = raw[5, 2] = 1
+                    tab = TT(d, raw; m=2, storephase=true)
+                    @test measure!(MeasNoDrawRNG(), tab, SinglePauli(3, 0, 1); outcome=k) == k
+                    @test tab.m == 3
+                end
+            end
+
+            @testset "A failing draw leaves the state unchanged" begin
+                tab = TT(d, 3; state=:product)
+                ref = copy(tab.stab)
+                @test_throws MeasDrawAttempted measure!(MeasNoDrawRNG(), tab, SinglePauli(1, 1, 0))
+                @test tab.stab == ref
+
+                raw = zeros(Int, 7, 3)
+                raw[4, 1] = raw[5, 2] = 1
+                tab = TT(d, copy(raw); m=2, storephase=true)
+                before = TT(d, copy(raw); m=2, storephase=true)
+                @test_throws MeasDrawAttempted measure!(MeasNoDrawRNG(), tab, SinglePauli(3, 0, 1))
+                @test tab.m == 2
+                @test tab == before
+            end
+
+            @testset "Drawing allocates nothing" begin
+                rng = Xoshiro(3)
+                pure = zeros(Int, 7, 3)
+                pure[4, 1] = pure[5, 2] = pure[6, 3] = 1
+                mixed = zeros(Int, 7, 3)
+                mixed[4, 1] = mixed[5, 2] = 1
+                @test _meas_rng_allocated(rng, TT, d, pure, 3, SinglePauli(1, 1, 0)) == 0
+                @test _meas_rng_allocated(rng, TT, d, pure, 3, DoublePauli(1, 1, 0, 2, 1, 0)) == 0
+                @test _meas_rng_allocated(rng, TT, d, mixed, 2, SinglePauli(3, 0, 1)) == 0
+                @test _meas_rng_allocated(Random.default_rng(), TT, d, mixed, 2,
+                                          SinglePauli(3, 0, 1)) == 0
+            end
+        end
+    end
+end

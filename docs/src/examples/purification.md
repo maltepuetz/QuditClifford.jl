@@ -22,7 +22,9 @@ the alternating brickwork matchings
 
 Every bond is measured with a random two-qudit Pauli. Each local factor is
 sampled independently from the ``d^2-1`` nonidentity operators ``X^xZ^z``.
-The following helpers generate the measurements and run one trajectory.
+The following helpers generate the measurements and run one trajectory. Each
+takes the random number generator `rng` as an argument, which draws both the
+Paulis and the measurement outcomes, so one seed reproduces every trajectory.
 
 ```@example purification
 using QuditClifford
@@ -30,20 +32,20 @@ using Random
 using Statistics
 
 # Draw a nonidentity Pauli XˣZᶻ on one site.
-function random_local_pauli(d)
-    x = rand(0:(d - 1))
-    z = rand(0:(d - 1))
+function random_local_pauli(rng, d)
+    x = rand(rng, 0:(d - 1))
+    z = rand(rng, 0:(d - 1))
 
     while iszero(x) && iszero(z)
-        x = rand(0:(d - 1))
-        z = rand(0:(d - 1))
+        x = rand(rng, 0:(d - 1))
+        z = rand(rng, 0:(d - 1))
     end
 
     return x, z
 end
 
 # Measure one alternating nearest-neighbour matching of the periodic chain.
-function random_brickwork_layer!(tab, d, n, layer)
+function random_brickwork_layer!(rng, tab, d, n, layer)
     first_site = isodd(layer) ? 1 : 2
 
     for offset in 0:(n ÷ 2 - 1)
@@ -51,11 +53,11 @@ function random_brickwork_layer!(tab, d, n, layer)
         i = mod1(first_site + 2offset, n)
         j = mod1(i + 1, n)
 
-        x_i, z_i = random_local_pauli(d)
-        x_j, z_j = random_local_pauli(d)
+        x_i, z_i = random_local_pauli(rng, d)
+        x_j, z_j = random_local_pauli(rng, d)
         operator = DoublePauli(i, x_i, z_i, j, x_j, z_j)
 
-        measure!(tab, operator)
+        measure!(rng, tab, operator)
     end
 
     return nothing
@@ -64,6 +66,7 @@ end
 
 # Follow one maximally mixed state until its tableau reaches full rank.
 function purification_trajectory(
+    rng,
     d,
     n;
     max_layers=10000,
@@ -80,7 +83,7 @@ function purification_trajectory(
 
     previous_rank = tab.m
     for layer in 1:max_layers
-        random_brickwork_layer!(tab, d, n, layer)
+        random_brickwork_layer!(rng, tab, d, n, layer)
 
         # A projective measurement can add or replace a generator, but not remove one.
         @assert previous_rank <= tab.m <= n
@@ -109,6 +112,7 @@ process, while counting ranks below `n` gives the fraction still mixed.
 ```@example purification
 # Collect every rank history and the purification-time distribution.
 function purification_ensemble(
+    rng,
     d,
     n;
     max_layers=10000,
@@ -119,6 +123,7 @@ function purification_ensemble(
 
     for trajectory in 1:trajectories
         rank_history, purification_layers[trajectory] = purification_trajectory(
+            rng,
             d,
             n;
             max_layers=max_layers,
@@ -150,9 +155,10 @@ max_layers = 10000
 trajectories = 1000
 dimensions = (2, 3, 5, 7)
 
-Random.seed!(1234) # hide
+rng = Xoshiro(1234)
 results = [
     purification_ensemble(
+        rng,
         d,
         n;
         max_layers=max_layers,

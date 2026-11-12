@@ -59,7 +59,7 @@ function boundary_dephasing_trajectory(rng, d, L, gates; p, depth=4L)
         # Measure Z on each site with probability p, drawing the outcome from rng.
         for i in 1:L
             if rand(rng) < p
-                measure!(tab, SinglePauli(i, 0, 1); outcome=rand(rng, 0:(d - 1)))
+                measure!(rng, tab, SinglePauli(i, 0, 1))
             end
         end
 

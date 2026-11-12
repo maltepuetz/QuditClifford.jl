@@ -21,8 +21,9 @@ using Statistics
 
 # Simulate one trajectory of the periodic measurement-only Ising circuit.
 # L is the number of qubits, p balances X against ZZ† measurements, and depth
-# is the number of alternating measurement layers.
-function measurement_only_ising(L;
+# is the number of alternating measurement layers. rng draws which operators
+# are measured and the outcomes of the random measurements.
+function measurement_only_ising(rng, L;
     p=0.5,
     depth=8L,
 )
@@ -32,19 +33,19 @@ function measurement_only_ising(L;
     for _ in 1:depth
         # First measure ZZ† on every periodic edge.
         for i in 1:L
-            if rand() < 1 - p
+            if rand(rng) < 1 - p
                 # mod1 closes the edge from site L back to site 1.
                 j = mod1(i + 1, L)
                 zzdagger = DoublePauli(i, 0, 1, j, 0, 1)
-                measure!(state, zzdagger)
+                measure!(rng, state, zzdagger)
             end
         end
 
         # Then measure X on every site.
         for i in 1:L
-            if rand() < p
+            if rand(rng) < p
                 xi = SinglePauli(i, 1, 0)
-                measure!(state, xi)
+                measure!(rng, state, xi)
             end
         end
     end
@@ -73,7 +74,7 @@ function mean_entropy_arc(L;
     trajectories=500,
     seed=1234,
 )
-    Random.seed!(seed)
+    rng = Xoshiro(seed)
 
     # Include every nontrivial prefix cut, from one site through L - 1 sites.
     cuts = collect(1:(L - 1))
@@ -81,7 +82,7 @@ function mean_entropy_arc(L;
 
     # Accumulate the entropy arc over measurement trajectories.
     for t in 1:trajectories
-        state = measurement_only_ising(L; p=p, depth=depth)
+        state = measurement_only_ising(rng, L; p=p, depth=depth)
         for j in cuts
             subsystem = collect(1:j)
             entropies[j, t] = entanglement_entropy(state, subsystem)

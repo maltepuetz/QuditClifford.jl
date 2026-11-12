@@ -8,6 +8,28 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Added
+
+- `measure!(rng, tab, op; outcome, phase_policy)` draws the outcome of a
+  random measurement from `rng`, for both a Pauli and a raw exponent vector, so
+  one seeded RNG reproduces a monitored-circuit trajectory. It follows the
+  rng-first convention of `random_clifford` and `random_state!`, allocates
+  nothing, and draws before the tableau changes, so an exception from `rng`
+  leaves the state as it was. `measure!(tab, op)` forwards with
+  `Random.default_rng()`. `dephase!`, `traceout!` and `reset!` draw no random
+  numbers and take no RNG.
+
+### Changed
+
+- `measure!` draws its outcome only when the measurement is random: when `op`
+  anticommutes with a generator, or commutes with all of them without lying in
+  their span. A deterministic measurement no longer advances the RNG, so code
+  seeded with `Random.seed!` that mixes deterministic and random measurements
+  produces a different outcome sequence than under 0.4.0. Each random draw is
+  `rand(rng, 0:(d - 1))` as before. The `outcome` keyword defaults to `nothing`
+  in place of an eager `rand(0:tab.d-1)`; an explicit `outcome` still replaces
+  the draw.
+
 ### Documentation
 
 - The README shows a Zenodo DOI badge and gives the concept DOI
@@ -19,6 +41,8 @@ dependency bump — carries the `skip-changelog` label instead.
   spines; error-bar caps are drawn without an outline in both themes.
 - The boundary-dephasing example writes the logarithmic negativity as
   ℰ (`\mathcal{E}`), as in the reference paper.
+- The measurement-only Ising, purification and boundary-dephasing examples and
+  the monitored-circuit manual example pass their seeded RNG to `measure!`.
 
 ## 0.4.0 - 2026-11-12
 

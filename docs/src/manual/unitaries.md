@@ -258,9 +258,9 @@ directly.
 
 Random two-qudit Cliffords interleaved with measurements are the standard model
 of a monitored circuit. Keep one operator per bond, refill it for every layer,
-and give each measurement an outcome from the same RNG: `measure!` otherwise
-draws its outcome from the global RNG, and one seed would no longer reproduce
-the whole trajectory.
+and pass the same RNG to every measurement: `measure!` otherwise draws its
+outcome from the global RNG, and one seed would no longer reproduce the whole
+trajectory.
 
 ```jldoctest random
 julia> function monitored!(rng, tab; layers = 8, p = 0.25)
@@ -272,7 +272,7 @@ julia> function monitored!(rng, tab; layers = 8, p = 0.25)
                end
                for q in 1:n
                    rand(rng) < p || continue
-                   measure!(tab, SinglePauli(q, 0, 1); outcome = rand(rng, 0:(d - 1)))
+                   measure!(rng, tab, SinglePauli(q, 0, 1))
                end
            end
            return tab

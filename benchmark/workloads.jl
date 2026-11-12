@@ -941,8 +941,9 @@ end
 The hot loop of [`monitored_trajectory`](@ref): `layers` brickwork layers,
 each refilling and applying the operator of every bond in its matching, then
 measuring `Z` on each qudit with probability `p`. Every measurement gets an
-outcome drawn from `rng`, since `measure!`'s default would draw from the
-global RNG. Allocates nothing once warm.
+outcome drawn from `rng` through the `outcome` keyword rather than
+`measure!(rng, ...)`, which a baseline revision may lack. Allocates nothing
+once warm.
 """
 function monitored_layers!(tab, bonds, rng, layers::Int; p::Float64 = 0.25)
     n, d = tab.n, tab.d
