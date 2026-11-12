@@ -165,5 +165,6 @@ raw = [1, 0, 0, 0, 1, 0, 0]  # six X/Z entries, then phase 0
 Prefer a few-qudit type inside local circuits; use a dense representation when
 the operator naturally acts on many sites.
 
-Continue with [Examples](@ref) for complete measurement and entanglement
-workflows, including the measurement-only Ising/percolation circuit.
+Continue with the examples, starting from
+[A two-qutrit measurement](@ref), for complete measurement and entanglement
+workflows, including the [measurement-only Ising circuit](@ref "A deep measurement-only Ising circuit").

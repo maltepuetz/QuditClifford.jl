@@ -116,8 +116,8 @@ removes the entanglement between the two qutrits.
 
 Continue with [Getting Started](https://maltepuetz.github.io/QuditClifford.jl/dev/getting-started)
 for state and operator construction, explore complete workflows in
-[Examples](https://maltepuetz.github.io/QuditClifford.jl/dev/examples), and
-read [Representation and Phase Conventions](https://maltepuetz.github.io/QuditClifford.jl/dev/conventions)
+[Examples](https://maltepuetz.github.io/QuditClifford.jl/dev/examples/qutrit-measurement), and
+read [Representation and Phase Conventions](https://maltepuetz.github.io/QuditClifford.jl/dev/manual/conventions)
 before constructing raw tableaux or interpreting phase exponents.
 
 ## Documentation and support

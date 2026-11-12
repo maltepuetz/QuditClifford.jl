@@ -5,7 +5,7 @@
 # here writes to a tableau: callers pass either a matrix they own or read-only
 # access to `tab.stab`, plus scratch vectors they allocated themselves.
 #
-# Conventions (docs/src/conventions.md). A column (x, z, a) denotes
+# Conventions (docs/src/manual/conventions.md). A column (x, z, a) denotes
 #
 #     P(x, z, a) = ζ^a ⊗_q X_q^(x_q) Z_q^(z_q),   ζ = i (d = 2) or ω (odd d),
 #
