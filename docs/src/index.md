@@ -3,10 +3,17 @@
 # https://vitepress.dev/reference/default-theme-home-page
 layout: home
 
+# Search-result title and snippet: without these the tab title comes from the
+# first heading ("What is QuditClifford.jl?") and never spells out "qudit
+# Clifford" as separate words, which search engines do not split out of the
+# package name.
+title: "Qudit Clifford circuit simulation in Julia"
+description: "QuditClifford.jl simulates qudit and qubit Clifford circuits in Julia: stabilizer tableaux for prime dimensions, random Cliffords, Pauli measurements, expectation values and entanglement entropy."
+
 hero:
   name: "QuditClifford.jl"
   text: "Stabilizer tableaux for prime-dimensional qudits"
-  tagline: Simulate qubits and qudits with measurements, expectations, and entanglement workflows in pure Julia.
+  tagline: Simulate qubit and qudit Clifford circuits with measurements, expectations, and entanglement workflows in pure Julia.
   image:
     light: /logo-light.svg
     dark: /logo-dark.svg
@@ -54,8 +61,9 @@ end
 
 # What is QuditClifford.jl?
 
-QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
-including Clifford unitaries, uniformly random Clifford operators and
+QuditClifford.jl is a Julia package for simulating qudit Clifford circuits. It
+provides stabilizer-tableau tools for prime-dimensional qudits, including
+Clifford unitaries, uniformly random Clifford operators and
 stabilizer states, projective Pauli measurements, expectation values,
 canonicalization, purity checks, and entanglement-entropy calculations. It
 supports qubits (`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as
