@@ -8,11 +8,30 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-12
+
+### Breaking
+
+- `==` and `hash` on tableaux compare the stabilizer state: two tableaux are
+  equal when they have the same `d`, `n` and `storephase` and their generators
+  span the same group with the same phases, whatever the generator basis and
+  across the two tableau types. Destabilizers and `iscanonical` are ignored,
+  and neither function modifies its arguments. Previously both fell back to
+  object identity, so code that keeps tableaux in a `Set` or uses them as
+  `Dict` keys now merges equal states, and a tableau mutated while it is a key
+  is filed under its old hash.
+
 ### Added
 
-- `reset!(tab, sites; basis=:Z)` resets qudits to the product preset's eigenstate
-  in the chosen basis without recording an outcome, leaving the rest of the
-  system mixed if it was entangled with them.
+- `reset!(tab, sites; basis=:Z)` resets individual qudits without recording an
+  outcome, alongside the existing `reset!(tab; state)` for the whole register:
+  it traces out `sites` and prepares each one in the eigenstate that
+  `state=:product` gives it for the chosen basis, leaving the rest of the
+  register mixed if it was entangled with them. `basis` is `:X`, `:Y` or `:Z`
+  for every site, or one entry per site. It supports both tableau types, every
+  prime `d` and `storephase=false`, draws no random numbers and allocates
+  nothing. Invalid or repeated sites and an invalid `basis` throw an
+  `ArgumentError` before `tab` is modified.
 - `traceout!(tab, sites)` discards qudits, leaving them maximally mixed while
   keeping `n`; supported for both tableau types, every prime `d` and
   `storephase=false`, allocation-free; invalid or repeated sites throw an
@@ -55,12 +74,6 @@ dependency bump — carries the `skip-changelog` label instead.
   `copy!(dst, src)` overwrites an existing tableau of the same kind, `d`, `n`
   and `storephase` without allocating, for branching trajectories off one
   state. Previously `copy` threw a `MethodError`.
-- `==` and `hash` on tableaux compare the stabilizer state: two tableaux are
-  equal when they have the same `d`, `n` and `storephase` and their generators
-  span the same group with the same phases, whatever the generator basis and
-  across the two tableau types. Destabilizers and `iscanonical` are ignored,
-  and neither function modifies its arguments. Previously `==` fell back to
-  object identity.
 
 ### Documentation
 
