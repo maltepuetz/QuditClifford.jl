@@ -19,6 +19,7 @@ authors:
 repository-code: "https://github.com/maltepuetz/QuditClifford.jl"
 url: "https://maltepuetz.github.io/QuditClifford.jl/"
 license: MIT
+doi: 10.5281/zenodo.24170577
 keywords:
   - Julia
   - qudits
