@@ -1,14 +1,15 @@
 # Light/dark display of the CairoMakie figures in the docs, included by make.jl. The figure
 # style itself is in makie_theme.jl. Every Figure that an @example block returns is rendered
-# twice, with a transparent figure background: once as it is, for the light theme, and once
-# restyled for the dark theme (see `_dark_png`).
+# twice as SVG, with a transparent figure background: once as it is, for the light theme, and
+# once restyled for the dark theme (see `_dark_svg`). SVG keeps lines and text sharp at any
+# zoom level and pixel density, where a PNG of fixed resolution turns blurry.
 #
-# The two PNGs are written next to the page as `<name>_light.png{.light-only}` and
-# `<name>_dark.png{.dark-only}` by the MIME type FIGURE_MIME below, which `display_dict` produces
+# The two SVGs are written next to the page as `<name>_light.svg{.light-only}` and
+# `<name>_dark.svg{.dark-only}` by the MIME type FIGURE_MIME below, which `display_dict` produces
 # for figures. It follows DocumenterVitepress's "image/png+lightdark", which Documenter never
-# produces itself and which leaves out the image size, so that a figure would be shown at its
-# full (2x) pixel size where the page is wide, e.g. on the home page. The CSS rule in
-# src/.vitepress/config.mts shows the image that matches the VitePress theme toggle.
+# produces itself, but carries the figure size, so that the image is shown at the size of the
+# figure in CSS pixels. The CSS rule in src/.vitepress/config.mts shows the image that matches
+# the VitePress theme toggle.
 
 using CairoMakie
 using Documenter
@@ -18,7 +19,7 @@ using CairoMakie.Makie.Colors: Colorant, Lab, RGB, hex
 # colors of the VitePress dark theme
 const DARK_TEXT = RGBf(0.875, 0.875, 0.84)       # --vp-c-text-1
 const DARK_PANEL = RGBf(0.125, 0.129, 0.153)     # --vp-c-bg-soft, background of axes and legends
-const DARK_FRAME = RGBf(0.45, 0.45, 0.47)        # spines and legend frames
+const DARK_FRAME = RGBf(0.45, 0.45, 0.47)        # spines, ticks and legend frames
 
 # The dark variant maps every color in CIELAB. Neutral colors (black, grays, white) flip their
 # lightness, so black lines turn light and white markers dark. Chromatic colors keep hue and
@@ -82,20 +83,23 @@ end
 const DARK_BLOCK_ATTRIBUTES = (
     (Axis, (:backgroundcolor => DARK_PANEL,
         (a => DARK_TEXT for a in (:titlecolor, :subtitlecolor, :xlabelcolor, :ylabelcolor,
-            :xticklabelcolor, :yticklabelcolor, :xtickcolor, :ytickcolor))...,
+            :xticklabelcolor, :yticklabelcolor))...,
         (a => DARK_FRAME for a in (:leftspinecolor, :rightspinecolor, :topspinecolor,
-            :bottomspinecolor))...)),
+            :bottomspinecolor, :xtickcolor, :ytickcolor, :xminortickcolor,
+            :yminortickcolor))...)),
     (Legend, (:backgroundcolor => DARK_PANEL, :framecolor => DARK_FRAME, :labelcolor => DARK_TEXT,
         :titlecolor => DARK_TEXT)),
-    (Colorbar, (:labelcolor => DARK_TEXT, :ticklabelcolor => DARK_TEXT, :tickcolor => DARK_TEXT,
+    (Colorbar, (:labelcolor => DARK_TEXT, :ticklabelcolor => DARK_TEXT,
         (a => DARK_FRAME for a in (:leftspinecolor, :rightspinecolor, :topspinecolor,
-            :bottomspinecolor))...)),
+            :bottomspinecolor, :tickcolor, :minortickcolor))...)),
     (Label, (:color => DARK_TEXT,)),
 )
 
-function _png(fig)
+# CairoMakie gives the SVG the figure size as its width and height, so one figure unit is one
+# CSS pixel.
+function _svg(fig)
     io = IOBuffer()
-    show(io, MIME"image/png"(), fig)
+    show(io, MIME"image/svg+xml"(), fig)
     return take!(io)
 end
 
@@ -112,7 +116,7 @@ function _restyle!(changed, x, name, value)
 end
 
 # render fig in the dark style, then restore it
-function _dark_png(fig)
+function _dark_svg(fig)
     changed = []
     try
         # colorbars that follow the colormap of a plot change with it and must not be
@@ -139,7 +143,7 @@ function _dark_png(fig)
             Makie.to_colormap(cb.colormap[]) == cmap || continue
             _restyle!(changed, cb, :colormap, _dark_colormap_input(_input(cb, :colormap)))
         end
-        return _png(fig)
+        return _svg(fig)
     finally
         for (x, name, old) in reverse(changed)
             setproperty!(x, name, old)
@@ -147,29 +151,41 @@ function _dark_png(fig)
     end
 end
 
-const FIGURE_MIME = MIME"image/png+lightdark+sized"
+const FIGURE_MIME = MIME"image/svg+lightdark+sized"
 DocumenterVitepress.mime_priority(::FIGURE_MIME) = 7.5
 
-function DocumenterVitepress.render_mime(io::IO, ::FIGURE_MIME, node, (light, dark), page, doc;
-    md_output_path, kwargs...)
+function DocumenterVitepress.render_mime(io::IO, ::FIGURE_MIME, node, (light, dark, (width, height)),
+    page, doc; md_output_path, kwargs...)
     name = String(rand('a':'z', 7))
     dir = joinpath(doc.user.build, md_output_path, dirname(relpath(page.build, doc.user.build)))
-    # the size in CSS pixels, from the resolution stored in the PNG (Makie renders at 2x)
-    size = DocumenterVitepress.png_image_metadata(light)
-    for (variant, png) in (("light", light), ("dark", dark))
-        write(joinpath(dir, "$(name)_$(variant).png"), png)
-        println(io, "![]($(name)_$(variant).png){.$(variant)-only width=$(size.width)px ",
-            "height=$(size.height)px}")
+    for (variant, svg) in (("light", light), ("dark", dark))
+        write(joinpath(dir, "$(name)_$(variant).svg"), svg)
+        println(io, "![]($(name)_$(variant).svg){.$(variant)-only width=$(width)px ",
+            "height=$(height)px}")
     end
 end
+
+# Errorbars and rangebars draw their caps as scatter markers, which take the stroke of the
+# Scatter theme in makie_theme.jl. A cap belongs to its bar, so it is drawn without one.
+_caps(fig) = [cap for block in fig.content if block isa Axis
+              for plot in block.scene.plots if plot isa Union{Errorbars,Rangebars}
+              for cap in plot.plots if cap isa Scatter]
 
 function Documenter.display_dict(fig::Figure; context=nothing)
     background = fig.scene.backgroundcolor[]
     fig.scene.backgroundcolor[] = RGBAf(0, 0, 0, 0)
+    changed = []
     light, dark = try
-        _png(fig), _dark_png(fig)
+        for cap in _caps(fig)
+            _restyle!(changed, cap, :strokewidth, 0)
+        end
+        _svg(fig), _dark_svg(fig)
     finally
+        for (x, name, old) in reverse(changed)
+            setproperty!(x, name, old)
+        end
         fig.scene.backgroundcolor[] = background
     end
-    return Dict{MIME,Any}(FIGURE_MIME() => (light, dark))
+    width, height = round.(Int, size(fig.scene))
+    return Dict{MIME,Any}(FIGURE_MIME() => (light, dark, (width, height)))
 end

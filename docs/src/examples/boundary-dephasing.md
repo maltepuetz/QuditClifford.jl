@@ -137,7 +137,7 @@ panels = [
         title=row == 1 ? titles[column] : "",
         xlabel=row == 2 ? L"chain length $L$" : "",
         ylabel=column == 1 ? (
-            row == 1 ? L"negativity $\langle E\rangle$ [$\log d$]" :
+            row == 1 ? L"negativity $\langle \mathcal{E}\rangle$ [$\log d$]" :
             L"mutual information $\langle I\rangle$ [$\log d$]"
         ) : "",
         xticks=chain_lengths,
@@ -148,7 +148,7 @@ linkyaxes!(panels[2, :]...)
 
 for (column, d) in enumerate(dimensions), (index, p) in enumerate(probabilities)
     averages = results[(d, p)]
-    # Row 1 plots the negativity (E, ΔE), row 2 the mutual information (I, ΔI).
+    # Row 1 plots the negativity (ℰ, Δℰ), row 2 the mutual information (I, ΔI).
     for (row, (value, error)) in enumerate(((1, 2), (3, 4)))
         means = getindex.(averages, value)
         errors = getindex.(averages, error)
@@ -226,7 +226,7 @@ panels = [
         title=row == 1 ? titles[column] : "",
         xlabel=row == 2 ? L"measurement probability $p$" : "",
         ylabel=column == 1 ? (
-            row == 1 ? L"negativity $\langle E\rangle$ [$\log d$]" :
+            row == 1 ? L"negativity $\langle \mathcal{E}\rangle$ [$\log d$]" :
             L"mutual information $\langle I\rangle$ [$\log d$]"
         ) : "",
     ) for row in 1:2, column in 1:2
@@ -257,7 +257,7 @@ curves keep growing with `L` up to `p = 0.3` and meet between `p = 0.325` and
 `0.35`, so the qutrit transition sits at roughly twice the qubit measurement
 rate. The mutual information follows the negativity at about twice its value.
 
-At `p = 0.1` the paper fits ``E = c_1 L^{1/3} + c_2``. A weighted
+At `p = 0.1` the paper fits ``\mathcal{E} = c_1 L^{1/3} + c_2``. A weighted
 least-squares fit of the stored averages gives:
 
 ```@example boundary_dephasing
@@ -294,7 +294,7 @@ for (column, d) in enumerate(dimensions)
         figure[1, column];
         title=titles[column],
         xlabel=L"L^{1/3}",
-        ylabel=column == 1 ? L"negativity $\langle E\rangle$ [$\log d$]" : "",
+        ylabel=column == 1 ? L"negativity $\langle \mathcal{E}\rangle$ [$\log d$]" : "",
     )
     x = collect(paper_lengths) .^ (1 / 3)
     averages = [stored[d][(L, 0.1)] for L in paper_lengths]
