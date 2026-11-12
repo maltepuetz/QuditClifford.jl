@@ -661,6 +661,23 @@ end
     @test_throws ArgumentError A ∘ CliffordOperator(Fourier(2), 3)
     @test_throws ArgumentError CliffordOperator(SUM(1, 2, 1), 3) ∘
                                CliffordOperator(SUM(2, 1, 1), 3)
+    # A named gate operand throws instead of building a ComposedFunction.
+    for d in (2, 3)
+        U = CliffordOperator(Fourier(1), d)
+        @test_throws ArgumentError U ∘ Phase(1)
+        @test_throws ArgumentError Phase(1) ∘ U
+        @test_throws ArgumentError Fourier(1) ∘ Phase(2)
+        @test_throws ArgumentError U ∘ U ∘ Phase(1)
+        @test_throws ArgumentError Phase(1) ∘ U ∘ U
+        err = try
+            U ∘ SWAP(1, 2)
+        catch e
+            e
+        end
+        @test occursin("CliffordOperator and SWAP", err.msg)
+        @test occursin("CliffordOperator(gate, d)", err.msg)
+        @test U ∘ CliffordOperator(Phase(1), d) isa CliffordOperator
+    end
     # Qubit composition: Phase ∘ Fourier has raw phases (0, 1), and its inverse
     # has (1, 0).
     PF = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)

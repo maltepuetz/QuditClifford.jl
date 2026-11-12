@@ -478,6 +478,10 @@ Both operands, including their scratch, are left untouched, so `U ∘ U` and
 nested composition need no aliasing special case. `U ∘ V ∘ W` is left-associative
 and stays a `CliffordOperator`.
 
+Both operands must be stored operators. Composing a named gate, with another
+named gate or with a `CliffordOperator`, throws an `ArgumentError`; materialize
+it first with `CliffordOperator(g, d)`.
+
 # Examples
 ```julia
 U = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
@@ -515,4 +519,16 @@ function Base.:∘(U::CliffordOperator, V::CliffordOperator)
     D = _image_xdotz_dense(FUV, k, d, U.fast)
     return _owned_clifford_operator(d, copy(U.targets), FUV, aUV, D, U.inv2,
                                     U.fast, v, vout, zpref)
+end
+
+# Without this method Base's untyped `∘(f, g)` would wrap a named gate in a
+# `ComposedFunction`, and the mistake would surface only later, as a
+# `MethodError` from `apply!`. A named gate has no dimension, so composing it
+# needs an explicit `CliffordOperator(g, d)`. `CliffordOperator ∘
+# CliffordOperator` is more specific and takes precedence.
+function Base.:∘(g::AbstractClifford, h::AbstractClifford)
+    throw(ArgumentError(
+        "∘ composes two CliffordOperators, got $(nameof(typeof(g))) and " *
+        "$(nameof(typeof(h))). Materialize a named gate at dimension d with " *
+        "CliffordOperator(gate, d) first."))
 end

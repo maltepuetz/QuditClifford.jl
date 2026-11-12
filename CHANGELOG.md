@@ -44,6 +44,13 @@ dependency bump — carries the `skip-changelog` label instead.
 - The measurement-only Ising, purification and boundary-dephasing examples and
   the monitored-circuit manual example pass their seeded RNG to `measure!`.
 
+### Fixed
+
+- `∘` with a named gate as an operand, as in `U ∘ Phase(1)` or
+  `Fourier(1) ∘ Phase(2)`, throws an `ArgumentError` that points to
+  `CliffordOperator(g, d)`. It used to return a Base `ComposedFunction`, which
+  `apply!` rejected only later with a `MethodError`.
+
 ## 0.4.0 - 2026-11-12
 
 ### Breaking
