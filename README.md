@@ -127,9 +127,9 @@ before constructing raw tableaux or interpreting phase exponents.
 - [Issue tracker](https://github.com/maltepuetz/QuditClifford.jl/issues)
 - [Changelog](CHANGELOG.md)
 
-When using QuditClifford in research, cite the repository or archived release
-and include the package version used. Formal paper or DOI metadata is not yet
-available.
+When using QuditClifford in research, cite it with the metadata in
+[`CITATION.cff`](CITATION.cff) (GitHub's "Cite this repository" button exports
+it as BibTeX or APA) and include the package version used.
 
 QuditClifford is maintained by Malte Pütz and distributed under the
 [MIT License](LICENSE).
