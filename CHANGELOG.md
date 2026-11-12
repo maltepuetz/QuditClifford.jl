@@ -12,7 +12,8 @@ dependency bump — carries the `skip-changelog` label instead.
 
 - The README shows a Zenodo DOI badge and gives the concept DOI
   `10.5281/zenodo.24170577`, which resolves to the latest archived release;
-  each release also has its own version DOI.
+  each release also has its own version DOI. `CITATION.cff` carries the same
+  concept DOI, so GitHub's "Cite this repository" entry includes it.
 
 ## 0.4.0 - 2026-11-12
 
