@@ -322,22 +322,26 @@ end
 end
 
 """
-    measure!(tab::AbstractTableau, op;
-        outcome::Int=rand(0:tab.d-1),
+    measure!([rng::AbstractRNG,] tab::AbstractTableau, op;
+        outcome::Union{Int,Nothing}=nothing,
         phase_policy::Int=0
     )
 
 Projectively measure a Pauli operator `op` and update `tab` in-place.
 
 # Arguments
+- `rng::AbstractRNG`: Source of the outcome when the measurement is random. The
+  form without `rng` uses `Random.default_rng()`.
 - `tab::AbstractTableau`: Tableau to update (`DestabilizerTableau` or `StabilizerTableau`).
 - `op`: Pauli operator specified as `AbstractPauli` (e.g. `SinglePauli`, `DoublePauli`,
   `TriplePauli`, `NPauli`, `GeneralPauli`), or an `AbstractVector{<:Integer}` of length
   `2n` or `2n+1` (wrapped into `GeneralPauli` internally).
 
 # Keyword Arguments
-- `outcome::Int=rand(0:tab.d-1)`: Outcome used when the measurement is non-deterministic
-  (uniform on `0:(d-1)`).
+- `outcome::Union{Int,Nothing}=nothing`: Outcome used when the measurement is random.
+  With `nothing`, it is drawn uniformly from `0:(d-1)` with `rng`, and only when the
+  measurement turns out to be random: a deterministic measurement draws nothing, so
+  it leaves `rng` untouched. An explicit `outcome` replaces the draw.
 - `phase_policy::Int=0`: How to handle non-Hermitian Paulis when `d=2`.
   - `0`: warn (default), keep phase as-is.
   - `1`: auto-fix phase to a Hermitian one, no warning.
@@ -347,13 +351,14 @@ Projectively measure a Pauli operator `op` and update `tab` in-place.
 - Integer outcome `t`.
 - For odd prime `d`, the measured eigenvalue is `ω^t` (mod `d`).
 - For `d=2`, the eigenvalue exponent is returned in deterministic cases when `storephase=true`
-  (values `0:3` for `i^t`). In non-deterministic branches, the returned value is exactly `outcome`.
+  (values `0:3` for `i^t`). In random branches, the returned value is the drawn or
+  given `outcome`.
 
 # Examples
 ```julia
 tab = DestabilizerTableau(2, 2; state=:product, basis=:Z)
 op = SinglePauli(1, 1, 0)           # X on qudit 1
-t = measure!(tab, op)               # random outcome, tableau updated
+t = measure!(Xoshiro(1), tab, op)   # random outcome from a seeded RNG, tableau updated
 
 tab = DestabilizerTableau(3, 2; state=:ghz)
 op3 = DoublePauli(1, 0, 1, 2, 0, 2) # Z1 * Z2^2
@@ -365,7 +370,12 @@ t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchang
   non-commuting generator is replaced; other non-commuting generators are adjusted
   to restore commutation.
 - If `op` commutes with all generators, the outcome is deterministic when `op` lies
-  in the stabilizer span; otherwise a new generator is appended (if `m < n`).
+  in the stabilizer span; otherwise the outcome is random and a new generator is
+  appended (if `m < n`).
+- The outcome is drawn before the tableau changes, so an exception from `rng` leaves
+  `tab` representing the same state.
+- One seeded `rng` passed to every `measure!`, [`random_clifford!`](@ref) and
+  [`random_state!`](@ref) call reproduces a whole monitored-circuit trajectory.
 - If `storephase=false`, deterministic outcomes return `0` by convention.
 - For a pure tableau (`m == n`) with `storephase=false`, a commuting `op` is settled by
   the commutation check alone and the tableau, including its generator basis, is left
@@ -375,16 +385,38 @@ t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchang
   at `O(n²m)`, while a [`DestabilizerTableau`](@ref) reads it off its dual basis. Prefer
   the latter for measurement-heavy circuits with phases.
 """
-function measure!(tab::AbstractTableau, op::AbstractVector{<:Integer};
-    outcome::Int=rand(0:tab.d-1),
+function measure!(rng::Random.AbstractRNG, tab::AbstractTableau,
+    op::AbstractVector{<:Integer};
+    outcome::Union{Int,Nothing}=nothing,
     phase_policy::Int=0,
 )
     gop = GeneralPauli(tab.n, tab.d, op)
-    return measure!(tab, gop; outcome=outcome, phase_policy=phase_policy)
+    return measure!(rng, tab, gop; outcome=outcome, phase_policy=phase_policy)
 end
 
-function measure!(tab::AbstractTableau, op::AbstractPauli;
-    outcome::Int=rand(0:tab.d-1), # outcome used if non-deterministic
+function measure!(tab::AbstractTableau, op::Union{AbstractPauli,AbstractVector{<:Integer}};
+    outcome::Union{Int,Nothing}=nothing,
+    phase_policy::Int=0,
+)
+    return measure!(Random.default_rng(), tab, op; outcome=outcome, phase_policy=phase_policy)
+end
+
+# The outcome of a random measurement branch: the caller's `outcome`, or a
+# fresh draw from `rng`.
+@inline _random_outcome(rng::Random.AbstractRNG, outcome::Union{Int,Nothing}, d::Int) =
+    outcome === nothing ? _draw(rng, d) : outcome
+
+# Phase exponent of the generator that stabilizes the post-measurement state
+# after outcome `t`, for a measured operator with reduced phase exponent `kop`.
+# If ω^{kop} P_xz |ψ'> = ω^t |ψ'> then (ω^{-t + kop} P_xz) |ψ'> = |ψ'>.
+# For d=2: (-1)^b = i^(2b), so the required stabilizer phase exponent is 2*b (mod 4).
+@inline function _measured_generator_phase(t::Int, kop::Int, d::Int)
+    d == 2 && return mod(2 * t + kop, phase_modulus(d))
+    return mod(-t + kop, d)  # phase modulus is d for odd primes
+end
+
+function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPauli;
+    outcome::Union{Int,Nothing}=nothing, # outcome used if random
     phase_policy::Int=0,
 )
     d = tab.d
@@ -396,18 +428,8 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
     kop = mod(kop, phase_modulus(d))
 
-    # phase exponent of the generator we should store so that it stabilizes the post-measurement state
-    # If P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome} P_xz) |ψ'> = |ψ'>.
-    # Thus if ω^{kop} P_xz |ψ'> = ω^outcome |ψ'> then (ω^{-outcome + kop} P_xz) |ψ'> = |ψ'>.
-    # For d=2: (-1)^b = i^(2b), so the required stabilizer phase exponent is 2*b (mod 4).
-    kgen = 0
-    if tab.storephase
-        if d == 2
-            kgen = mod(2 * outcome + kop, phase_modulus(d))
-        else
-            kgen = mod(-outcome + kop, d)  # phase modulus is d for odd primes
-        end
-    end
+    # Outcome of a random branch, drawn on reaching one.
+    t = 0
 
     comm0 = 0  # commutation with the first non-commuting generator
     pivot = 0
@@ -431,6 +453,9 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
         # Else we multiply the generator with the generator that we replaced to some power.
         # The power is chosen, such that the new generator commutes with the operator.
         if comm0 == 0 # first non-commuting generator becomes pivot
+            # The outcome is random; draw it before anything in tab changes.
+            t = _random_outcome(rng, outcome, d)
+
             # store generator i in workspace and then replace it by the operator
             @turbo for j in eachindex(tab.generator_workspace)
                 tab.generator_workspace[j] = tab.stab[j, i]
@@ -443,7 +468,7 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
             # we override the phase row so that the new generator stabilizes the post-measurement state,
             # dependent on the sampled outcome, and the phase of the input operator.
             if tab.storephase
-                tab.stab[2n+1, i] = kgen
+                tab.stab[2n+1, i] = _measured_generator_phase(t, kop, d)
             end
 
             comm0 = commutator
@@ -462,12 +487,12 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     ######################################################
     # If comm0 != 0, we were in the noncommuting branch. #
     # Measurement was random, tableau has been updated,  #
-    # and `outcome` is the returned measurement result.  #
+    # and `t` is the returned measurement result.        #
     ######################################################
     if comm0 != 0
         _after_noncommuting_measurement!(tab, pivot, comm0, m)
         tab.iscanonical = false
-        return outcome
+        return t
     end
 
     # A pure state's n independent generators span a Lagrangian subspace (d
@@ -500,15 +525,16 @@ function measure!(tab::AbstractTableau, op::AbstractPauli;
     end
     # commuting but not in span: random outcome, append a generator
     (m < n) || throw(ArgumentError("Cannot append generator: tableau at full capacity (m==n)."))
+    t = _random_outcome(rng, outcome, d)
 
     newcol = m + 1
     tab.m = newcol
     set_operator!(tab, newcol, op)
     if tab.storephase
-        tab.stab[2n+1, newcol] = kgen
+        tab.stab[2n+1, newcol] = _measured_generator_phase(t, kop, d)
     end
     _after_append_measurement!(tab, newcol, res)
 
     tab.iscanonical = false
-    return outcome
+    return t
 end

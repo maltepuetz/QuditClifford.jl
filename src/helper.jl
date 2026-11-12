@@ -1,6 +1,11 @@
 ##### some helper functions used in multiple files #####
 
 
+# The one source of random residues for `measure!`, `random_clifford!` and
+# `random_state!`: a uniform draw from `0:(d - 1)`. Tests overload it for
+# AbstractRNG subtypes of their own to script, count or interrupt the stream.
+@inline _draw(rng::Random.AbstractRNG, d::Int) = rand(rng, 0:(d - 1))
+
 #################################
 # Phase-aware generator algebra #
 #################################

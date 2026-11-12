@@ -13,10 +13,8 @@
 # The pairing is the package's <u, v> = x(u)·z(v) − z(u)·x(v), so X images fill
 # columns 1:k and Z images columns k+1:2k, as in a stored operator's `F`.
 #
-# Every random residue comes from `_draw`, so tests can script, count or
-# interrupt the stream with AbstractRNG subtypes of their own.
-
-@inline _draw(rng::Random.AbstractRNG, d::Int) = rand(rng, 0:(d - 1))
+# Every random residue comes from `_draw` (helper.jl), so tests can script,
+# count or interrupt the stream with AbstractRNG subtypes of their own.
 
 # Local index j of the current basis at step i, with r = k - i + 1: the first r
 # locals are X-half columns i:k, the rest Z-half columns k+i:2k.

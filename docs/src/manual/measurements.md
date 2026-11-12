@@ -50,6 +50,13 @@ nondeterministic qubit measurement, outcome `0` selects eigenvalue `+1` and
 outcome `1` selects eigenvalue `-1`. See [`measure!`](@ref) for deterministic
 outcomes and `phase_policy`.
 
+Without `outcome`, a random branch draws its outcome uniformly from
+`0:(d - 1)`, by default from the global RNG. Pass an RNG first, as in
+`measure!(rng, state, x1)`, to draw from it instead: one seeded RNG shared by
+every measurement and every [`random_clifford!`](@ref) call reproduces a whole
+monitored-circuit trajectory. Only the random branches draw, so a deterministic
+measurement leaves the RNG untouched.
+
 ## Forgetting outcomes, discarding and resetting
 
 [`measure!`](@ref) records an outcome: the tableau follows one pure trajectory.
