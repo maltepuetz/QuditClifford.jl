@@ -1,11 +1,12 @@
 // VENDORED from DocumenterVitepress (template/src/.vitepress/config.mts).
 //
 // DocumenterVitepress substitutes its own copy only when this file is absent, so
-// this copy is frozen at the version it was taken from. There are three local
+// this copy is frozen at the version it was taken from. There are four local
 // changes, all marked below: the favicon links (DocumenterVitepress emits a
 // single hardcoded favicon.ico link and offers no hook for a second, so it
-// cannot follow the reader's light/dark browser theme), the navbar logo, and the
-// style rule that switches the light and dark figures (docs/figure_theme.jl).
+// cannot follow the reader's light/dark browser theme), the navbar logo, the
+// style rule that switches the light and dark figures (docs/figure_theme.jl),
+// and the sitemap.
 //
 // On a DocumenterVitepress upgrade: diff this against the new template and
 // re-apply that one line. Every placeholder token in this file must stay intact
@@ -49,6 +50,15 @@ export default defineConfig({
   lastUpdated: true,
   cleanUrls: true,
   outDir: 'REPLACE_ME_DOCUMENTER_VITEPRESS', // This is required for MarkdownVitepress to work correctly...
+  // LOCAL CHANGE: emit sitemap.xml for search engines. Page URLs are resolved
+  // against this hostname, so it carries the full stable prefix (with trailing
+  // slash). Every build (dev, versions, previews) lists the stable URLs; those
+  // other builds are noindex anyway (DocumenterVitepress' noindex_non_stable).
+  // Submit https://maltepuetz.github.io/QuditClifford.jl/stable/sitemap.xml in
+  // Google Search Console.
+  sitemap: {
+    hostname: 'https://maltepuetz.github.io/QuditClifford.jl/stable/',
+  },
   head: [
     // Dark-mode favicon, shipped as two .ico files rather than SVG. Safari ranks
     // an .ico above an SVG icon and paints the .ico even when both are offered,

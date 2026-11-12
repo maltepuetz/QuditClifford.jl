@@ -6,8 +6,9 @@
 [![Coverage](https://codecov.io/gh/maltepuetz/QuditClifford.jl/graph/badge.svg)](https://codecov.io/gh/maltepuetz/QuditClifford.jl)
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
-QuditClifford provides stabilizer-tableau tools for prime-dimensional qudits,
-including Clifford unitaries, uniformly random Clifford operators and
+QuditClifford.jl is a Julia package for simulating qudit Clifford circuits. It
+provides stabilizer-tableau tools for prime-dimensional qudits, including
+Clifford unitaries, uniformly random Clifford operators and
 stabilizer states, projective Pauli measurements, expectation values,
 canonicalization, purity checks, and entanglement-entropy calculations. It
 supports qubits (`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as

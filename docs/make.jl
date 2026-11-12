@@ -16,6 +16,9 @@ makedocs(;
         devbranch="main",
         devurl="dev",
         deploy_url="https://maltepuetz.github.io/QuditClifford.jl",
+        # Default meta description for every page (the default is the generic
+        # "Documentation for QuditClifford.jl"); the home page sets its own.
+        description="Qudit and qubit Clifford circuit simulation in Julia with stabilizer tableaux for prime dimensions.",
     ),
     pages=[
         "Home" => "index.md",
