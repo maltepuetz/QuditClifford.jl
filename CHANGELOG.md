@@ -77,6 +77,9 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Documentation
 
+- `CITATION.cff` holds the citation metadata: title, author with ORCID and
+  affiliation, license and keywords. GitHub turns it into a "Cite this
+  repository" entry, and Zenodo reads it when archiving a release.
 - The documentation is organized into Getting Started, a Manual chapter
   (`docs/src/manual/`), an Examples chapter with one page per example
   (`docs/src/examples/`) and the API reference. Links to the old

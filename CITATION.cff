@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: >-
+  If you use QuditClifford.jl in your research, please cite it using the
+  metadata from this file, and state the version you used.
+type: software
+title: QuditClifford.jl
+abstract: >-
+  QuditClifford.jl is a Julia package for stabilizer-tableau simulation of
+  prime-dimensional qudits, for qubits and odd prime dimensions alike: pure
+  and mixed stabilizer states, Clifford unitaries, uniformly random Clifford
+  operators and stabilizer states, projective Pauli measurements, dephasing,
+  trace-out and reset channels, expectation values, and entanglement
+  measures.
+authors:
+  - family-names: Pütz
+    given-names: Malte
+    affiliation: University of Cologne
+    orcid: "https://orcid.org/0009-0009-0327-5644"
+repository-code: "https://github.com/maltepuetz/QuditClifford.jl"
+url: "https://maltepuetz.github.io/QuditClifford.jl/"
+license: MIT
+keywords:
+  - Julia
+  - qudits
+  - Clifford circuits
+  - stabilizer formalism
+  - quantum simulation
+  - quantum information
