@@ -399,14 +399,14 @@ end
 
 function _preset_tableau(d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     nrows = 2n + (storephase ? 1 : 0)
-    tab = zeros(Int, nrows, n)
+    tab = Matrix{Int}(undef, nrows, n)  # zeroed by _preset_tableau!
 
     m = _preset_tableau!(tab, d, n, state, basis_spec, storephase)
     return tab, m
 end
 
 function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
-    fill!(tab, 0)
+    _zero!(tab)
 
     if state === :mixed
         return 0

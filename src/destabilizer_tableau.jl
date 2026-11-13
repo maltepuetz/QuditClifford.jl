@@ -347,7 +347,7 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     stab = tab.stab
     destab = tab.destab
 
-    fill!(destab, 0)
+    _zero!(destab)
     m == 0 && return destab
 
     # The five matrices below are scratch for this call alone, so they are
@@ -423,7 +423,7 @@ function _preset_destabilizers!(tab::DestabilizerTableau, state::Symbol, basis_s
     destab = tab.destab
     cache = tab.xdotz_cache
 
-    fill!(destab, 0)
+    _zero!(destab)
     fill!(cache, 0)
 
     if state === :mixed

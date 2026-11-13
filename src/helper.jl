@@ -6,6 +6,16 @@
 # AbstractRNG subtypes of their own to script, count or interrupt the stream.
 @inline _draw(rng::Random.AbstractRNG, d::Int) = rand(rng, 0:(d - 1))
 
+# Zero a tableau-sized `Int` array with one `memset`. `fill!(A, 0)` compiles to
+# the same call only where the zero is a compile-time constant, which the code
+# cached in the package image does not see; its element loop is about twice as
+# slow on large matrices.
+function _zero!(A::Array{Int})
+    GC.@preserve A ccall(:memset, Ptr{Cvoid}, (Ptr{Cvoid}, Cint, Csize_t),
+                         pointer(A), 0, sizeof(A))
+    return A
+end
+
 #################################
 # Phase-aware generator algebra #
 #################################

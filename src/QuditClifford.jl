@@ -25,6 +25,7 @@ import Random, Primes
 import Random.rand!
 import LoopVectorization
 import LoopVectorization.@turbo
+import PrecompileTools
 
 
 # include the sub files
@@ -53,5 +54,6 @@ include("clifford_operator.jl")
 include("random_clifford.jl")
 include("state_expansion.jl")
 include("dense_states.jl")
+include("precompile.jl")
 
 end

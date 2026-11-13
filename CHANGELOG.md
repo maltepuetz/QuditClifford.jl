@@ -29,6 +29,14 @@ dependency bump — carries the `skip-changelog` label instead.
   `rand(rng, 0:(d - 1))` as before. The `outcome` keyword defaults to `nothing`
   in place of an eager `rand(0:tab.d-1)`; an explicit `outcome` still replaces
   the draw.
+- A precompile workload (PrecompileTools.jl, a new dependency) caches the
+  common calls for both tableau types: a fresh session's first `measure!`,
+  `apply!`, `canonicalize!`, entanglement and `random_clifford` calls no longer
+  compile, cutting about 7 s of first-use latency to a few milliseconds, at
+  about 40 ms more load time. Disable it with the `precompile_workload = false`
+  preference for `QuditClifford`, as described in PrecompileTools' docs.
+- Preset construction (`StabilizerTableau(d, n; state)`, `DestabilizerTableau`)
+  zeroes the tableau once instead of twice: about 25–38 % faster at `n = 256`.
 
 ### Documentation
 
