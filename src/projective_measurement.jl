@@ -419,6 +419,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     outcome::Union{Int,Nothing}=nothing, # outcome used if random
     phase_policy::Int=0,
 )
+    _check_pauli_support(tab, op)
     d = tab.d
     n = tab.n
     m = tab.m

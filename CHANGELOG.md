@@ -50,6 +50,14 @@ dependency bump — carries the `skip-changelog` label instead.
   `Fourier(1) ∘ Phase(2)`, throws an `ArgumentError` that points to
   `CliffordOperator(g, d)`. It used to return a Base `ComposedFunction`, which
   `apply!` rejected only later with a `MethodError`.
+- `measure!`, `expect!` and `expect_int!` validate their Pauli operand and throw
+  an `ArgumentError` before changing the tableau, as `dephase!` and
+  `conjugate` do. A sparse Pauli with a qudit index outside `1:n` used to
+  throw a `BoundsError`, read out of bounds, or (index `n + 1` with
+  `storephase=true`) silently measure a different operator and corrupt the
+  tableau. A repeated qudit index, as in `DoublePauli(1, 0, 1, 1, 0, 1)`, gave
+  a wrong result, and a `GeneralPauli` whose length is not `2n` was truncated
+  or read out of bounds. `dephase!` also rejects repeated qudit indices now.
 
 ## 0.4.0 - 2026-11-12
 

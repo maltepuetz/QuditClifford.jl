@@ -333,6 +333,41 @@ the vector dst to the given operator `op`.
 """
 function set_operator! end
 
+#############################################
+# Operand validation                        #
+#############################################
+
+# Throw an `ArgumentError` unless `op` is a Pauli on a register of `n` qudits:
+# every qudit index in `1:n` and none repeated, or a dense vector of length `2n`.
+# Callers run it before touching any state, since the kernels index under
+# `@turbo`/`@inbounds` and a sparse index of `n + 1` lands in the Z block or
+# phase row without tripping a bounds check. O(k²) for a k-qudit sparse Pauli,
+# O(1) for a dense one, and allocation-free.
+function _check_pauli_support(op::FewQuditPauli, n::Int)
+    qudits = _few_qudit_pauli_data(op)[1]
+    @inbounds for i in eachindex(qudits)
+        q = qudits[i]
+        1 <= q <= n || throw(ArgumentError(
+            "Pauli acts on qudit $q, outside the register of n = $n qudits."))
+        for r in 1:(i - 1)
+            qudits[r] == q && throw(ArgumentError(
+                "Pauli acts on qudit $q more than once; repeated qudit indices are not supported."))
+        end
+    end
+    return nothing
+end
+
+function _check_pauli_support(op::GeneralPauli, n::Int)
+    len = length(op.xz)
+    len == 2n || throw(ArgumentError(
+        "Pauli vector has length $len, expected 2n = $(2n)."))
+    return nothing
+end
+
+_check_pauli_support(::AbstractPauli, ::Int) = nothing
+
+_check_pauli_support(tab::AbstractTableau, op::AbstractPauli) = _check_pauli_support(op, tab.n)
+
 ######################################
 # copy into arbitrary AbstractVector #
 ######################################
@@ -420,6 +455,7 @@ end
     d = tab.d
     len = length(dst)
     @assert (len == 2n || len == 2n + 1)
+    _check_pauli_support(op, n)
 
     @turbo for j in eachindex(dst)
         dst[j] = 0
@@ -439,7 +475,8 @@ end
     len = length(dst)
     len_op = length(op)
     @assert (len == 2n || len == 2n + 1)
-    @assert (len_op == 2n || len_op == 2n + 1)
+    len_op == 2n || len_op == 2n + 1 || throw(ArgumentError(
+        "Pauli vector has length $len_op, expected 2n = $(2n) or 2n + 1 = $(2n + 1)."))
     
     @turbo for j in 1:2n
         dst[j] = mod(op[j], d)
@@ -521,7 +558,8 @@ end
     n = tab.n
     d = tab.d
     len_op = length(op)
-    @assert length(op) == 2n || length(op) == 2n + 1
+    len_op == 2n || len_op == 2n + 1 || throw(ArgumentError(
+        "Pauli vector has length $len_op, expected 2n = $(2n) or 2n + 1 = $(2n + 1)."))
 
     stab = tab.stab
     @turbo for j in 1:2n
@@ -539,7 +577,7 @@ end
     n = tab.n
     d = tab.d
     stab = tab.stab
-    @assert length(op.xz) == 2n
+    _check_pauli_support(op, n)
 
     @turbo for j in 1:2n
         stab[j, i] = mod(op.xz[j], d)

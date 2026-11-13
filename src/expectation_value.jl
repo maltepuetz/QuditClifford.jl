@@ -26,6 +26,7 @@ span exactly when it commutes with every generator. The generator basis and
 This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a dense Pauli.
 """
 function expect_int!(tab::AbstractTableau, op::AbstractPauli)
+    _check_pauli_support(tab, op)
     d = tab.d
     kP = op.phase
 
