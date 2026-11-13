@@ -95,3 +95,40 @@ jobs:
           # makes the two columns less comparable, and costs several minutes.
           # The suite sets its own per-leaf budget instead.
           tune: 'false'
+
+  workloads:
+    # The suite's own invariants. `@benchmarkable` bodies are quoted, so the
+    # A/B job above can pass while a leaf times a different branch than its
+    # name says; test_workloads.jl asserts the branch, tier and state of each
+    # leaf, and the one-sample pass executes every smoke-profile body once.
+    name: suite self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      # Julia >= 1.11 takes QuditClifford from benchmark/Project.toml's
+      # [sources], i.e. this checkout. Fail if it resolved anything else.
+      - name: Instantiate the benchmark environment
+        run: |
+          julia --project=benchmark -e '
+            using Pkg; Pkg.instantiate()
+            using QuditClifford
+            root = realpath(dirname(dirname(pathof(QuditClifford))))
+            root == realpath(pwd()) || error("QuditClifford resolved to $root, not this checkout")'
+      - name: Workload invariants
+        run: julia --project=benchmark benchmark/test_workloads.jl
+      - name: One sample of every smoke-profile leaf
+        env:
+          QC_BENCH_PROFILE: smoke
+        run: |
+          julia --project=benchmark -e '
+            include("benchmark/benchmarks.jl"); using BenchmarkTools
+            warmup(SUITE; verbose = false)
+            println(length(BenchmarkTools.leaves(SUITE)), " leaves ran once")'

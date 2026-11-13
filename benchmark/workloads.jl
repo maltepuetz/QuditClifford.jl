@@ -11,6 +11,16 @@ using QuditClifford
 using BenchmarkTools
 using Random
 
+"""
+Evaluations per sample for leaves whose body neither mutates the tableau nor
+depends on how often it ran: `expect!`, construction, the `CliffordOperator`
+algebra and the samplers. With `evals = 1` the cheapest of them sit below 1 us
+and come out quantized to the ~42 ns timer tick; 100 evaluations put every one
+of them well above it. A leaf whose body mutates the state it measures keeps
+`evals = 1` and a snapshot restore instead.
+"""
+const READONLY_EVALS = 100
+
 """Total bytes held by a tableau and all its workspaces."""
 tableau_bytes(tab) = Base.summarysize(tab)
 
@@ -182,15 +192,16 @@ explicit instead of an artefact of sample ordering.
 
 Note this is the *cheap* in-span query: on a freshly built `:product` state a
 weight-1 Pauli decomposes into a single generator, so almost nothing
-accumulates. On a `DestabilizerTableau` at n = 256 this is 3.5 us, against
-13 us for the same operator on a mid-circuit state and 37 us for a dense
-in-span operator there. `midcircuit_group` covers both.
+accumulates. On a `DestabilizerTableau` at n = 256 and d = 3 this is 1.5 us,
+against 2.0 us for the same operator on a mid-circuit state and 39 us for a
+dense in-span operator there. `midcircuit_group` covers both, and `dense_group`
+a product of n/2 generators on a volume-law state.
 """
 function bench_expect(mk, op; state = :product)
     tab = mk(state)
     canonicalize!(tab)
     expect!(tab, op)          # warm the workspaces
-    return @benchmarkable expect!($tab, $op)
+    return @benchmarkable expect!($tab, $op) evals = READONLY_EVALS
 end
 
 # entanglement_entropy, is_pure and reset! share one tableau each: the first two
@@ -254,7 +265,7 @@ end
 
 function bench_reset(mk)
     tab = mk(:product)
-    return @benchmarkable reset!($tab; state = :product) evals = 1
+    return @benchmarkable reset!($tab; state = :product) evals = READONLY_EVALS
 end
 
 """
@@ -480,10 +491,11 @@ function stored_clifford_construct_group(d::Int; ks = (1, 2, 8))
     for k in unique(collect(ks))
         fixture = stored_clifford_fixture(d, k)
         t, F, a = fixture.targets, fixture.F, fixture.a
-        group["k=$k/checked"] =
-            @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a)
-        group["k=$k/unchecked"] =
-            @benchmarkable QuditClifford.CliffordOperator($d, $t, $F, $a; check = false)
+        group["k=$k/checked"] = @benchmarkable(
+            QuditClifford.CliffordOperator($d, $t, $F, $a), evals = READONLY_EVALS)
+        group["k=$k/unchecked"] = @benchmarkable(
+            QuditClifford.CliffordOperator($d, $t, $F, $a; check = false),
+            evals = READONLY_EVALS)
     end
     return group
 end
@@ -505,8 +517,9 @@ registered once per `d` by `register_clifford_group!` rather than once per
   basis generator. `test_workloads.jl`
   checks it against sequential named conjugation through `fixture.gates`.
 - `"inv/k=\$k"` and `"compose/k=\$k"` (`U ∘ U`) are allocating calls that leave
-  `U` and its scratch untouched, so neither needs `evals = 1` or a snapshot
-  restore.
+  `U` and its scratch untouched, so neither needs a snapshot restore.
+
+All three run `READONLY_EVALS` evaluations per sample.
 """
 function stored_clifford_algebra_group(d::Int; ks = (1, 2, 8), seed::Int = 20260910)
     group = BenchmarkGroup()
@@ -518,9 +531,10 @@ function stored_clifford_algebra_group(d::Int; ks = (1, 2, 8), seed::Int = 20260
         xz = [rand(rng, 0:(d - 1)) for _ in 1:S]
         phase = rand(rng, 0:(QuditClifford.phase_modulus(d) - 1))
         op = QuditClifford.GeneralPauli(xz, phase)
-        group["conjugate/k=$k"] = @benchmarkable QuditClifford.conjugate($U, $op)
-        group["inv/k=$k"] = @benchmarkable inv($U)
-        group["compose/k=$k"] = @benchmarkable $U ∘ $U
+        group["conjugate/k=$k"] =
+            @benchmarkable QuditClifford.conjugate($U, $op) evals = READONLY_EVALS
+        group["inv/k=$k"] = @benchmarkable inv($U) evals = READONLY_EVALS
+        group["compose/k=$k"] = @benchmarkable $U ∘ $U evals = READONLY_EVALS
     end
     return group
 end
@@ -641,8 +655,8 @@ function micro_group(; d::Int, n::Int, T,
     # Z on both spread sites is a product of two stabilizers: the state is
     # unchanged and the cost is the
     # span decomposition. On a StabilizerTableau that includes a canonicalize
-    # (225 us here vs 4.3 us on a Destabilizer), but only the collapsed O(n*m)
-    # one -- a :product tableau is already in RCEF. The full canonicalize is
+    # (134 us here vs 2.4 us on a Destabilizer at d = 3), but only the
+    # collapsed O(n*m) one -- a :product tableau is already in RCEF. The full canonicalize is
     # measured by the canonicalize! leaf, and the mid-circuit cost by
     # midcircuit_group.
     g["measure!/deterministic"] = bench_measure(mk, :product, spread_z(n))
@@ -665,9 +679,9 @@ end
 # is not the regime a user is usually in: by the time they call expect! or
 # entanglement_entropy the state has been through a circuit. The difference is
 # not small. On a DestabilizerTableau at n = 256, against the fresh-state leaf:
-# measure!/deterministic 4.3 us -> 72 us, expect! 3.5 us -> 13 us, and
-# canonicalize! 49 ms -> 2.1 ms (the mid-circuit tableau is nearly canonical
-# already, so this one goes the other way).
+# measure!/deterministic 2.4 us -> 77 us at d = 3, and canonicalize!
+# 8.4 ms -> 0.49 ms (the mid-circuit tableau is nearly canonical already, so
+# this one goes the other way).
 
 """
     scrambled_state(T, d, n; layers = 4, seed)
@@ -744,10 +758,10 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
         canonicalize!(ro)
         loc = spread_z(n)
         expect!(ro, loc)
-        g["expect!/local"] = @benchmarkable expect!($ro, $loc)
+        g["expect!/local"] = @benchmarkable expect!($ro, $loc) evals = READONLY_EVALS
         dense = in_span_operator(ro)
         expect!(ro, dense)
-        g["expect!/in_span"] = @benchmarkable expect!($ro, $dense)
+        g["expect!/in_span"] = @benchmarkable expect!($ro, $dense) evals = READONLY_EVALS
     end
 
     # entanglement_entropy gets its OWN tableau, deliberately NOT canonicalized.
@@ -770,6 +784,329 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     end
 
     return g
+end
+
+# ------------------------------------------------------- dense states
+#
+# The spine starts from constructors, whose tableaux hold only 0, 1 and d-1,
+# and the mid-circuit state is scrambled by local measurements only. A uniformly
+# random stabilizer state is volume-law: most entries are general residues, a
+# local operator anticommutes with most generators, and an in-span operator
+# decomposes into many of them. These leaves time that regime.
+
+"""Seed of every [`dense_state`](@ref) fixture."""
+const DENSE_SEED = 20261113
+
+"""
+    dense_state(T, d, n; m = n, seed = DENSE_SEED)
+
+A uniformly random stabilizer state with `m` generators, drawn by
+`random_state!` from a seeded RNG. Both tableau types hold the identical state:
+the `DestabilizerTableau` is drawn, and the `StabilizerTableau` is built from
+its generator matrix, so a `StabilizerTableau` and a `DestabilizerTableau` row
+of the same `(d, n, m)` time the same physics.
+
+`random_state!` leaves the generators in a non-canonical basis, which is what
+the `canonicalize!` leaves need.
+"""
+function dense_state(T, d::Int, n::Int; m::Int = n, seed::Int = DENSE_SEED)
+    D = DestabilizerTableau(d, n)
+    random_state!(Random.Xoshiro(seed + 7919 * d + n), D; m)
+    T === DestabilizerTableau && return D
+    return StabilizerTableau(d, D.stab[:, 1:m]; m)
+end
+
+"""
+    span_product(tab; k = cld(tab.m, 2), seed = DENSE_SEED)
+
+A product of `k` distinct generators of `tab`, each raised to a seeded power in
+`1:d-1`, as a dense `GeneralPauli`. It lies in the stabilizer group, so
+`measure!` takes the deterministic branch and `expect!` returns a phase, and
+its decomposition has exactly `k` nonzero coefficients -- against the one or
+two a weight-2 operator has on a `:product` state.
+"""
+function span_product(tab; k::Int = cld(tab.m, 2), seed::Int = DENSE_SEED)
+    rng = Random.Xoshiro(seed)
+    n, d = tab.n, tab.d
+    xz = zeros(Int, 2n)
+    for j in Random.randperm(rng, tab.m)[1:k]
+        c = rand(rng, 1:(d - 1))
+        @views xz .= mod.(xz .+ c .* tab.stab[1:(2n), j], d)
+    end
+    return GeneralPauli(xz, 0)
+end
+
+"""
+    commuting_out_of_span(D::DestabilizerTableau; seed = DENSE_SEED)
+
+A dense Pauli that commutes with every generator of the mixed state `D` but is
+not in its stabilizer group, so `measure!` takes the append branch and raises
+`m` by one. A seeded random Pauli `v` is projected onto the commutant with the
+dual basis: `w = v - sum_j (<s_j, v> / <s_j, t_j>) t_j` over the generators
+`s_j` and their destabilizers `t_j`. With `m < n` the commutant is strictly
+larger than the span, and `test_workloads.jl` asserts this draw lands outside
+it.
+"""
+function commuting_out_of_span(D::DestabilizerTableau; seed::Int = DENSE_SEED)
+    n, d, m = D.n, D.d, D.m
+    rng = Random.Xoshiro(seed)
+    w = rand(rng, 0:(d - 1), 2n)
+    for j in 1:m
+        t = D.destab[1:(2n), j]
+        c = mod(QuditClifford.commutation_col(D.stab, j, GeneralPauli(w, 0)), d)
+        λ = mod(QuditClifford.commutation_col(D.stab, j, GeneralPauli(t, 0)), d)
+        w .= mod.(w .- c * invmod(λ, d) .* t, d)
+    end
+    return GeneralPauli(w, 0)
+end
+
+"""
+    bench_measure_on(tab, op)
+
+`measure!(tab, op)` on an already-built tableau, restored from a snapshot
+before every sample. [`bench_measure`](@ref) is this applied to a fresh
+constructor state.
+"""
+function bench_measure_on(tab, op)
+    snap = snapshot(tab)
+    return @benchmarkable(measure!($tab, $op; outcome = 0, phase_policy = 2),
+                          setup = (restore!($snap)), evals = 1)
+end
+
+"""
+    bench_expect_on(tab, op)
+
+`expect!` on a canonicalized copy of `tab`, as in [`bench_expect`](@ref).
+"""
+function bench_expect_on(tab, op)
+    ro = copy(tab)
+    canonicalize!(ro)
+    expect!(ro, op)
+    return @benchmarkable expect!($ro, $op) evals = READONLY_EVALS
+end
+
+"""
+    dense_group(; d, n, T)
+
+The state-sensitive operations on [`dense_state`](@ref) fixtures:
+
+- `measure!/noncommuting`: `spread_x` on the pure state, which anticommutes with
+  most generators, so the update rewrites most columns.
+- `measure!/deterministic`: a [`span_product`](@ref) of `n/2` generators on the
+  pure state.
+- `measure!/append`: a [`commuting_out_of_span`](@ref) Pauli on the state with
+  `m = n/2`, so the dual-basis loop of the append branch runs over `n/2`
+  generators rather than none.
+- `expect!`: the same `span_product`, on a canonicalized copy.
+- `canonicalize!` of the pure state.
+
+`test_workloads.jl` asserts the branch and `m` of each measurement leaf.
+"""
+function dense_group(; d::Int, n::Int, T)
+    pure = dense_state(T, d, n)
+    mixed = dense_state(T, d, n; m = n ÷ 2)
+    inspan = span_product(pure)
+    g = BenchmarkGroup()
+    g["measure!/noncommuting"] = bench_measure_on(pure, first_anticommuting(pure, [spread_x(n)]))
+    g["measure!/deterministic"] = bench_measure_on(pure, inspan)
+    g["measure!/append"] = bench_measure_on(mixed,
+        commuting_out_of_span(dense_state(DestabilizerTableau, d, n; m = n ÷ 2)))
+    g["expect!"] = bench_expect_on(pure, inspan)
+    g["canonicalize!"] = bench_canonicalize_state(pure)
+    return g
+end
+
+# ------------------------------------------------------- modulus breadth
+
+"""
+The primes behind the `modulus` group, one per arithmetic tier of
+`src/modular.jl` that a general multiplier can take above `d = 5`:
+
+- `131` is rejected by the Barrett guard: the divide-twice fallback.
+- `443` is accepted although it is larger: the Barrett tier at a mid-size prime.
+- `1031` is above the guard's table: the fallback through the out-of-table path.
+
+`test_workloads.jl` counts the tier every leaf of the group reaches.
+"""
+const MODULUS_PRIMES = (131, 443, 1031)
+
+"""
+    modulus_group(; d, n, T)
+
+`measure!` (both branches), `expect!`, `entropy/half` and `canonicalize!` on a
+pure [`dense_state`](@ref) at dimension `d`. The dense state is what makes the
+modulus matter: its multipliers are general residues, where a constructor
+state's are `1` or `d-1` and take the multiply-free tiers at every prime.
+"""
+function modulus_group(; d::Int, n::Int, T)
+    tab = dense_state(T, d, n)
+    inspan = span_product(tab)
+    g = BenchmarkGroup()
+    g["measure!/noncommuting"] = bench_measure_on(tab, first_anticommuting(tab, [spread_x(n)]))
+    g["measure!/deterministic"] = bench_measure_on(tab, inspan)
+    g["expect!"] = bench_expect_on(tab, inspan)
+    let ro = copy(tab), sub = collect(1:(n ÷ 2))
+        g["entropy/half"] = @benchmarkable entanglement_entropy($ro, $sub)
+    end
+    g["canonicalize!"] = bench_canonicalize_state(tab)
+    return g
+end
+
+# ------------------------------------------------------------ channels
+
+"""
+    channel_group(; d, n, T)
+
+The non-unitary channels on a pure [`dense_state`](@ref), each restored from a
+snapshot before every sample: `dephase!` along `spread_x`, `traceout!` of one
+site and of a contiguous quarter of the chain, and the single-site `reset!`.
+"""
+function channel_group(; d::Int, n::Int, T)
+    tab = dense_state(T, d, n)
+    snap = snapshot(tab)
+    s1, _ = spread_sites(n)
+    quarter = collect(s1:(s1 + n ÷ 4 - 1))
+    op = spread_x(n)
+    g = BenchmarkGroup()
+    g["dephase!"] = @benchmarkable(dephase!($tab, $op), setup = (restore!($snap)), evals = 1)
+    g["traceout!/site"] = @benchmarkable(traceout!($tab, $s1),
+                                         setup = (restore!($snap)), evals = 1)
+    g["traceout!/quarter"] = @benchmarkable(traceout!($tab, $quarter),
+                                            setup = (restore!($snap)), evals = 1)
+    g["reset!/site"] = @benchmarkable(reset!($tab, $s1), setup = (restore!($snap)), evals = 1)
+    return g
+end
+
+"""The first three contiguous quarters of the chain, as the subsystems `A`, `B`, `C`."""
+quarters(n::Int) = (collect(1:(n ÷ 4)), collect((n ÷ 4 + 1):(n ÷ 2)),
+                    collect((n ÷ 2 + 1):(3n ÷ 4)))
+
+"""
+    information_group(; d, n, T)
+
+Mutual, tripartite and conditional mutual information and the negativity on
+adjacent quarters of a [`dense_state`](@ref), pure (`m = n`) and mixed
+(`m = n/2`). None of them changes the state, so the tableaux are shared across
+samples.
+"""
+function information_group(; d::Int, n::Int, T)
+    A, B, C = quarters(n)
+    g = BenchmarkGroup()
+    for m in (n, n ÷ 2)
+        tab = dense_state(T, d, n; m)
+        g["m=$m/mutual_information"] = @benchmarkable mutual_information($tab, $A, $B)
+        g["m=$m/tripartite_information"] =
+            @benchmarkable tripartite_information($tab, $A, $B, $C)
+        g["m=$m/conditional_mutual_information"] =
+            @benchmarkable conditional_mutual_information($tab, $A, $B, $C)
+        g["m=$m/entanglement_negativity"] =
+            @benchmarkable entanglement_negativity($tab, $A, $B)
+    end
+    return g
+end
+
+# --------------------------------------------------------------- gates
+
+"""
+    gate_group(; d, n, T)
+
+The named gates the `clifford` spine leaves out -- `Multiplier`, `PauliGate`,
+`CPhase`, `SWAP` and `SUM` with a coefficient other than `1` -- plus `Fourier`
+and `SUM` on a `storephase = false` tableau. Applied to a restored `:ghz` state
+like the spine gates. Every coefficient is `2`, so at `d >= 5` none of them is
+`1` or `d-1`.
+"""
+function gate_group(; d::Int, n::Int, T)
+    s1, s2 = spread_sites(n)
+    mk = tableau_maker(T, d, n)
+    g = BenchmarkGroup()
+    g["apply!/multiplier"] = bench_apply(mk, :ghz, Multiplier(s1, 2))
+    g["apply!/pauli"] = bench_apply(mk, :ghz, PauliGate(s1, 1, 2))
+    g["apply!/cphase"] = bench_apply(mk, :ghz, CPhase(s1, s2, 2))
+    g["apply!/swap"] = bench_apply(mk, :ghz, SWAP(s1, s2))
+    g["apply!/sum/a=2"] = bench_apply(mk, :ghz, SUM(s1, s2, 2))
+    nophase = tableau_maker(T, d, n; storephase = false)
+    g["storephase=false/apply!/fourier"] = bench_apply(nophase, :ghz, Fourier(s1))
+    g["storephase=false/apply!/sum"] = bench_apply(nophase, :ghz, SUM(s1, s2, 1))
+    return g
+end
+
+# ------------------------------------------------------ tableau utilities
+
+"""
+    tableau_group(; d, n, T)
+
+Tableau housekeeping on a dense, non-canonical [`scrambled_tableau`](@ref):
+
+- `copy` and `copy!` into a preallocated tableau.
+- `==` against a copy in the same basis (the entrywise fast path) and against
+  a canonicalized copy (the comparison canonicalizes a temporary), and `hash`.
+- The raw-matrix constructor, with and without `check`, at `n ÷ 4` qudits:
+  building a `DestabilizerTableau` from a dense generator matrix costs ~0.1 s at
+  `n = 256`, which leaves too few samples in a CI budget.
+- `measure!(rng, ...)` with the outcome drawn from the RNG, which is reseeded
+  in `setup` together with the snapshot restore. Registered only where that
+  method exists.
+
+The read-only leaves share one tableau. `measure!/rng` gets its own copy,
+because a restoring leaf leaves its last sample's state behind.
+"""
+function tableau_group(; d::Int, n::Int, T)
+    mk = tableau_maker(T, d, n)
+    tab = scrambled_tableau(mk, d, n; seed = DENSE_SEED)
+    same = copy(tab)
+    other = copy(tab)
+    canonicalize!(other)
+    dst = copy(tab)
+    nraw = max(2, n ÷ 4)
+    M = scrambled_tableau(tableau_maker(T, d, nraw), d, nraw; seed = DENSE_SEED).stab
+    g = BenchmarkGroup()
+    g["copy"] = @benchmarkable copy($tab)
+    g["copy!"] = @benchmarkable copy!($dst, $tab)
+    g["==/same-basis"] = @benchmarkable $tab == $same evals = READONLY_EVALS
+    g["==/other-basis"] = @benchmarkable $tab == $other
+    g["hash"] = @benchmarkable hash($tab)
+    g["construct/raw/n=$nraw/checked"] = @benchmarkable $T($d, $M; m = $nraw)
+    g["construct/raw/n=$nraw/unchecked"] =
+        @benchmarkable $T($d, $M; m = $nraw, check = false)
+    op = first_anticommuting(tab, [spread_x(n)])
+    if hasmethod(measure!, Tuple{Random.AbstractRNG,typeof(tab),typeof(op)})
+        rng = Random.Xoshiro(DENSE_SEED)
+        mtab = copy(tab)
+        snap = snapshot(mtab)
+        g["measure!/rng"] = @benchmarkable(
+            measure!($rng, $mtab, $op; phase_policy = 2),
+            setup = (restore!($snap); Random.seed!($rng, $DENSE_SEED)), evals = 1)
+    end
+    return g
+end
+
+"""
+    register_breadth_groups!(suite, types; n, dense_ds, modulus_n)
+
+Register `dense` (every `d` in `dense_ds` at size `n`), `modulus` (every prime
+in [`MODULUS_PRIMES`](@ref) at `modulus_n`), and the `channels`,
+`information`, `gates` and `tableau` groups at size `n`. Everything here
+builds its fixtures with `random_state!`, so a baseline without it keeps its
+column and loses only these groups.
+"""
+function register_breadth_groups!(suite, types; n::Int, dense_ds, modulus_n::Int,
+                                  api::Module = QuditClifford)
+    isdefined(api, :random_state!) || return suite
+    for T in types
+        tn = nameof(T)
+        for d in dense_ds
+            suite["dense"]["$tn/d=$d/n=$n"] = dense_group(; d, n, T)
+        end
+        for d in MODULUS_PRIMES
+            suite["modulus"]["$tn/d=$d/n=$modulus_n"] = modulus_group(; d, n = modulus_n, T)
+        end
+        suite["channels"]["$tn/d=3/n=$n"] = channel_group(; d = 3, n, T)
+        suite["information"]["$tn/d=3/n=$n"] = information_group(; d = 3, n, T)
+        suite["gates"]["$tn/d=5/n=$n"] = gate_group(; d = 5, n, T)
+        suite["tableau"]["$tn/d=3/n=$n"] = tableau_group(; d = 3, n, T)
+    end
+    return suite
 end
 
 # ------------------------------------------------- macro workload: Ising
@@ -840,7 +1177,9 @@ end
 
 Follow one maximally mixed state until its tableau reaches full rank. Returns
 the rank history and the layer at which it purified (`max_layers + 1` if it did
-not). `storephase = false` because only the rank is tracked, so this workload
+not). Purification slows sharply with `n`: with seed 1234 at `d = 3`, `n = 16`
+purifies after 42 layers and `n = 32` after 1876, while `n = 64` is still at
+rank 60 after 10 000, so that run is a fixed-length one. `storephase = false` because only the rank is tracked, so this workload
 deliberately exercises the phase-free code path.
 """
 function purification_trajectory(; d::Int, n::Int, max_layers::Int = 10_000,
@@ -879,13 +1218,17 @@ end
 
 `random_clifford!` on a warmed operator, `"refill/d=\$d/k=\$k"` for each `k`
 in `ks`. A refill reads nothing of the operator's previous action, so the
-leaf needs no restore between evaluations, and it allocates nothing.
+leaf needs no restore between evaluations, and it allocates nothing. The RNG
+is reseeded in `setup`, so every sample draws the same operators.
 """
 function random_refill_group(d::Int; ks = (1, 2, 8), seed::Int = 20260925)
     group = BenchmarkGroup()
     for k in unique(collect(ks))
         (; rng, U) = random_operator_fixture(d, k; seed)
-        group["refill/d=$d/k=$k"] = @benchmarkable QuditClifford.random_clifford!($rng, $U)
+        s = seed + k
+        group["refill/d=$d/k=$k"] = @benchmarkable(
+            QuditClifford.random_clifford!($rng, $U),
+            setup = (Random.seed!($rng, $s)), evals = READONLY_EVALS)
     end
     return group
 end
@@ -905,14 +1248,17 @@ random_state_fixture(T, d::Int, n::Int; seed::Int = 20260925) =
 `random_state!` with `m = 1` and `m = n` on one `T(d, n)` tableau:
 `"state/\$(nameof(T))/d=\$d/n=\$n/m=\$m"`. A replacement reads nothing of the
 previous state, so repeated evaluations need no restore. Both leaves allocate
-the same `2n × 2n` scratch, so their difference is the `O(n²m)` sampling.
+the same `2n × 2n` scratch, so their difference is the `O(n²m)` sampling. The
+RNG is reseeded in `setup`, so every sample draws the same state.
 """
 function random_state_group(; d::Int, n::Int, T, seed::Int = 20260925)
     group = BenchmarkGroup()
     (; rng, tab) = random_state_fixture(T, d, n; seed)
+    s = seed + n
     for m in unique((1, n))
-        group["state/$(nameof(T))/d=$d/n=$n/m=$m"] =
-            @benchmarkable QuditClifford.random_state!($rng, $tab; m = $m)
+        group["state/$(nameof(T))/d=$d/n=$n/m=$m"] = @benchmarkable(
+            QuditClifford.random_state!($rng, $tab; m = $m),
+            setup = (Random.seed!($rng, $s)), evals = 1)
     end
     return group
 end
@@ -988,12 +1334,19 @@ function register_random_group!(suite, types, ds, ns; ks = (1, 2, 8),
             suite["random"][key] = leaf
         end
         let rng = Random.Xoshiro(20260925), targets = collect(1:8)
-            suite["random"]["sample/d=$d/k=8"] =
-                @benchmarkable QuditClifford.random_clifford($rng, $d, $targets)
+            suite["random"]["sample/d=$d/k=8"] = @benchmarkable(
+                QuditClifford.random_clifford($rng, $d, $targets),
+                setup = (Random.seed!($rng, 20260925)), evals = READONLY_EVALS)
         end
         for T in types, (key, leaf) in random_state_group(; d, n, T)
             suite["random"][key] = leaf
         end
+    end
+    # One short trajectory per tableau type in every profile, so each pull
+    # request runs a whole circuit end to end.
+    for T in types
+        suite["circuit"]["monitored/$(nameof(T))/d=3/n=32/layers=64"] = @benchmarkable(
+            monitored_trajectory(d = 3, n = 32, layers = 64, seed = 1234, T = $T), evals = 1)
     end
     if circuits
         for nn in (16, 32, 64)
