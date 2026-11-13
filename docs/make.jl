@@ -24,10 +24,15 @@ makedocs(;
         "Home" => "index.md",
         "Getting Started" => "getting-started.md",
         "Manual" => [
-            "Representation and Conventions" => "manual/conventions.md",
-            "Measurements and Expectations" => "manual/measurements.md",
+            "Overview" => "manual/index.md",
+            "Conventions" => "manual/conventions.md",
+            "Tableaux" => "manual/tableaux.md",
+            "Measurements, Expectations and Channels" => "manual/measurements.md",
             "Clifford Unitaries" => "manual/unitaries.md",
+            "Entanglement Measures" => "manual/entanglement.md",
+            "Random Sampling" => "manual/random.md",
             "Inspecting States" => "manual/dense-states.md",
+            "Limitations and Performance" => "manual/performance.md",
         ],
         "Examples" => [
             "A two-qutrit measurement" => "examples/qutrit-measurement.md",

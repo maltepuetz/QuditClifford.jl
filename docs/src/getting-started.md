@@ -5,166 +5,145 @@ DocTestSetup = :(using QuditClifford)
 
 # Getting Started
 
-## Installation and loading
+This page is a first session with the package: build a state, read its
+tableau, apply gates, measure, and compute expectation values and
+entanglement. Each step links to the manual page that covers it in full.
 
-Install QuditClifford:
+## Installation
+
+QuditClifford requires Julia 1.10 or later. Install it and load it with
 
 ```julia
 using Pkg
 Pkg.add("QuditClifford")
-```
-
-Then load the public API:
-
-```julia
 using QuditClifford
 ```
 
-QuditClifford requires Julia 1.10 or later.
+## A first state
 
-## Constructing states
+A state of `n` qudits of prime dimension `d` is a tableau. Start with two
+qutrits (`d = 3`) in the product state ``|00\rangle``:
 
-Use [`DestabilizerTableau`](@ref) for the usual workflow. Its preset states
-cover empty stabilizer information, product states, and generalized GHZ states:
-
-```jldoctest state-construction
-# d = 3 selects qutrits; n = 4 creates four sites.
-# :mixed gives the maximally mixed state.
-julia> mixed = DestabilizerTableau(3, 4; state=:mixed)
+```jldoctest first-session
+julia> state = DestabilizerTableau(3, 2; state = :product)
 Destabilizer Tableau:
     Qudit dimension:  d = 3
-    Number of Qudits: n = 4
-    Generators:       m = 0
-    Mixed tableau (m < n generators):
-    (no generators; maximally mixed on the full space)
-
-julia> is_pure(mixed) # Test whether the represented state is pure.
-false
-```
-
-```jldoctest state-construction
-# d = 3, n = 4; create an X-basis product state.
-julia> product = DestabilizerTableau(3, 4; state=:product, basis=:X)
-Destabilizer Tableau:
-    Qudit dimension:  d = 3
-    Number of Qudits: n = 4
-    Generators:       m = 4
+    Number of Qudits: n = 2
+    Generators:       m = 2
     Tableau:
      Stabilizers:
-     -- X --   -- Z --
-     1 0 0 0 | 0 0 0 0 | 0
-     0 1 0 0 | 0 0 0 0 | 0
-     0 0 1 0 | 0 0 0 0 | 0
-     0 0 0 1 | 0 0 0 0 | 0
-     -----------------
+      X     Z 
+     0 0 | 1 0 | 0
+     0 0 | 0 1 | 0
+     ---------
      Destabilizers:
-     -- X --   -- Z --
-     0 0 0 0 | 2 0 0 0
-     0 0 0 0 | 0 2 0 0
-     0 0 0 0 | 0 0 2 0
-     0 0 0 0 | 0 0 0 2
-
-julia> is_pure(product) # Product states are pure.
-true
+      X     Z 
+     1 0 | 0 0
+     0 1 | 0 0
 ```
 
-```jldoctest state-construction
-# d = 3, n = 4; create a generalized GHZ state.
-julia> ghz = DestabilizerTableau(3, 4; state=:ghz)
-Destabilizer Tableau:
-    Qudit dimension:  d = 3
-    Number of Qudits: n = 4
-    Generators:       m = 4
-    Tableau:
-     Stabilizers:
-     -- X --   -- Z --
-     1 1 1 1 | 0 0 0 0 | 0
-     0 0 0 0 | 1 2 0 0 | 0
-     0 0 0 0 | 0 1 2 0 | 0
-     0 0 0 0 | 0 0 1 2 | 0
-     -----------------
-     Destabilizers:
-     -- X --   -- Z --
-     0 0 0 0 | 2 0 0 0
-     1 0 0 0 | 0 0 0 0
-     1 1 0 0 | 0 0 0 0
-     1 1 1 0 | 0 0 0 0
-```
+Each row under **Stabilizers** is one generator of the stabilizer group: its
+X exponents on qudits `1, …, n`, then its Z exponents, then its phase
+exponent. Here the rows are ``Z_1`` and ``Z_2``, the operators that fix
+``|00\rangle``. A pure state has `m = n` generators; a mixed state has fewer.
+The **Destabilizers** are a dual basis that [`DestabilizerTableau`](@ref)
+keeps up to date so that measurements stay fast; [`StabilizerTableau`](@ref)
+has the same interface without them and uses less memory.
 
-```jldoctest state-construction
-# Compute the entropy of the subsystem containing qutrits 1 and 2.
-julia> entanglement_entropy(ghz, [1, 2])
-1
-```
+Other preset states are the maximally mixed state (`state = :mixed`, the
+default), product states in other bases (`basis = :X`, or one basis per qudit),
+and generalized GHZ states (`state = :ghz`). [Tableaux](manual/tableaux.md)
+covers all of them, the choice between the two types, and building a tableau
+from a raw matrix.
 
-For a product state, `basis` can be `:X`, `:Y`, or `:Z`, or a vector/tuple
-giving one basis per qudit. The `:Y` preset is available for qubits. The
-constructor aliases `state=:X`, `state=:Y`, and `state=:Z` are shorthand for
-product states in the corresponding basis.
+## Building Pauli operators
 
-Pass `storephase=false` only when phase-sensitive outcomes and expectation
-values are unimportant. See [Phase exponents](@ref) for the resulting
-convention.
-
-## Constructing Pauli operators
-
-Each local Pauli factor is represented by X and Z exponents: `(x, z)` denotes
-``X^x Z^z`` on that qudit. Qudit indices are 1-based, and exponents are reduced
-modulo the tableau dimension when the operator is used.
-
-Choose the representation by the size of the operator's support:
+A Pauli operator is given by X and Z exponents per qudit: `(x, z)` on qudit
+`q` stands for ``X_q^x Z_q^z``, with `X` to the left. Qudit indices are
+1-based, and exponents are reduced mod `d` when the operator meets a tableau,
+so the same value works at any `d`. Choose the type by the size of the
+support:
 
 ```jldoctest pauli-construction
-julia> SinglePauli(2, 1, 0) # (qudit, X exponent, Z exponent): X₂.
+julia> SinglePauli(2, 1, 0)                           # (qudit, x, z): X₂
 X₂
 
-julia> DoublePauli(1, 0, 1, 3, 0, 1) # Two (qudit, X, Z) triplets: Z₁Z₃.
-Z₁ Z₃
+julia> DoublePauli(1, 0, 1, 2, 0, 2)                  # two (qudit, x, z) triplets
+Z₁ Z₂²
 
-julia> TriplePauli(1, 1, 0, 2, 0, 1, 3, 1, 1) # Three (qudit, X, Z) triplets.
-X₁ Z₂ X₃ Z₃
-```
+julia> NPauli((1, 2, 4), (1, 0, 1), (0, 1, 1))        # qudits, x exponents, z exponents
+X₁ Z₂ X₄ Z₄
 
-```jldoctest pauli-construction
-# The tuples contain qudit indices, X exponents, and Z exponents.
-julia> NPauli((1, 2, 4, 7), (1, 0, 1, 0), (0, 1, 1, 2))
-X₁ Z₂ X₄ Z₄ Z₇²
-```
-
-The same compact Unicode representation is used in the REPL and other plain
-text displays.
-
-[`SinglePauli`](@ref), [`DoublePauli`](@ref), [`TriplePauli`](@ref), and
-[`NPauli`](@ref) avoid storing zeros for operators with small support. Their
-final optional argument is a phase exponent:
-
-```jldoctest pauli-construction
-julia> SinglePauli(1, 0, 1, 2) # (qudit, X, Z, phase): i²Z₁ = -Z₁ for d=2.
-[phase=2] Z₁
-```
-
-The phase prefix remains dimension-neutral because the same stored exponent is
-interpreted as ``i^k`` for qubits and ``\omega^k`` for odd-prime qudits.
-
-Use [`GeneralPauli`](@ref) for dense support. Its vector is ordered as
-`[x₁, …, xₙ, z₁, …, zₙ]`:
-
-```jldoctest pauli-construction
-# The vector contains all X exponents, then all Z exponents; the final argument is phase.
-julia> dense = GeneralPauli([1, 0, 0, 0, 1, 0], 0)
+julia> GeneralPauli([1, 0, 0, 0, 1, 0], 0)           # dense [x₁, …, xₙ, z₁, …, zₙ], phase
 X₁ Z₂
 ```
 
-Measurement and expectation functions also accept that dense vector directly.
-An optional final entry supplies the phase exponent:
+Every type takes an optional phase exponent as its last argument, which means
+``i^k`` for qubits and ``\omega^k = e^{2\pi i k/d}`` otherwise.
+[Conventions](@ref) defines the operators, the ordering and the phases
+precisely, including why the qubit `Y` is `SinglePauli(q, 1, 1, 1)`.
 
-```julia
-raw = [1, 0, 0, 0, 1, 0, 0]  # six X/Z entries, then phase 0
+## Applying gates
+
+[`apply!`](@ref) applies a Clifford gate in place. A Fourier gate on qutrit 1
+followed by a `SUM` (the qudit CNOT) entangles the pair:
+
+```jldoctest first-session
+julia> apply!(state, Fourier(1)); apply!(state, SUM(1, 2));
+
+julia> entanglement_entropy(state, [1])
+1
 ```
 
-Prefer a few-qudit type inside local circuits; use a dense representation when
-the operator naturally acts on many sites.
+The entropy is measured in units of ``\log d``, so `1` means the two qutrits
+are maximally entangled. [Clifford Unitaries](@ref) lists every named gate
+with its action, and covers general and random Clifford operators.
 
-Continue with the examples, starting from
-[A two-qutrit measurement](@ref), for complete measurement and entanglement
-workflows, including the [measurement-only Ising circuit](@ref "A deep measurement-only Ising circuit").
+## Expectation values
+
+[`expect!`](@ref) returns ``\langle P \rangle`` as a complex number. The pair is
+now stabilized by ``Z_1 Z_2^2``, while ``X_1`` alone has no definite value:
+
+```jldoctest first-session
+julia> expect!(state, DoublePauli(1, 0, 1, 2, 0, 2))
+1.0 + 0.0im
+
+julia> expect!(state, SinglePauli(1, 1, 0))
+0.0 + 0.0im
+```
+
+## Measuring
+
+[`measure!`](@ref) performs a projective measurement and returns the outcome
+`t`, which stands for the eigenvalue ``\omega^t``. Measuring ``Z_1`` on the
+entangled pair gives a random outcome; afterwards ``Z_2`` is certain to agree
+with it, and the entanglement is gone:
+
+```jldoctest first-session
+julia> t = measure!(state, SinglePauli(1, 0, 1));
+
+julia> measure!(state, SinglePauli(2, 0, 1)) == t
+true
+
+julia> expect!(state, SinglePauli(1, 0, 1)) ≈ cis(2π * t / 3)
+true
+
+julia> entanglement_entropy(state, [1])
+0
+```
+
+Random outcomes come from the global RNG. Pass an RNG as the first argument,
+as in `measure!(rng, state, op)`, to make a simulation reproducible from a
+seed; [Random Sampling](@ref) shows how one RNG reproduces a whole circuit.
+[Measurements, Expectations and Channels](@ref) covers the measurement
+branches, the channels that forget outcomes, and the integer form
+[`expect_int!`](@ref).
+
+## Where next
+
+- The [Examples](@ref) build complete workflows, from
+  [A two-qutrit measurement](@ref) to the
+  [measurement-only Ising circuit](@ref "A deep measurement-only Ising circuit").
+- The [Manual](manual/index.md) covers each topic in depth;
+  [Entanglement Measures](@ref) adds negativity and the information measures.
+- The [API Reference](api.md) documents every exported function.

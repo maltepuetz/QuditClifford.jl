@@ -3,100 +3,153 @@ CurrentModule = QuditClifford
 DocTestSetup = :(using QuditClifford)
 ```
 
-# Representation and Phase Conventions
+# Conventions
 
-## Supported dimensions
+This page defines the operators, orderings and signs that every other page and
+docstring relies on. Each convention is pinned by an example that runs with the
+documentation build.
 
-The local qudit dimension `d` must be prime. Qubits use `d = 2`; qutrits use
-`d = 3`; higher odd prime dimensions are supported by the same finite-field
-tableau algorithms. Constructors reject composite dimensions.
+## Dimensions and the phase unit
 
-## Choosing a tableau representation
+The local dimension `d` is prime: `d = 2` for qubits, and any odd prime for
+qudits. Constructors reject composite dimensions.
 
-QuditClifford exposes two representations with the same high-level API:
+Write ``\omega = e^{2\pi i/d}``. At `d = 2` this is ``\omega = -1``. Phases are
+stored as integer exponents of a unit ``\zeta``:
 
-- [`DestabilizerTableau`](@ref) stores the active stabilizers and a dual
-  destabilizer basis. The dual basis makes repeated membership, measurement,
-  and expectation calculations efficient without repeatedly canonicalizing the
-  stabilizers. It is the recommended default for general use and especially
-  for deep or measurement-heavy circuits.
-- [`StabilizerTableau`](@ref) stores only the stabilizer generators plus its
-  workspaces. It uses less memory and can be suitable when tableaux are mainly
-  stored, imported, canonicalized once, or queried only occasionally. Repeated
-  span-dependent operations can require additional canonicalization work. A
-  pure state with `storephase=false` is the exception: there a commuting Pauli
-  is always in the span, so deterministic measurements and expectation values
-  need only a commutation check: `O(km)` for a sparse Pauli on `k` qudits, or
-  `O(nm)` for a dense Pauli, where `m` is the number of generators.
+| Dimension | Phase unit ``\zeta`` | Exponent reduced mod |
+|:---|:---|:---|
+| odd prime `d` | ``\omega = e^{2\pi i/d}`` | `d` |
+| `d = 2` | ``i`` | `4` |
 
-The extra speed of a destabilizer tableau comes from retaining an additional
-``2n \times n`` dual matrix and keeping it synchronized after updates. Choose a
-plain stabilizer tableau when that memory tradeoff matters; otherwise begin
-with a destabilizer tableau.
+Qubits need the finer unit `i` because the Clifford group maps Hermitian Paulis
+such as `Y` to products like `iXZ`. A stored phase exponent `k` therefore means
+``\omega^k`` for odd `d` and ``i^k`` for qubits. With `storephase=false` no
+phases are stored, and phase-sensitive queries return `0` by convention.
+
+## Weyl operators
+
+On one qudit with computational basis ``|0\rangle, \ldots, |d-1\rangle``,
+
+```math
+X|j\rangle = |j + 1 \bmod d\rangle, \qquad Z|j\rangle = \omega^{j}|j\rangle,
+\qquad ZX = \omega\, XZ.
+```
+
+At `d = 2` these are the Pauli matrices `X` and `Z`.
+
+## Pauli operators and their ordering
+
+A local factor with exponents `(x, z)` is ``X^x Z^z``, with `X` to the left. An
+operator on `n` qudits with exponent vector `v` and phase exponent `k` is
+
+```math
+P(v, k) = \zeta^{k}\, \bigotimes_{q=1}^{n} X_q^{x_q} Z_q^{z_q}.
+```
+
+The order matters as soon as both exponents are nonzero. For qubits,
+``XZ = -iY``, so `SinglePauli(q, 1, 1)` is not `Y` and not Hermitian. `Y` is
+``iXZ``, which is `SinglePauli(q, 1, 1, 1)`. On the `+1` eigenstate of `Y`,
+[`expect_int!`](@ref) returns `0` (that is, ``i^0``) for the first and `3` (``i^3 = -i``) for
+the second:
+
+```jldoctest conventions-y
+julia> tab = StabilizerTableau(2, 1; state = :product, basis = :Y);
+
+julia> expect_int!(tab, SinglePauli(1, 1, 1, 1))  # Y = iXZ
+0
+
+julia> expect_int!(tab, SinglePauli(1, 1, 1))     # XZ = -iY
+3
+```
+
+For odd `d`, every ``X^x Z^z`` with phase exponent `0` already has eigenvalues
+in ``\{\omega^t\}``, so no such correction is needed.
+
+## Exponent vectors
+
+Dense Paulis ([`GeneralPauli`](@ref), and the plain integer vectors accepted by
+[`measure!`](@ref) and [`expect!`](@ref)) order all X exponents before all Z
+exponents:
+
+```math
+v = (x_1, \ldots, x_n, z_1, \ldots, z_n),
+```
+
+and a plain vector may carry the phase exponent as an extra entry `2n + 1`.
 
 ## Tableau layout
 
-For `n` qudits, Pauli vectors use `2n` entries:
+A tableau stores generators in **columns**. For `n` qudits, `tab.stab` has
+rows `1:n` for the X exponents, rows `n+1:2n` for the Z exponents, and, when
+`storephase=true`, row `2n + 1` for the phase exponents. The first `m` columns
+are the active generators, with ``0 \leq m \leq n``. The remaining columns are
+zeroed capacity for measurements that raise `m`. A pure state has `m = n`; a
+mixed state has `m < n`. [Tableaux](tableaux.md) covers construction from
+a raw matrix.
+
+## The symplectic form
+
+Two exponent vectors `a` and `b` pair as
 
 ```math
-(x_1, \ldots, x_n, z_1, \ldots, z_n).
+\langle a, b \rangle = \sum_{q=1}^{n} \left( a_{x,q}\, b_{z,q} - a_{z,q}\, b_{x,q} \right)
+= a^{\mathsf T} \Omega\, b \pmod d,
+\qquad
+\Omega = \begin{pmatrix} 0 & I_n \\ -I_n & 0 \end{pmatrix}.
 ```
 
-A tableau stores generators in columns. The first `m` columns are active, with
+With this sign, ``P(a)\,P(b) = \omega^{-\langle a, b\rangle}\, P(b)\,P(a)``:
+for `a = X` and `b = Z`, ``\langle a, b\rangle = 1`` and ``XZ = \omega^{-1} ZX``.
+Two Paulis commute exactly when ``\langle a, b\rangle \equiv 0 \pmod d``, and a
+tableau's generators must commute pairwise. A matrix `F` that maps exponent
+vectors is symplectic when ``F^{\mathsf T} \Omega F = \Omega \pmod d``; the
+Clifford unitaries are exactly the maps of this form, together with a phase
+for each image.
 
-```math
-0 \leq m \leq n.
-```
-
-The remaining columns are zeroed capacity. A pure stabilizer state has `m = n`
-independent commuting generators. Mixed states may have `m < n`.
-
-When `storephase=true`, a final row stores each generator's phase exponent.
-Raw tableau constructors accept either column-major generator layout or its
-transpose and infer the layout when it is unambiguous.
-
-## The generator contract
-
-The active columns must generate an abelian group: they must commute pairwise
-under the symplectic form, and be linearly independent over ``\mathrm{GF}(d)``.
-Both are assumed everywhere — [`measure!`](@ref) decomposes an operator against
-the generators as a basis, which means nothing if they do not span what `m`
-claims.
-
-Construction is the only place this can be violated, so it is the only place it
-is checked. The preset `(d, n)` constructors satisfy both by definition, and
-[`measure!`](@ref) and [`canonicalize!`](@ref) preserve both; the raw-matrix
-constructors validate what they are handed and throw `ArgumentError`:
+The sign shows up in conjugation by a Pauli. [`PauliGate`](@ref)`(q, x, z)`
+maps ``P(v) \mapsto \omega^{-\langle (x, z), v\rangle} P(v)``. Conjugating `Z`
+by `X` at `d = 3` gives ``\omega^{-1} Z = \omega^2 Z``:
 
 ```jldoctest
-julia> bad = zeros(Int, 5, 2); bad[1, 1] = 1; bad[3, 2] = 1;  # X₁ and Z₁
-
-julia> StabilizerTableau(2, bad; m = 2, storephase = true)
-ERROR: ArgumentError: Stabilizer generators must commute, but generators 1 and 2 do not. Pass check=false to skip this check.
+julia> conjugate(PauliGate(1, 1, 0), SinglePauli(1, 0, 1), 1; d = 3)
+[phase=2] Z₁
 ```
 
-That validation is ``O(n^3)``. Pass `check=false` to skip it when the input is
-already known to be well formed — the tableau is then built regardless, and
-every later operation rests on a contract that may not hold.
+## Action direction
 
-Because the contract holds by construction, [`is_pure`](@ref) tests only
-`m == n`, in constant time. `is_pure(tab; verify=true)` re-derives the full
-condition instead, which is the only way to detect a tableau built behind
-`check=false`.
+A Clifford unitary `U` acts on states and operators by conjugation:
 
-## Phase exponents
+- [`apply!`](@ref)`(tab, U)` replaces the state ``\rho`` by
+  ``U \rho\, U^\dagger``, which maps every stabilizer generator `g` to
+  ``U g\, U^\dagger``;
+- [`conjugate`](@ref)`(U, P)` returns ``U P\, U^\dagger``;
+- the Heisenberg picture of state evolution by `U` is therefore
+  `conjugate(inv(U), P)`;
+- `U ∘ V` is the product ``UV``: it applies `V` first, then `U`.
 
-- For odd prime `d`, phase `k` represents ``\omega^k`` with
-  ``\omega = \exp(2\pi i/d)`` and `k` reduced modulo `d`.
-- For `d = 2`, phase `k` represents ``i^k`` and is reduced modulo `4`.
-- With `storephase=false`, phase-sensitive deterministic queries return `0` by
-  convention.
+A [`CliffordOperator`](@ref) stores `U` through the images of the generators:
+column `i` of `F` is the exponent vector of ``U g_i U^\dagger`` for
+``g_i \in (X_{t_1}, \ldots, X_{t_k}, Z_{t_1}, \ldots, Z_{t_k})``.
 
-For qubits, a Pauli used as a physical observable should be Hermitian.
-[`measure!`](@ref) exposes `phase_policy` to warn, repair, or explicitly accept
-a non-Hermitian phase convention.
+Applying `Fourier` and then `Phase` is the same as applying
+`Phase ∘ Fourier`, and differs from the other order:
 
-## Computational basis ordering
+```jldoctest conventions-compose
+julia> F, P = CliffordOperator(Fourier(1), 3), CliffordOperator(Phase(1), 3);
+
+julia> a = StabilizerTableau(3, 1; state = :product, basis = :Z);
+
+julia> apply!(apply!(a, F), P);
+
+julia> a == apply!(StabilizerTableau(3, 1; state = :product, basis = :Z), P ∘ F)
+true
+
+julia> a == apply!(StabilizerTableau(3, 1; state = :product, basis = :Z), F ∘ P)
+false
+```
+
+## Computational basis
 
 [`state_vector`](@ref) and [`density_matrix`](@ref) index the computational
 basis with qudit 1 as the most significant digit:
@@ -111,66 +164,58 @@ groups every X row before every Z row. [`ket`](@ref) fixes the global phase by
 making the amplitude of the lexicographically first label real and positive,
 and [`state_vector`](@ref) keeps that choice.
 
-All three conversions require `storephase=true`, because a phase-free tableau
-does not determine a state (see [Inspecting States](@ref)), and each
-refuses a result larger than its `maxentries` keyword, `2^24` scalars by
-default. [`ket`](@ref) is exact. The dense arrays are floating point: a density
-matrix sums unit-modulus terms, so round-off and cancellation can leave small
-residuals where the exact entry is zero, and comparisons need an absolute
-tolerance.
-
-## Mutating operations
-
-Functions ending in `!` reuse tableau workspaces and may change the tableau or
-its canonical representation. In particular, [`measure!`](@ref) updates the
-represented state, [`canonicalize!`](@ref) changes the generator basis, and
-[`expect!`](@ref) and the deterministic branch of [`measure!`](@ref) may
-canonicalize a plain stabilizer tableau as part of their span calculation,
-unless the tableau is pure and stores no phases. The represented quantum state
-is unchanged by canonicalization.
-
-## Supported arithmetic envelope
-
-Tableau entries, phases and dot products are all `Int`. Every phase and
-symplectic dot product sums `n` terms of size up to ``(d-1)^2``, and the
-odd-`d` phase update adds two such terms, so results are exact only while
+On basis states, the Fourier gate is
 
 ```math
-\max(n, 2)\,(d-1)^2 \le \texttt{typemax(Int)}
+\mathrm{Fourier}\,|k\rangle = \frac{1}{\sqrt d} \sum_{j=0}^{d-1} \omega^{jk} |j\rangle,
 ```
 
-Past that the accumulators wrap silently, and there is no error to notice. The
-tableau constructors therefore emit a warning when `d` is too large for the
-given `n`, naming the largest safe dimension. The bound is the worst case --
-every entry equal to `d-1` -- so it is a warning rather than an error: sparse
-tableaux past it often still compute correctly.
-
-On a 64-bit host the limit is `d ≤ 2147483648` at `n = 1`, `d ≤ 189812532` at
-`n = 256`, and `d ≤ 94906266` at `n = 1024`. In practice only
-`JustInTimeInvMod` can reach it, since `PrecomputedInvMod` allocates a table of
-`d-1` integers and exhausts memory first.
-
-## Modular inversion strategies
-
-Every tableau carries a strategy for inverting residues mod `d`, selected with
-the `inversemod` keyword at construction. Neither strategy is exported, so name
-them through the module:
+which at `d = 2` is the Hadamard gate. Starting from ``|1\rangle`` (prepared
+by conjugating ``|0\rangle`` with `X`) at `d = 3`:
 
 ```jldoctest
-julia> jit = QuditClifford.JustInTimeInvMod();
+julia> tab = StabilizerTableau(3, 1; state = :product, basis = :Z);
 
-julia> tab = StabilizerTableau(5, 4; state = :ghz, inversemod = jit);
+julia> apply!(tab, PauliGate(1, 1, 0));  # |0⟩ ↦ |1⟩
 
-julia> is_pure(tab)
-true
+julia> ket(apply!(tab, Fourier(1)))
+StabilizerKet (d = 3, n = 1, 3 terms):
+  (|0⟩ + ω₃|1⟩ + ω₃²|2⟩)/√3
 ```
 
-The default is `QuditClifford.PrecomputedInvMod(d)`, which builds a `d-1` entry
-lookup table once. `QuditClifford.JustInTimeInvMod()` calls `Base.invmod` per
-query and stores nothing, which is what makes the large dimensions above
-reachable at all.
+Here `ω₃` is ``\omega`` at `d = 3`.
 
-`PrecomputedInvMod` stores its table as a `Vector{Int}`, and both strategies
-return an `Int`, so the package is `Int` arithmetic throughout. A table given
-in a narrower or unsigned integer type is converted on construction; one whose
-element type is not an `Integer` is rejected there.
+The action of every named gate on basis states is listed in
+[The gate set](@ref).
+
+## Outcome and expectation encodings
+
+Measurement outcomes and integer expectation values are phase exponents, but
+in two different units:
+
+| Function | Odd prime `d` | `d = 2` |
+|:---|:---|:---|
+| [`measure!`](@ref) | `t ∈ 0:(d-1)`, eigenvalue ``\omega^t`` | `t ∈ 0:1`, eigenvalue ``(-1)^t`` |
+| [`expect_int!`](@ref) | `k`, ``\langle P\rangle = \omega^k``; `-1` if zero | `k ∈ 0:3`, ``\langle P\rangle = i^k``; `-1` if zero |
+| [`expect!`](@ref) | the complex value ``\langle P\rangle`` | the complex value ``\langle P\rangle`` |
+
+A [`measure!`](@ref) outcome uses the same encoding in every branch and for the
+`outcome` keyword, so a repeated measurement returns the outcome of the first.
+For qubits it counts in units of ``-1``, while [`expect_int!`](@ref) counts in
+units of ``i``, so eigenvalue ``-1`` is `1` for the first and `2` for the
+second:
+
+```jldoctest
+julia> tab = DestabilizerTableau(2, 1; state = :product, basis = :Z);
+
+julia> measure!(tab, SinglePauli(1, 1, 0); outcome = 1), measure!(tab, SinglePauli(1, 1, 0))
+(1, 1)
+
+julia> expect_int!(tab, SinglePauli(1, 1, 0))
+2
+```
+
+With `storephase=false`, a deterministic measurement returns `0` and
+[`expect_int!`](@ref) returns `0` for an operator in the stabilizer group,
+because the phase was not stored. [Measurements, Expectations and Channels](@ref)
+shows all three functions in use.

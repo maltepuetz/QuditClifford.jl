@@ -11,11 +11,11 @@ the mutual, tripartite and conditional mutual information.
 
 ## Entanglement in mixed states: negativity
 
-Mutual information `S(A) + S(B) - S(AB)`, computed by
+Mutual information ``I(A{:}B) = S(A) + S(B) - S(AB)``, computed by
 [`mutual_information`](@ref), counts classical correlations as well as
-entanglement. [`entanglement_negativity`](@ref) returns the
-logarithmic negativity `log_d ‖ρ_ABᵀᴮ‖₁` of the state of `A ∪ B` with the
-other qudits traced out, which vanishes when the correlations are classical.
+entanglement. [`entanglement_negativity`](@ref) returns the logarithmic
+negativity ``\mathcal{E}(A{:}B) = \log_d \lVert \rho_{AB}^{T_B} \rVert_1`` of the
+state of ``A \cup B`` with the other qudits traced out, which vanishes when the correlations are classical.
 A qutrit GHZ state shows the difference: two of its three qutrits share one
 unit of mutual information but no entanglement.
 

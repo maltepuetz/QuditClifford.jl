@@ -15,7 +15,8 @@ supplied when the gate meets a tableau in [`apply!`](@ref), or explicitly in
 
 The named gate subtypes. `CliffordOperator` stores general operators at a
 fixed dimension. Names are qudit-native; no qubit aliases are exported, and
-the `d = 2` column is for orientation only.
+the `d = 2` column is for orientation only. Here `ω = exp(2πi/d)`, which is
+`ω = −1` at `d = 2`.
 
 | Constructor | Action | At `d = 2` |
 |:---|:---|:---|
@@ -61,6 +62,7 @@ end
 
 Fourier gate on one qudit: `X ↦ Z`, `Z ↦ X^{-1}`.
 
+On basis states it is `|k⟩ ↦ d^{-1/2} Σ_j ω^{jk} |j⟩` with `ω = exp(2πi/d)`.
 At `d = 2` this is the Hadamard gate.
 
 # Examples
@@ -118,7 +120,8 @@ end
 Conjugation by the Pauli `X^x Z^z` on one qudit, up to a global phase.
 
 Conjugation leaves every exponent unchanged and shifts phases by `ω^{zx' - xz'}`
-on a Pauli with exponents `(x', z')`.
+on a Pauli with exponents `(x', z')`, where `ω = exp(2πi/d)`; at `d = 2`,
+`ω = −1`, so the shift is a sign.
 
 # Examples
 ```julia
@@ -160,7 +163,8 @@ SUM(control::Int, target::Int) = SUM(control, target, 1)
 """
     CPhase(qudit1::Int, qudit2::Int, a::Int = 1)
 
-Controlled phase, `|u, v⟩ ↦ ω^{a·u·v}|u, v⟩`.
+Controlled phase, `|u, v⟩ ↦ ω^{a·u·v}|u, v⟩` with `ω = exp(2πi/d)`; at
+`d = 2`, `ω = −1`.
 
 Images are `X₁ ↦ X₁Z₂^a`, `X₂ ↦ Z₁^aX₂`, with both `Z` images fixed. At `d = 2`
 with `a = 1` this is `CZ`. A coefficient congruent to zero is a valid identity.

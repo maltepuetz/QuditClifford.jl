@@ -257,11 +257,25 @@ end
     GeneralPauli(n::Int, d::Int, op::AbstractVector{<:Integer})
 
 General Pauli operator backed by a dense `xz` vector of length `2n` and a phase exponent.
-The vector is ordered as `[x₁, …, xₙ, z₁, …, zₙ]`.
+The vector is ordered as `[x₁, …, xₙ, z₁, …, zₙ]`, and the operator is
+`ζ^phase ⊗_q X_q^{x_q} Z_q^{z_q}` with `ζ = i` at `d = 2` and `ζ = exp(2πi/d)`
+otherwise.
 
-Performance note: `xz` is stored as a `Vector{Int}`. If the input is not already
-`Vector{Int}` with length `2n` (including the `2n+1` case), the constructor will
-allocate and copy.
+# Arguments
+- `xz`: the `2n` X and Z exponents. Exponents are reduced mod `d` only when a
+  tableau consumes the operator, as for the sparse Pauli types.
+- `phase::Int`: the phase exponent.
+- `n::Int`: the number of qudits, for the second form.
+- `d::Int`: not used; the dimension comes from the tableau that consumes the
+  operator.
+- `op`: `2n` exponents, or `2n + 1` with the phase exponent last (phase `0`
+  otherwise).
+
+# Ownership
+`xz` is stored as a `Vector{Int}`. A `Vector{Int}` input is stored itself, not
+copied, by `GeneralPauli(xz, phase)` and by `GeneralPauli(n, d, op)` when
+`length(op) == 2n`: later changes to the caller's vector change the operator.
+Every other input, including a `Vector{Int}` of length `2n + 1`, is copied.
 """
 mutable struct GeneralPauli <: AbstractPauli
     xz::Vector{Int}

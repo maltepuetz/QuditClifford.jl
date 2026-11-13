@@ -3,14 +3,19 @@ CurrentModule = QuditClifford
 DocTestSetup = :(using QuditClifford)
 ```
 
-# Measurements and Expectations
+# Measurements, Expectations and Channels
+
+This page covers projective Pauli measurements, expectation values, and the
+channels that discard information: dephasing, trace-out and reset. Outcomes
+and expectation exponents use the encodings of
+[Outcome and expectation encodings](@ref).
 
 ## Pauli representations
 
 Use [`SinglePauli`](@ref), [`DoublePauli`](@ref), [`TriplePauli`](@ref), or
 [`NPauli`](@ref) when an operator has small support. [`GeneralPauli`](@ref) and
-plain integer vectors cover dense operators. [Constructing Pauli operators](@ref)
-contains examples of every representation.
+plain integer vectors cover dense operators. [Building Pauli operators](@ref)
+has examples.
 
 For example, the qutrit operator ``Z_1 Z_2`` is:
 
@@ -29,6 +34,18 @@ Z₁ Z₂
    outcome and leaves the represented state unchanged.
 3. A commuting operator outside the span produces a random outcome and appends
    a generator when the state is mixed (`m < n`).
+
+In every branch the state is projected onto the eigenspace of the outcome. For
+a Pauli `P` with eigenvalues ``\omega^t``, outcome `t` maps
+
+```math
+\rho \mapsto \frac{\Pi_t\, \rho\, \Pi_t}{\operatorname{tr}(\Pi_t \rho)},
+\qquad
+\Pi_t = \frac{1}{d} \sum_{k=0}^{d-1} \omega^{-tk} P^k,
+```
+
+and a random outcome is drawn with probability ``\operatorname{tr}(\Pi_t \rho)``.
+For a Hermitian qubit Pauli, ``\omega = -1`` and ``\Pi_t = (I + (-1)^t P)/2``.
 
 Pass `outcome` to make a nondeterministic measurement reproducible:
 
@@ -61,64 +78,13 @@ julia> measure!(state, SinglePauli(1, 1, 0)) # Now deterministic.
 ```
 
 With `storephase=false` a deterministic measurement returns `0` by convention,
-because the eigenvalue was not stored. See [`measure!`](@ref) for
-`phase_policy`.
+because the eigenvalue was not stored. [Outcome and expectation encodings](@ref)
+summarizes every encoding; see [`measure!`](@ref) for `phase_policy`.
 
 Without `outcome`, a random branch draws its outcome uniformly from
-`0:(d - 1)`, by default from the global RNG. Pass an RNG first, as in
-`measure!(rng, state, x1)`, to draw from it instead: one seeded RNG shared by
-every measurement and every [`random_clifford!`](@ref) call reproduces a whole
-monitored-circuit trajectory. Only the random branches draw, so a deterministic
-measurement leaves the RNG untouched.
-
-## Forgetting outcomes, discarding and resetting
-
-[`measure!`](@ref) records an outcome: the tableau follows one pure trajectory.
-When the outcome is not kept, the state is the average over all outcomes, which
-is mixed. [`dephase!`](@ref) applies this averaged channel for a Pauli
-operator `P`: the stabilizer group shrinks to its subgroup of elements that
-commute with `P`. At most one generator is lost, because the noncommuting generators can
-be multiplied by powers of the first one until only that one anticommutes. The
-Pauli's phase does not matter, nothing is sampled, and a state that already
-commutes with `P` is left unchanged.
-
-[`traceout!`](@ref) discards qudits. It is dephasing by `X_q` and then by `Z_q`,
-which leaves qudit `q` maximally mixed and uncorrelated with the rest, while
-`n` stays the same. [`reset!`](@ref)`(tab, sites; basis)` is a trace-out
-followed by fixing each site in the chosen basis eigenstate, again without
-recording an outcome, so qudits that were entangled with the site stay mixed.
-
-The example below dephases one half of a qutrit Bell pair. Entropy, mutual
-information and negativity are in units of ``\log d``, here trits. The mutual
-information drops from `2` to `1` and the negativity from `1` to `0`: the
-remaining correlations are classical. A trace-out removes all correlations, and
-a reset leaves the partner maximally mixed.
-
-```jldoctest forgetting
-julia> tab = DestabilizerTableau(3, 2; state=:ghz);
-
-julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
-(2, 1, 2, 1)
-
-julia> dephase!(tab, SinglePauli(1, 0, 1)); # Forget the outcome of Z on qutrit 1.
-
-julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
-(1, 1, 1, 0)
-
-julia> tab = DestabilizerTableau(3, 2; state=:ghz);
-
-julia> traceout!(tab, 1);
-
-julia> (tab.m, mutual_information(tab, [1], [2]))
-(0, 0)
-
-julia> tab = DestabilizerTableau(3, 2; state=:ghz);
-
-julia> reset!(tab, 1);
-
-julia> (tab.m, entanglement_entropy(tab, [1]), entanglement_entropy(tab, [2]))
-(1, 0, 1)
-```
+`0:(d - 1)`. Pass an RNG first, as in `measure!(rng, state, x1)`, to draw from
+it instead of the global RNG; [Reproducible trajectories](@ref) shows how one
+seeded RNG reproduces a whole circuit.
 
 ## Expectation values
 
@@ -169,3 +135,63 @@ julia> expect_int!(state, SinglePauli(1, 1, 0))
 Most user code should call `expect!`; use the integer form when manipulating
 finite-field phase exponents directly or when avoiding the complex conversion
 inside a specialized inner loop.
+
+## Forgetting outcomes, discarding and resetting
+
+[`measure!`](@ref) records an outcome: the tableau follows one pure trajectory.
+When the outcome is not kept, the state is the average over all outcomes, which
+is mixed. [`dephase!`](@ref) applies this averaged channel for a Pauli
+operator `P`,
+
+```math
+\rho \mapsto \sum_t \Pi_t\, \rho\, \Pi_t = \frac{1}{d} \sum_{k=0}^{d-1} P^k \rho\, P^{-k}.
+```
+
+The stabilizer group shrinks to its subgroup of elements that
+commute with `P`. At most one generator is lost, because the noncommuting generators can
+be multiplied by powers of the first one until only that one anticommutes. The
+Pauli's phase does not matter, nothing is sampled, and a state that already
+commutes with `P` is left unchanged.
+
+[`traceout!`](@ref) discards qudits. It is dephasing by ``X_q`` and then by
+``Z_q``, which leaves qudit `q` maximally mixed and uncorrelated with the rest,
+while `n` stays the same:
+
+```math
+\rho \mapsto \operatorname{tr}_q(\rho) \otimes \frac{I_q}{d}.
+```
+ [`reset!`](@ref)`(tab, sites; basis)` is a trace-out
+followed by fixing each site in the chosen basis eigenstate, again without
+recording an outcome, so qudits that were entangled with the site stay mixed.
+
+The example below dephases one half of a qutrit Bell pair. Entropy, mutual
+information and negativity are in units of ``\log d``, here trits. The mutual
+information drops from `2` to `1` and the negativity from `1` to `0`: the
+remaining correlations are classical. A trace-out removes all correlations, and
+a reset leaves the partner maximally mixed.
+
+```jldoctest forgetting
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
+(2, 1, 2, 1)
+
+julia> dephase!(tab, SinglePauli(1, 0, 1)); # Forget the outcome of Z on qutrit 1.
+
+julia> (tab.m, entanglement_entropy(tab, [1]), mutual_information(tab, [1], [2]), entanglement_negativity(tab, [1], [2]))
+(1, 1, 1, 0)
+
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> traceout!(tab, 1);
+
+julia> (tab.m, mutual_information(tab, [1], [2]))
+(0, 0)
+
+julia> tab = DestabilizerTableau(3, 2; state=:ghz);
+
+julia> reset!(tab, 1);
+
+julia> (tab.m, entanglement_entropy(tab, [1]), entanglement_entropy(tab, [2]))
+(1, 0, 1)
+```

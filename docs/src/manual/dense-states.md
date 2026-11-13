@@ -19,15 +19,15 @@ the computational basis:
 
 - [`ket`](@ref) returns the exact expansion of a pure state as a
   [`StabilizerKet`](@ref);
-- [`state_vector`](@ref) returns a dense `Vector{ComplexF64}` of length `d^n`;
-- [`density_matrix`](@ref) returns a dense `d^n × d^n` matrix, for pure and
+- [`state_vector`](@ref) returns a dense `Vector{ComplexF64}` of length ``d^n``;
+- [`density_matrix`](@ref) returns a dense ``d^n \times d^n`` matrix, for pure and
   mixed states alike.
 
 None of them modifies the tableau.
 
 ## Exact kets
 
-A pure stabilizer state with `k` X-type generators has exactly `d^k` nonzero
+A pure stabilizer state with `k` X-type generators has exactly ``d^k`` nonzero
 amplitudes. All have modulus ``d^{-k/2}`` and a phase that is an integer power
 of ``\zeta`` — ``i`` for qubits, ``\omega = e^{2\pi i/d}`` otherwise — so the
 expansion needs no floating point at all:
@@ -52,7 +52,7 @@ StabilizerKet (d = 3, n = 1, 3 terms):
   (|0⟩ + |1⟩ + ω₃|2⟩)/√3
 ```
 
-Labels are stored as digits rather than as indices into the `d^n`-dimensional
+Labels are stored as digits rather than as indices into the ``d^n``-dimensional
 space, so a ket stays small whenever its support does, however large `n` is. A
 100-qutrit GHZ state is three terms:
 
@@ -67,7 +67,7 @@ julia> show(IOContext(stdout, :max_ket_label => 8), k)
 ```
 
 This is an exact support expansion, not a compressed representation:
-``|+\rangle^{\otimes n}`` still has `d^n` terms. The display prints at most 16
+``|+\rangle^{\otimes n}`` still has ``d^n`` terms. The display prints at most 16
 terms and 32 coordinates per label; the `IOContext` properties `:max_ket_terms`
 and `:max_ket_label` change those caps for one `show` call, and a context with
 `:limit` set also stops at the display width.
@@ -184,9 +184,9 @@ state whose density matrix would not depend on phases.
 ## Limits
 
 Each conversion takes a `maxentries` keyword bounding the scalar storage it
-returns — `(n+1)·d^k` integers for a ket, `d^n` entries for a state vector,
-`d^(2n)` for a density matrix — with a default of `2^24`, which is 256 MiB of
-`ComplexF64`. No bound ever forms `d^n`, so asking for the dense vector of a
+returns — ``(n+1)\, d^k`` integers for a ket, ``d^n`` entries for a state vector,
+``d^{2n}`` for a density matrix — with a default of ``2^{24}``, which is 256 MiB of
+`ComplexF64`. No bound ever forms ``d^n``, so asking for the dense vector of a
 100-qutrit state fails cleanly instead of overflowing:
 
 ```jldoctest dense

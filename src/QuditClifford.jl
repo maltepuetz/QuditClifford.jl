@@ -3,8 +3,10 @@
 
 Tools for prime-dimensional qudit stabilizer states represented by stabilizer
 and destabilizer tableaux. The package supports pure and mixed states, Clifford
-unitaries, Pauli measurements, expectation values, canonicalization, and
-stabilizer entanglement entropy.
+unitaries and uniformly random Cliffords and stabilizer states, Pauli
+measurements, expectation values, dephasing, trace-out and reset channels,
+canonicalization, entanglement entropy and negativity, mutual and conditional
+information, and exact or dense state vectors for inspecting small states.
 """
 module QuditClifford
 
