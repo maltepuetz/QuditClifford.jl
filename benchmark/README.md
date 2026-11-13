@@ -14,6 +14,12 @@ is a self-contained two-point comparison.
 
 Docs-only pull requests are skipped on purpose.
 
+The same workflow has a second job, `suite self-test`, which runs
+`benchmark/test_workloads.jl` and then one sample of every `smoke` leaf.
+`@benchmarkable` bodies are quoted, so the A/B job can pass while a leaf
+measures a different branch than its name says; the self-test is what catches
+that. It needs no baseline revision and runs in parallel with the comparison.
+
 ## Reading the table
 
 The ratio column is **base / head, so a ratio above 1 means the branch is
@@ -83,9 +89,12 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 178 | seconds | local sanity check |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 361 | ~90 s (estimated; ~82 s measured before the entropy-profile leaves) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 873 | ~17 min (estimated; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 284 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 477 | ~170 s (measured locally: 145 s of samples, 18 s warmup, the rest suite construction) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 999 | ~25 min (budget sum; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+
+The `dense`, `channels`, `information`, `gates` and `tableau` groups use the
+largest `n` of the profile and the `modulus` group `n = 64` (`8` in `smoke`).
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -93,21 +102,20 @@ multiply-free tiers exclusively. Without a `d = 5` row, no pull-request
 benchmark exercises that tier, and a Barrett guard that began rejecting every
 `d` would show up as no change rather than as a regression.
 
-The `probe/fallback-prime` rows are the only leaves anywhere that run the
-divide-twice fallback. `d = 131` is rejected by the Barrett guard, which is
-necessary but not sufficient: they are built from `scrambled_state`, not from a
-constructor, because a `:ghz` or `:product` tableau holds only `0`, `1` and
-`d-1` and so takes the multiply-free tier at *every* prime. `benchmark/
-test_workloads.jl` asserts the general tier is genuinely reached. `n = 16` is
-there because the fallback's per-call tier dispatch is a fixed cost that only
-shows on short columns.
-
-Only the **mid-circuit** `d = 5` leaves actually reach it. Every `micro` leaf
+Only leaves built on a state with general residues reach it. Every `micro` leaf
 starts from a constructor, whose tableau entries are just `0`, `1` and `d-1`, so
 its multipliers are always `1` or `d-1` and take the multiply-free tiers at every
 `d` -- the `:ghz` `canonicalize!` rows make zero Barrett calls even at `d = 131`.
-The mid-circuit leaves run a scrambling circuit first and hold general residues,
-which is what puts roughly half their calls on the Barrett path.
+The `midcircuit` and `dense` leaves at `d = 5` and the `modulus` leaves at
+`d = 443` hold general residues and do reach it.
+
+The divide-twice fallback is reached by the `probe/fallback-prime` rows and by
+the `modulus` leaves at `d = 131` and `d = 1031`. `d = 131` is rejected by the
+Barrett guard and `d = 1031` lies above its table; either is necessary but not
+sufficient, for the same reason as above. `n = 16` in the fallback probe is
+there because the fallback's per-call tier dispatch is a fixed cost that only
+shows on short columns. `test_workloads.jl` counts the tier every `dense` and
+`modulus` leaf reaches, and replays the fallback probe's elimination.
 
 ## Coverage
 
@@ -152,10 +160,53 @@ right setup for `construct` and `reset!`, and the worst case for
 branches, `canonicalize!`, `expect!` and `entropy/half` — on a state put
 through four seeded brickwork layers of random two-site measurements. The gap
 is not cosmetic — at n = 256, d = 3 on a `DestabilizerTableau`,
-`measure!/deterministic` goes 4.3 µs → 72 µs and `expect!` 3.5 µs → 13 µs. Two
-go the other way, because the fresh state is the *worst* case there:
-`canonicalize!` 49 ms → 2.1 ms, and `entropy/half` 3.0 ms → 99 µs (`:ghz` has
-one fully delocalised generator, which makes the subsystem elimination dense).
+`measure!/deterministic` goes 2.4 µs → 77 µs, and `expect!` goes 1.5 µs → 2.0 µs
+for the local operator and 39 µs for a dense in-span one. `canonicalize!` goes
+the other way, 8.4 ms → 0.49 ms, because the fresh `:ghz` state is its *worst*
+case. `entropy/half` costs about the same on both (84 µs and 85 µs).
+
+A `dense` group repeats the state-sensitive operations on a uniformly random
+(volume-law) state from `random_state!`, at the largest `n` of the profile, for
+every `d` and both tableau types. Most entries of such a tableau are general
+residues, `spread_x` anticommutes with a large share of the generators, and an
+in-span operator decomposes into many of them, so these leaves reach the parts
+of each kernel the constructor and mid-circuit states leave idle:
+
+- `measure!/noncommuting`: `spread_x`, rewriting most generator columns.
+- `measure!/deterministic` and `expect!`: a product of `n/2` generators with
+  seeded powers (`span_product`), so the decomposition has `n/2` terms
+  instead of one or two.
+- `measure!/append`: the `m = n/2` state and a Pauli that commutes with all of
+  its generators but lies outside their span (`commuting_out_of_span`), so `m`
+  goes from `n/2` to `n/2 + 1` and the dual-basis loop runs over `n/2`
+  generators. The spine's `append` leaf starts from `m = 0`, where that loop
+  runs zero times.
+- `canonicalize!` of the pure state.
+
+Both tableau types hold the identical state: the `StabilizerTableau` fixture is
+built from the generator matrix of the `DestabilizerTableau` one.
+`test_workloads.jl` asserts the branch, the number of decomposition terms and
+the change in `m` for every leaf.
+
+A `modulus` group runs `measure!` (both branches), `expect!`, `entropy/half`
+and `canonicalize!` on the same kind of dense state at `d ∈ {131, 443, 1031}`
+and `n = 64`, both tableau types: one prime per tier described under Profiles.
+
+`channels` times `dephase!`, `traceout!` of one site and of a quarter of the
+chain, and the single-site `reset!` on a pure dense state (`d = 3`), each from
+a restored snapshot. `information` times `mutual_information`,
+`tripartite_information`, `conditional_mutual_information` and
+`entanglement_negativity` on adjacent quarters of a dense state, pure and at
+`m = n/2`; none of them changes the state, so they need no restore.
+
+`gates` covers the named gates the `clifford` spine leaves out --
+`Multiplier`, `PauliGate`, `CPhase`, `SWAP` and `SUM` with coefficient `2` --
+at `d = 5`, where `2` is neither `1` nor `d-1`, plus `Fourier` and `SUM` on a
+`storephase = false` tableau. `tableau` covers `copy`, `copy!`, `==` in the
+same and in another generator basis, `hash`, the raw-matrix constructor with
+and without `check`, and `measure!(rng, ...)` with the outcome drawn from an
+RNG that is reseeded with every snapshot restore. All of these sit at the
+largest `n` of the profile only.
 
 A separate `clifford` group benchmarks `apply!` itself, as its own top-level
 group alongside the spine and `midcircuit` above: `Fourier` and `Phase` (one
@@ -228,7 +279,17 @@ leaf could time only two or three times. Both leaves allocate the same
 `full` profile also adds `circuit/monitored/d=2/n=$n` for `n ∈ {16, 32, 64}`:
 a monitored brickwork trajectory with one operator per bond, refilled every
 layer, and `Z` measurements whose outcomes come from the same seeded RNG. Its
-warm hot loop allocates nothing, which `test_workloads.jl` checks.
+warm hot loop allocates nothing, which `test_workloads.jl` checks. Every
+profile runs a short one, `circuit/monitored/$T/d=3/n=32/layers=64` for both
+tableau types, so each pull request times a whole circuit end to end. The
+`random` leaves reseed their RNG in `setup`, so every sample draws the same
+operators and states.
+
+The `full` profile's purification leaves run until the state is pure. With
+seed 1234 at `d = 3` that takes 42 layers at `n = 16` and 1876 at `n = 32`;
+at `n = 64` the state is still mixed after the 10 000-layer cap, so that leaf
+is named `purification/d=3/n=64/capped` and times a fixed-length run.
+`test_workloads.jl` pins all three.
 
 Probes cover one axis at a time at a single representative configuration:
 `storephase = false`, `JustInTimeInvMod`, Pauli sparsity (`SinglePauli` /
@@ -302,17 +363,21 @@ exactly.
   job**, because `--script` resolves against the head checkout.
 - **`canonicalize!` must start from genuinely non-canonical data.** A
   `:product` tableau is already in RCEF, and `canonicalize!` has no
-  `iscanonical` early return, so it would collapse to O(n·m) and report ~0.2 ms
-  instead of the real 25–48 ms at n = 256. The suite restores a `:ghz` snapshot
+  `iscanonical` early return, so it would collapse to O(n·m) and report a
+  fraction of the real 5.8 ms (`StabilizerTableau`) and 8.4 ms
+  (`DestabilizerTableau`) at n = 256. The suite restores a `:ghz` snapshot
   before every sample; `test_workloads.jl` pins this.
 - **`measure!` at d = 2 warns on every non-Hermitian Pauli** under the default
   `phase_policy`. Everything here passes `phase_policy = 2`.
-- **The cheapest n = 64 leaves sit near the timer floor.** A few are ~125 ns,
-  and the mutating ones cannot use `evals > 1` (running `measure!` a hundred
-  times per sample measures a different thing — `m` grows and the state moves).
-  Their ratios carry a `±` larger than their deviation from 1, which is exactly
-  the signal to ignore them; they are there for scaling context, not as primary
-  evidence.
+- **The cheapest mutating leaves sit near the timer floor.** Leaves that leave
+  the state alone (`expect!`, construction, the `CliffordOperator` algebra, the
+  samplers, `reset!`) run `READONLY_EVALS = 100` evaluations per sample, which
+  lifts them well above the ~42 ns tick. The mutating ones cannot use
+  `evals > 1` (running `measure!` a hundred times per sample measures a
+  different thing — `m` grows and the state moves), so a few n = 64 `measure!`
+  and `apply!` leaves stay at a few hundred ns. Their ratios carry a `±` larger
+  than their deviation from 1, which is exactly the signal to ignore them; they
+  are there for scaling context, not as primary evidence.
 - **Fork pull requests may not resolve.** CI installs each revision with
   `Pkg.add(PackageSpec(..., rev=<sha>, url=<base clone url>))`; whether a
   fork's head SHA is fetchable that way is untested. Every PR in this

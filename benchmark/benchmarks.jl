@@ -21,20 +21,20 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~95 s per revision
+#   ci     n in (64, 256)      the PR job; ~170 s per revision
 #   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
 #
 # d = 5 is in `ci` because it is the smallest prime that takes the Barrett tier
 # in src/modular.jl. Without it no pull-request benchmark executes that tier at
 # all, and a guard that started rejecting every d would look like no change.
 const CONFIG = if PROFILE == "smoke"
-    (ns = (8,), ds = (2, 3), probe_n = 8, circuits = false,
+    (ns = (8,), ds = (2, 3), probe_n = 8, modulus_n = 8, circuits = false,
      stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "ci"
-    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, circuits = false,
+    (ns = (64, 256), ds = (2, 3, 5), probe_n = 256, modulus_n = 64, circuits = false,
      stored_ks = (1, 2, 8), stored_product = false)
 elseif PROFILE == "full"
-    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, circuits = true,
+    (ns = (64, 256, 512), ds = (2, 3, 5, 7), probe_n = 512, modulus_n = 64, circuits = true,
      stored_ks = (1, 2, 8, 32, 128), stored_product = true)
 else
     error("Unknown QC_BENCH_PROFILE = $(repr(PROFILE)); expected \"smoke\", \"ci\" or \"full\".")
@@ -83,6 +83,14 @@ register_clifford_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
 # the sampling API.
 register_random_group!(SUITE, TYPES, CONFIG.ds, CONFIG.ns;
                        ks = CONFIG.stored_ks, circuits = CONFIG.circuits)
+
+# ---------------------------------------------------------------- breadth
+# Uniformly random (volume-law) states, the moduli above d = 5, the channels,
+# the information measures, the remaining named gates and tableau
+# housekeeping. Single size: these track kernels the spine does not reach, not
+# their scaling. See register_breadth_groups!.
+register_breadth_groups!(SUITE, TYPES; n = last(CONFIG.ns), dense_ds = CONFIG.ds,
+                         modulus_n = CONFIG.modulus_n)
 
 # --------------------------------------------------------- entropy profile
 # Compare one elimination with the loop over all prefixes, for pure and mixed
@@ -183,17 +191,23 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
 end
 
 # ---------------------------------------------------------------- circuits
-# End-to-end trajectories. Full profile only: these are seconds each.
+# End-to-end trajectories. Full profile only: the Ising runs take up to ~20 ms and
+# the n = 64 purification run ~0.5 s per sample. The short monitored circuit
+# that every profile runs is registered with the random group.
 
 if CONFIG.circuits
     for L in (16, 32, 64)
         SUITE["circuit"]["ising/d=2/L=$L"] =
             @benchmarkable(ising_trajectory!(L = $L, d = 2, seed = 1234), evals = 1)
     end
-    for n in (16, 32, 64)
+    # n = 16 and 32 purify before the cap; n = 64 does not, so it times a
+    # fixed 10 000 layers and says so in its name. test_workloads.jl pins both.
+    for n in (16, 32)
         SUITE["circuit"]["purification/d=3/n=$n"] =
             @benchmarkable(purification_trajectory(d = 3, n = $n, seed = 1234), evals = 1)
     end
+    SUITE["circuit"]["purification/d=3/n=64/capped"] =
+        @benchmarkable(purification_trajectory(d = 3, n = 64, seed = 1234), evals = 1)
 end
 
 # ------------------------------------------------------------------ budget
@@ -223,28 +237,37 @@ function _budget(profile, keypath)
     group = first(keypath)
     joined = join(keypath, "/")
 
-    # Whole trajectories: ~1.6 s per sample for purification at n = 64, so
-    # these need an absolute budget rather than a multiple of the ci one.
-    group == "circuit" && return profile == "full" ? 30.0 : 5.0
+    # Long trajectories: ~0.5 s per sample for purification at n = 64, so
+    # these need an absolute budget rather than a multiple of the ci one. The
+    # short monitored leaves that run in every profile (`layers=` in the key)
+    # take a few ms and fall through to the default tier.
+    group == "circuit" && !occursin("layers=", joined) &&
+        return profile == "full" ? 30.0 : 5.0
 
-    # canonicalize! from a cold :ghz tableau, and :ghz construction itself, are
-    # the expensive leaves: ~25 ms (Stab) and ~48-52 ms (Destab) at n = 256,
-    # ~150 ms on a CI runner, against well under 1 ms for everything else in
-    # the cell. They still need a bigger slice than the default.
-    #
-    # 2.0 s is enough: on CI these are already the most precise rows in the
-    # table -- 0.998 +/- 0.0019 at ~19 samples, because they are pure integer
-    # work with no allocation variance. Within-revision precision of 0.2% is
-    # far below the ~5-10% between-revision scatter it is being compared
-    # against, so a larger slice would buy nothing. 2.0 s still clears ~13
-    # samples on a runner 3x slower than a dev machine.
-    #
-    # The midcircuit canonicalize! starts from a nearly canonical tableau and
-    # is ~20x cheaper, so it stays in the default tier.
+    # canonicalize! from a cold :ghz tableau is the most expensive leaf of a
+    # cell: 5.7 ms (Stab) and 8.1-8.4 ms (Destab) at n = 256 on a development
+    # machine, against well under 1 ms for most of the rest. The default 0.4 s
+    # still gives it ~16 samples on a runner 3x slower, and on CI these are
+    # already the most precise rows in the table (pure integer work, no
+    # allocation variance), so ci needs no bigger slice. The full profile goes
+    # to n = 512, where the O(n^3) cost is ~8x higher, so there they get 2.0 s
+    # (scaled). The fallback-prime canonicalize! at n = 256 is ~70 ms, the
+    # slowest leaf ci runs, so it gets that slice in every profile.
     cold = group == "micro" || group == "probe"
     if cold && (occursin("canonicalize!", joined) || occursin("construct/ghz", joined)) &&
-       !occursin("n=64", joined)
+       !occursin("n=64", joined) &&
+       (profile == "full" || occursin("fallback-prime", joined))
         return 2.0 * scale
+    end
+
+    # The dense canonicalize! leaves, and the StabilizerTableau deterministic
+    # measurement that canonicalizes on every call, reach 15-25 ms at n = 256
+    # and d = 5. 1.0 s keeps them above ~13 samples on a runner 3x slower.
+    if group == "dense" && (occursin("canonicalize!", joined) ||
+                            (occursin("StabilizerTableau/", joined) &&
+                             !occursin("DestabilizerTableau/", joined) &&
+                             occursin("deterministic", joined)))
+        return 1.0 * scale
     end
 
     occursin("n=64", joined) && return 0.2 * scale

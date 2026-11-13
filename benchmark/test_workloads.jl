@@ -1,6 +1,9 @@
 using Test
 include(joinpath(@__DIR__, "workloads.jl"))
 
+# Barrett and fallback call counts, filled by the tier testset at the end.
+const TIER_COUNTS = zeros(Int, 2)
+
 @testset "Workloads" begin
     @testset "Entropy profile comparison and baseline compatibility" begin
         types = (StabilizerTableau, DestabilizerTableau)
@@ -599,7 +602,13 @@ include(joinpath(@__DIR__, "workloads.jl"))
                             ["state/$(nameof(T))/d=$d/n=8/m=$m"
                              for T in types for d in (2, 3) for m in (1, 8)]))
         @test Set(keys(head["random"])) == expected
-        @test Set(keys(head["circuit"])) == Set(["monitored/d=2/n=$n" for n in (16, 32, 64)])
+        @test Set(keys(head["circuit"])) ==
+              Set(vcat(["monitored/d=2/n=$n" for n in (16, 32, 64)],
+                       ["monitored/$(nameof(T))/d=3/n=32/layers=64" for T in types]))
+        for T in types
+            leaf = head["circuit"]["monitored/$(nameof(T))/d=3/n=32/layers=64"]
+            @test !isempty(run(leaf; samples = 1, evals = 1, seconds = 0.05).times)
+        end
         # @benchmarkable bodies are quoted, so a broken leaf is invisible until run.
         for (path, leaf) in BenchmarkTools.leaves(head["random"])
             trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
@@ -680,5 +689,248 @@ include(joinpath(@__DIR__, "workloads.jl"))
         # and the fixed-d safe group beside the stored/construct cell.
         @test haskey(head["clifford"], "stored/algebra/d=3")
         @test haskey(head["clifford"], "stored/safe/d=1000000007")
+    end
+
+    @testset "Read-only leaves evaluate many times per sample" begin
+        mk = tableau_maker(DestabilizerTableau, 3, 64)
+        @test bench_expect(mk, spread_z(64)).params.evals == READONLY_EVALS
+        @test bench_reset(mk).params.evals == READONLY_EVALS
+        for (_, leaf) in BenchmarkTools.leaves(stored_clifford_construct_group(3))
+            @test leaf.params.evals == READONLY_EVALS
+        end
+        for (_, leaf) in BenchmarkTools.leaves(stored_clifford_algebra_group(3))
+            @test leaf.params.evals == READONLY_EVALS
+        end
+        for (_, leaf) in BenchmarkTools.leaves(random_refill_group(3))
+            @test leaf.params.evals == READONLY_EVALS
+        end
+        # Repeating expect! leaves its tableau where it was, which is what
+        # makes evals > 1 measure the same call every time.
+        tab = mk(:product)
+        canonicalize!(tab)
+        before = copy(tab.stab)
+        for _ in 1:5
+            expect!(tab, spread_z(64))
+        end
+        @test tab.stab == before
+    end
+
+    @testset "Random leaves reseed their RNG in setup" begin
+        # Every sample of a random/* leaf draws the same operator or state.
+        (; rng, U) = random_operator_fixture(3, 2)
+        draws = map(1:2) do _
+            Random.seed!(rng, 20260925 + 2)
+            copy(QuditClifford.random_clifford!(rng, U).F)
+        end
+        @test draws[1] == draws[2]
+    end
+
+    @testset "Dense fixtures are volume-law, identical across types and noncanonical" begin
+        for d in (2, 3, 5), n in (8, 64)
+            D = dense_state(DestabilizerTableau, d, n)
+            S = dense_state(StabilizerTableau, d, n)
+            @test D.m == S.m == n
+            @test S == D
+            @test is_pure(D; verify = true)
+            @test dense_state(DestabilizerTableau, d, n).stab == D.stab   # seeded
+            # most entries nonzero, unlike a constructor state's one-hot rows
+            @test count(!iszero, D.stab[1:(2n), :]) > 0.4 * 2n * n
+            for tab in (S, D)
+                @test !tab.iscanonical
+                before = copy(tab.stab)
+                c = copy(tab)
+                canonicalize!(c)
+                @test c.stab != before        # canonicalize! has real work to do
+            end
+            mixed = dense_state(StabilizerTableau, d, n; m = n ÷ 2)
+            @test mixed.m == n ÷ 2
+            @test mixed == dense_state(DestabilizerTableau, d, n; m = n ÷ 2)
+        end
+    end
+
+    @testset "Dense measure! leaves hit the branches they claim" begin
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (8, 64)
+            pure = dense_state(T, d, n)
+            D = dense_state(DestabilizerTableau, d, n)
+
+            # noncommuting: spread_x anticommutes with many generators, so the
+            # update rewrites a large share of the columns
+            op = first_anticommuting(pure, [spread_x(n)])
+            @test op == spread_x(n)
+            anti = count(j -> mod(QuditClifford.commutation_col(pure.stab, j, op), d) != 0,
+                         1:pure.m)
+            @test anti >= n ÷ 4
+            t = copy(pure)
+            measure!(t, op; outcome = 0, phase_policy = 2)
+            @test t.m == n && t != pure
+
+            # deterministic: the span product decomposes into exactly cld(n, 2)
+            # generators, read off the dual basis
+            inspan = span_product(pure)
+            @test inspan.xz == span_product(D).xz
+            coeffs = count(j -> mod(QuditClifford.commutation_col(D.destab, j, inspan), d) != 0,
+                           1:n)
+            @test coeffs == cld(n, 2)
+            @test expect_int!(copy(pure), inspan) != -1
+            t = copy(pure)
+            measure!(t, inspan; outcome = 0, phase_policy = 2)
+            @test t.m == n && t == pure
+
+            # append: commutes with every generator of the m = n/2 state, lies
+            # outside its span, and raises m by one
+            mixed = dense_state(T, d, n; m = n ÷ 2)
+            w = commuting_out_of_span(dense_state(DestabilizerTableau, d, n; m = n ÷ 2))
+            @test any(!iszero, w.xz)
+            @test all(j -> mod(QuditClifford.commutation_col(mixed.stab, j, w), d) == 0,
+                      1:mixed.m)
+            @test expect_int!(copy(mixed), w) == -1
+            t = copy(mixed)
+            measure!(t, w; outcome = 0, phase_policy = 2)
+            @test t.m == n ÷ 2 + 1
+
+            # every leaf runs, and a restored sample starts from the same state
+            g = dense_group(; d, n, T)
+            @test Set(keys(g)) == Set(["measure!/noncommuting", "measure!/deterministic",
+                                       "measure!/append", "expect!", "canonicalize!"])
+            run(g; samples = 2, evals = 1, seconds = 0.05)
+        end
+    end
+
+    @testset "Channel and information leaves" begin
+        for T in (StabilizerTableau, DestabilizerTableau), n in (8, 64)
+            pure = dense_state(T, 3, n)
+            s1, _ = spread_sites(n)
+            quarter = collect(s1:(s1 + n ÷ 4 - 1))
+            # each channel lowers the rank of the pure dense state
+            for f! in (t -> dephase!(t, spread_x(n)), t -> traceout!(t, s1),
+                       t -> traceout!(t, quarter), t -> reset!(t, s1))
+                t = copy(pure)
+                f!(t)
+                @test t.m < n
+            end
+            run(channel_group(; d = 3, n, T); samples = 2, evals = 1, seconds = 0.05)
+
+            # the information measures leave the state untouched, so their
+            # leaves can share one tableau across samples
+            A, B, C = quarters(n)
+            @test isempty(intersect(A, B)) && isempty(intersect(B, C)) && maximum(C) <= n
+            for m in (n, n ÷ 2)
+                tab = dense_state(T, 3, n; m)
+                before, canon = copy(tab.stab), tab.iscanonical
+                @test mutual_information(tab, A, B) >= 0
+                tripartite_information(tab, A, B, C)
+                @test conditional_mutual_information(tab, A, B, C) >= 0
+                @test entanglement_negativity(tab, A, B) >= 0
+                @test tab.stab == before && tab.iscanonical == canon && tab.m == m
+            end
+            g = information_group(; d = 3, n, T)
+            @test length(g) == 8
+            run(g; samples = 1, evals = 1, seconds = 0.05)
+        end
+    end
+
+    @testset "Gate and tableau-utility leaves" begin
+        for T in (StabilizerTableau, DestabilizerTableau), n in (8, 64)
+            g = gate_group(; d = 5, n, T)
+            @test length(g) == 7
+            run(g; samples = 2, evals = 1, seconds = 0.05)
+
+            u = tableau_group(; d = 3, n, T)
+            @test haskey(u, "measure!/rng")
+            # the read-only leaves still see the fixture after the measuring
+            # leaf has run: == takes the entrywise fast path, which stays at
+            # zero allocations
+            run(u["measure!/rng"]; samples = 2, evals = 1, seconds = 0.05)
+            run(u; samples = 2, evals = 1, seconds = 0.05)
+            @test allocs(run(u["==/same-basis"]; samples = 2, evals = 1)) == 0
+
+            tab = scrambled_tableau(tableau_maker(T, 3, n), 3, n; seed = DENSE_SEED)
+            other = copy(tab)
+            canonicalize!(other)
+            @test !tab.iscanonical && other.stab != tab.stab   # the slow == path
+            @test tab == other && hash(tab) == hash(other)
+            nraw = max(2, n ÷ 4)
+            raw = scrambled_tableau(tableau_maker(T, 3, nraw), 3, nraw; seed = DENSE_SEED)
+            M = copy(raw.stab)
+            @test T(3, M; m = nraw) == raw
+            @test T(3, M; m = nraw, check = false) == raw
+            @test M == raw.stab                                # input not modified
+
+            # measure!/rng: restoring the snapshot and reseeding gives the same
+            # drawn outcome every sample
+            op = first_anticommuting(tab, [spread_x(n)])
+            outcomes = map(1:2) do _
+                t = copy(tab)
+                rng = Random.Xoshiro(DENSE_SEED)
+                measure!(rng, t, op; phase_policy = 2)
+                t.stab[end, :]
+            end
+            @test outcomes[1] == outcomes[2]
+        end
+    end
+
+    @testset "Breadth registration" begin
+        types = (StabilizerTableau, DestabilizerTableau)
+        no_api = BenchmarkGroup()
+        register_breadth_groups!(no_api, types; n = 8, dense_ds = (2, 3), modulus_n = 8,
+                                 api = Module(:NoRandomState))
+        @test isempty(no_api)
+        suite = BenchmarkGroup()
+        register_breadth_groups!(suite, types; n = 8, dense_ds = (2, 3), modulus_n = 8)
+        @test Set(keys(suite)) ==
+              Set(["dense", "modulus", "channels", "information", "gates", "tableau"])
+        @test length(suite["dense"]) == 4
+        @test length(suite["modulus"]) == 2 * length(MODULUS_PRIMES)
+    end
+
+    @testset "Purification leaves purify, except the capped one" begin
+        for n in (16, 32)
+            _, layer = purification_trajectory(d = 3, n = n, seed = 1234)
+            @test layer <= 10_000
+        end
+        hist, layer = purification_trajectory(d = 3, n = 64, seed = 1234)
+        @test layer == 10_001
+        @test hist[end] < 64
+    end
+
+    # Count which tier of src/modular.jl each leaf reaches. Every call with a
+    # multiplier other than 0, 1 and d-1 asks `_barrett_valid` once, so a
+    # counting copy of it records Barrett (true) and fallback (false) calls.
+    # The copy recomputes the predicate from the same table, so results are
+    # unchanged; if those internals move, this errors instead of passing.
+    @testset "Dense and modulus leaves reach the arithmetic tier they claim" begin
+        @eval QuditClifford @inline function _barrett_valid(d::Int)
+            ok = d < 1 ? false :
+                 d <= _BARRETT_TABLE_MAX ? (@inbounds _BARRETT_VALID[d]) :
+                 (ispow2(d) && ((1 << _BARRETT_K) % d == 0))
+            Main.TIER_COUNTS[ok ? 1 : 2] += 1
+            return ok
+        end
+        function tiers(leaf)
+            fill!(TIER_COUNTS, 0)
+            run(leaf; samples = 1, evals = 1, seconds = 1.0)
+            return (barrett = TIER_COUNTS[1], fallback = TIER_COUNTS[2])
+        end
+
+        # the counter sees the existing fallback probe
+        @test tiers(bench_canonicalize_state(fallback_probe_state(16))).fallback > 0
+
+        @test QuditClifford._barrett_valid(5)
+        for T in (StabilizerTableau, DestabilizerTableau)
+            for (key, leaf) in dense_group(; d = 5, n = 16, T)
+                c = tiers(leaf)
+                @test c.barrett > 0
+                @test c.fallback == 0
+            end
+            for d in MODULUS_PRIMES
+                barrett = QuditClifford._barrett_valid(d)
+                @test barrett == (d == 443)
+                for (key, leaf) in modulus_group(; d, n = 16, T)
+                    c = tiers(leaf)
+                    @test (barrett ? c.barrett : c.fallback) > 0
+                    @test (barrett ? c.fallback : c.barrett) == 0
+                end
+            end
+        end
     end
 end
