@@ -8,6 +8,23 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Breaking
+
+- `measure!` on qubits returns the outcome `t ∈ {0, 1}`, meaning eigenvalue
+  `(-1)^t`, in every branch. A deterministic measurement with `storephase=true`
+  used to return the `i`-exponent instead, so eigenvalue `-1` came back as `1`
+  from a random measurement and as `2` from the same measurement repeated.
+  Code that compared a deterministic qubit result with `2` must compare with
+  `1`. Odd `d` is unchanged, `expect_int!` still returns the `i`-exponent
+  (`2t` for a Hermitian operator), and with `storephase=false` a deterministic
+  measurement still returns `0`.
+- A deterministic qubit `measure!` whose operator has eigenvalue `±i` on the
+  state throws an `ArgumentError` instead of returning `1` or `3`. This needs a
+  non-Hermitian operator kept by `phase_policy` `0` or `2`, or a non-Hermitian
+  stored generator; `phase_policy=1` and `expect_int!` are unaffected.
+- `measure!` throws an `ArgumentError` for an `outcome` outside `0:(d-1)`.
+  Such a value was used modulo `d` for the state but returned as given.
+
 ### Added
 
 - `measure!(rng, tab, op; outcome, phase_policy)` draws the outcome of a

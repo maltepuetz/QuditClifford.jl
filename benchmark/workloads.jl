@@ -122,13 +122,13 @@ bench_construct(mk; state = :product) =
 """
 `measure!` on a fresh-each-sample tableau. `evals = 1` and a snapshot restore
 because the call mutates: it rewrites generators, can raise `m`, and clears
-`iscanonical`. `phase_policy = 2` silences the d = 2 Hermiticity warning, which
-would otherwise flood the log and dominate the timing.
+`iscanonical`. `phase_policy = 1` measures the Hermitian form of a d = 2 operand:
+the default policy would warn, flooding the log and dominating the timing.
 """
 function bench_measure(mk, state, op)
     tab = mk(state)
     snap = snapshot(tab)
-    return @benchmarkable(measure!($tab, $op; outcome = 0, phase_policy = 2),
+    return @benchmarkable(measure!($tab, $op; outcome = 0, phase_policy = 1),
                           setup = (restore!($snap)), evals = 1)
 end
 
@@ -744,10 +744,10 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     inspan = in_span_operator(tab)
 
     g["measure!/noncommuting"] = @benchmarkable(
-        measure!($tab, $anti; outcome = 0, phase_policy = 2),
+        measure!($tab, $anti; outcome = 0, phase_policy = 1),
         setup = (restore!($snap)), evals = 1)
     g["measure!/deterministic"] = @benchmarkable(
-        measure!($tab, $inspan; outcome = 0, phase_policy = 2),
+        measure!($tab, $inspan; outcome = 0, phase_policy = 1),
         setup = (restore!($snap)), evals = 1)
     g["canonicalize!"] = @benchmarkable(
         canonicalize!($tab), setup = (restore!($snap)), evals = 1)
@@ -869,7 +869,7 @@ constructor state.
 """
 function bench_measure_on(tab, op)
     snap = snapshot(tab)
-    return @benchmarkable(measure!($tab, $op; outcome = 0, phase_policy = 2),
+    return @benchmarkable(measure!($tab, $op; outcome = 0, phase_policy = 1),
                           setup = (restore!($snap)), evals = 1)
 end
 
@@ -1075,7 +1075,7 @@ function tableau_group(; d::Int, n::Int, T)
         mtab = copy(tab)
         snap = snapshot(mtab)
         g["measure!/rng"] = @benchmarkable(
-            measure!($rng, $mtab, $op; phase_policy = 2),
+            measure!($rng, $mtab, $op; phase_policy = 1),
             setup = (restore!($snap); Random.seed!($rng, $DENSE_SEED)), evals = 1)
     end
     return g
@@ -1129,13 +1129,13 @@ function ising_trajectory!(; L::Int, d::Int = 2, p::Float64 = 0.5,
             if rand(rng) < 1 - p
                 j = mod1(i + 1, L)          # periodic boundary
                 measure!(state, DoublePauli(i, 0, 1, j, 0, d - 1);
-                         outcome = rand(rng, 0:(d - 1)), phase_policy = 2)
+                         outcome = rand(rng, 0:(d - 1)), phase_policy = 1)
             end
         end
         for i in 1:L
             if rand(rng) < p
                 measure!(state, SinglePauli(i, 1, 0);
-                         outcome = rand(rng, 0:(d - 1)), phase_policy = 2)
+                         outcome = rand(rng, 0:(d - 1)), phase_policy = 1)
             end
         end
     end
@@ -1164,10 +1164,10 @@ function random_brickwork_layer!(rng, tab, d, n, layer)
         j = mod1(i + 1, n)
         x_i, z_i = random_local_pauli(rng, d)
         x_j, z_j = random_local_pauli(rng, d)
-        # phase_policy = 2: at d = 2 a random (x, z) is non-Hermitian half the
+        # phase_policy = 1: at d = 2 a random (x, z) is non-Hermitian half the
         # time, and the default policy would @warn on every such measurement.
         measure!(tab, DoublePauli(i, x_i, z_i, j, x_j, z_j);
-                 outcome = rand(rng, 0:(d - 1)), phase_policy = 2)
+                 outcome = rand(rng, 0:(d - 1)), phase_policy = 1)
     end
     return nothing
 end

@@ -271,8 +271,7 @@ function dft_check_measure(rng, tab, rho, op, v, ph)
     dft_check_invariants(c)
     tmax = argmax(probs) - 1
     if probs[tmax+1] > 1 - 1e-8
-        # Deterministic: the qubit return value is the i-exponent 2t.
-        @test r == (d == 2 ? 2tmax : tmax)
+        @test r == tmax
         @test c.m == tab.m
         @test dft_rho(c) ≈ rho atol = 1e-8
         return :inspan

@@ -368,7 +368,8 @@ exactly.
   (`DestabilizerTableau`) at n = 256. The suite restores a `:ghz` snapshot
   before every sample; `test_workloads.jl` pins this.
 - **`measure!` at d = 2 warns on every non-Hermitian Pauli** under the default
-  `phase_policy`. Everything here passes `phase_policy = 2`.
+  `phase_policy`. Everything here passes `phase_policy = 1`, which measures the
+  Hermitian form of the operator.
 - **The cheapest mutating leaves sit near the timer floor.** Leaves that leave
   the state alone (`expect!`, construction, the `CliffordOperator` algebra, the
   samplers, `reset!`) run `READONLY_EVALS = 100` evaluations per sample, which

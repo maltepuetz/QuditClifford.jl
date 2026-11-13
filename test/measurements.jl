@@ -385,7 +385,8 @@ end
             )
             for (branch, raw, m, xs, zs) in cases
                 outcome = d - 1
-                phase = 1
+                # -1 for qubits, ω otherwise: outcome 1 on the in-span operator.
+                phase = d == 2 ? 2 : 1
                 tab = TT(d, copy(raw); m=m, storephase=storephase)
                 ref = TT(d, copy(raw); m=m, storephase=storephase)
                 op = _huge_measurement_op(kind, n, d, qudits, xs, zs, phase, true)
@@ -393,7 +394,7 @@ end
 
                 expected = measure!(ref, op_ref; outcome=outcome, phase_policy=2)
                 if branch === :inspan
-                    @test expected == (storephase ? phase : 0)
+                    @test expected == (storephase ? 1 : 0)
                     @test ref.m == m
                 else
                     @test expected == outcome
@@ -418,7 +419,7 @@ end
                                       (:triple, 1, (1, 0, 0), (0, 0, 0)), # append
                                       (:npauli, 1, (1, 0), (0, 0)))
                 qudits = kind === :triple ? (1, 2, 3) : (1, 3)
-                op = _huge_measurement_op(kind, 3, d, qudits, xs, zs, 1, true)
+                op = _huge_measurement_op(kind, 3, d, qudits, xs, zs, d == 2 ? 2 : 1, true)
                 @test _huge_measure_allocated(TT, d, storephase, op, m) == 0
             end
         end
@@ -678,5 +679,102 @@ measval_invalid_ops() = (
         @test_throws "outside the register" measure!(tab, SinglePauli(3, 1, 0))
         @test_throws "more than once" measure!(tab, DoublePauli(1, 1, 0, 1, 0, 1))
         @test_throws "expected 2n = 4" measure!(tab, GeneralPauli([0, 1], 0))
+    end
+end
+
+@testset "measure! returns one outcome encoding in every branch" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3), storephase in (true, false)
+        @testset "$label d=$d storephase=$storephase" begin
+            x1 = SinglePauli(1, 1, 0)
+            z2 = SinglePauli(2, 0, 1)
+            for t in 0:d-1
+                # Without a phase row a deterministic outcome is 0 by convention.
+                repeated = storephase ? t : 0
+
+                # Anticommuting, then the same measurement repeated.
+                tab = TT(d, 2; state=:product, basis=:Z, storephase=storephase)
+                @test measure!(tab, x1; outcome=t) == t
+                @test measure!(tab, x1) == repeated
+                @test measure!(tab, x1; outcome=mod(t + 1, d)) == repeated
+                @test measure!(tab, [1, 0, 0, 0]) == repeated
+
+                # Appending, then the same measurement repeated.
+                tab = TT(d, 2; state=:mixed, storephase=storephase)
+                @test measure!(tab, z2; outcome=t) == t
+                @test measure!(tab, z2) == repeated
+
+                # A returned value replays the trajectory.
+                replay = TT(d, 2; state=:mixed, storephase=storephase)
+                @test measure!(replay, z2; outcome=measure!(tab, z2)) == repeated
+                storephase && @test replay == tab
+            end
+
+            # Operands carrying a phase: -X (d = 2) or ω X (odd d) on an X eigenstate.
+            if storephase
+                shift = d == 2 ? 2 : 1
+                for t in 0:d-1
+                    tab = TT(d, 1; state=:product, basis=:Z)
+                    measure!(tab, x1; outcome=t)
+                    @test measure!(tab, SinglePauli(1, 1, 0, shift)) == mod(t + 1, d)
+                    if d == 2
+                        @test expect_int!(tab, x1) == 2 * measure!(tab, x1)
+                    else
+                        @test expect_int!(tab, x1) == measure!(tab, x1)
+                    end
+                end
+            end
+        end
+    end
+end
+
+@testset "measure! rejects a qubit operator with eigenvalue ±i" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            # i·Z and -i·Z on |0>, and Y written without its i on a Y eigenstate.
+            for (basis, op) in ((:Z, SinglePauli(1, 0, 1, 1)), (:Z, SinglePauli(1, 0, 1, 3)),
+                                (:Y, SinglePauli(1, 1, 1, 0)), (:Y, SinglePauli(1, 1, 1, 2)))
+                tab = TT(2, 1; state=:product, basis=basis)
+                before = copy(tab)
+                @test_throws ArgumentError measure!(tab, op; phase_policy=2)
+                @test_throws "eigenvalue" measure!(tab, op; phase_policy=2)
+                @test tab == before
+                # The exponent form still reports the value, and the Hermitian fix measures.
+                @test isodd(expect_int!(tab, op))
+                @test measure!(tab, op; phase_policy=1) in (0, 1)
+            end
+
+            # A non-Hermitian operand measured twice is consistent with itself.
+            for ph in (1, 3), t in 0:1
+                tab = TT(2, 1; state=:product, basis=:Z)
+                op = SinglePauli(1, 1, 0, ph)
+                @test measure!(tab, op; outcome=t, phase_policy=2) == t
+                @test measure!(tab, op; phase_policy=2) == t
+            end
+
+            # Without a phase row there is no eigenvalue to object to.
+            tab = TT(2, 1; state=:product, basis=:Z, storephase=false)
+            @test measure!(tab, SinglePauli(1, 0, 1, 1); phase_policy=2) == 0
+        end
+    end
+end
+
+@testset "measure! rejects an outcome outside 0:d-1" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3), storephase in (true, false)
+        @testset "$label d=$d storephase=$storephase" begin
+            # One operand per branch: anticommuting, in span, appending.
+            tab = TT(d, 2; state=:mixed, storephase=storephase)
+            measure!(tab, SinglePauli(1, 0, 1); outcome=0)
+            before = copy(tab)
+            for op in (SinglePauli(1, 1, 0), SinglePauli(1, 0, 1), SinglePauli(2, 0, 1)),
+                outcome in (-1, d, d + 1, typemax(Int), typemin(Int))
+                @test_throws ArgumentError measure!(tab, op; outcome=outcome)
+                @test_throws "outcome" measure!(Xoshiro(1), tab, [0, 0, 1, 0]; outcome=outcome)
+                @test tab.stab == before.stab
+                @test tab.m == before.m
+                tab isa DestabilizerTableau && @test tab.destab == before.destab
+            end
+        end
     end
 end
