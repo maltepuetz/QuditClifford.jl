@@ -92,7 +92,7 @@ const TIER_COUNTS = zeros(Int, 2)
             stab0, m0 = copy(tab.stab), tab.m
 
             # A mutating op, then restore: the tableau must be bit-identical.
-            measure!(tab, SinglePauli(1, 1, 0); outcome = 0, phase_policy = 2)
+            measure!(tab, SinglePauli(1, 1, 0); outcome = 0, phase_policy = 1)
             canonicalize!(tab)
             @test tab.stab != stab0          # the ops really did change it
             restore!(snap)
@@ -163,7 +163,7 @@ const TIER_COUNTS = zeros(Int, 2)
     end
 
     @testset "Measurements stay quiet at d = 2" begin
-        # phase_policy = 2 everywhere: the default policy @warns on every
+        # phase_policy = 1 everywhere: the default policy @warns on every
         # non-Hermitian qubit Pauli, which a random circuit produces constantly.
         @test_logs ising_trajectory!(L = 6, depth = 8, seed = 3)
         @test_logs purification_trajectory(d = 2, n = 6, seed = 3)
@@ -761,7 +761,7 @@ const TIER_COUNTS = zeros(Int, 2)
                          1:pure.m)
             @test anti >= n ÷ 4
             t = copy(pure)
-            measure!(t, op; outcome = 0, phase_policy = 2)
+            measure!(t, op; outcome = 0, phase_policy = 1)
             @test t.m == n && t != pure
 
             # deterministic: the span product decomposes into exactly cld(n, 2)
@@ -773,7 +773,7 @@ const TIER_COUNTS = zeros(Int, 2)
             @test coeffs == cld(n, 2)
             @test expect_int!(copy(pure), inspan) != -1
             t = copy(pure)
-            measure!(t, inspan; outcome = 0, phase_policy = 2)
+            measure!(t, inspan; outcome = 0, phase_policy = 1)
             @test t.m == n && t == pure
 
             # append: commutes with every generator of the m = n/2 state, lies
@@ -785,7 +785,7 @@ const TIER_COUNTS = zeros(Int, 2)
                       1:mixed.m)
             @test expect_int!(copy(mixed), w) == -1
             t = copy(mixed)
-            measure!(t, w; outcome = 0, phase_policy = 2)
+            measure!(t, w; outcome = 0, phase_policy = 1)
             @test t.m == n ÷ 2 + 1
 
             # every leaf runs, and a restored sample starts from the same state
@@ -862,7 +862,7 @@ const TIER_COUNTS = zeros(Int, 2)
             outcomes = map(1:2) do _
                 t = copy(tab)
                 rng = Random.Xoshiro(DENSE_SEED)
-                measure!(rng, t, op; phase_policy = 2)
+                measure!(rng, t, op; phase_policy = 1)
                 t.stab[end, :]
             end
             @test outcomes[1] == outcomes[2]

@@ -341,18 +341,28 @@ Projectively measure a Pauli operator `op` and update `tab` in-place.
 - `outcome::Union{Int,Nothing}=nothing`: Outcome used when the measurement is random.
   With `nothing`, it is drawn uniformly from `0:(d-1)` with `rng`, and only when the
   measurement turns out to be random: a deterministic measurement draws nothing, so
-  it leaves `rng` untouched. An explicit `outcome` replaces the draw.
+  it leaves `rng` untouched. An explicit `outcome` replaces the draw; it must lie in
+  `0:(d-1)` and uses the encoding of the returned value.
 - `phase_policy::Int=0`: How to handle non-Hermitian Paulis when `d=2`.
   - `0`: warn (default), keep phase as-is.
   - `1`: auto-fix phase to a Hermitian one, no warning.
   - `2`: ignore and keep phase as-is, no warning.
 
 # Returns
-- Integer outcome `t`.
-- For odd prime `d`, the measured eigenvalue is `ω^t` (mod `d`).
-- For `d=2`, the eigenvalue exponent is returned in deterministic cases when `storephase=true`
-  (values `0:3` for `i^t`). In random branches, the returned value is the drawn or
-  given `outcome`.
+- Integer outcome `t` in `0:(d-1)`, in every branch: the measured eigenvalue is `ω^t`
+  for odd prime `d` and `(-1)^t` for `d=2`.
+- A random branch returns the drawn or given `outcome`; a deterministic one returns the
+  outcome fixed by the state, so repeating a measurement returns the same `t`.
+- For `d=2` this is half the exponent [`expect_int!`](@ref) reports: `⟨P⟩ = i^(2t)`.
+- If `storephase=false`, a deterministic measurement returns `0` by convention, whatever
+  the eigenvalue.
+
+# Throws
+- `ArgumentError` if `outcome` is outside `0:(d-1)`, if `op` is not a Pauli on the
+  register, or if a random measurement would append to a full tableau.
+- `ArgumentError` for `d=2` with `storephase=true` if the measurement is deterministic
+  with eigenvalue `±i`. This needs a non-Hermitian `op` kept by `phase_policy` `0` or
+  `2`, or a non-Hermitian stored generator. `tab` still represents the same state.
 
 # Examples
 ```julia
@@ -376,7 +386,6 @@ t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchang
   `tab` representing the same state.
 - One seeded `rng` passed to every `measure!`, [`random_clifford!`](@ref) and
   [`random_state!`](@ref) call reproduces a whole monitored-circuit trajectory.
-- If `storephase=false`, deterministic outcomes return `0` by convention.
 - For a pure tableau (`m == n`) with `storephase=false`, a commuting `op` is settled by
   the commutation check alone and the tableau, including its generator basis, is left
   as it was. This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a
@@ -406,6 +415,13 @@ end
 @inline _random_outcome(rng::Random.AbstractRNG, outcome::Union{Int,Nothing}, d::Int) =
     outcome === nothing ? _draw(rng, d) : outcome
 
+@inline _check_outcome(::Nothing, ::Int) = nothing
+@inline function _check_outcome(outcome::Int, d::Int)
+    (0 <= outcome < d) || throw(ArgumentError(
+        "outcome must be in 0:$(d - 1) for d = $d, got $outcome."))
+    return nothing
+end
+
 # Phase exponent of the generator that stabilizes the post-measurement state
 # after outcome `t`, for a measured operator with reduced phase exponent `kop`.
 # If ω^{kop} P_xz |ψ'> = ω^t |ψ'> then (ω^{-t + kop} P_xz) |ψ'> = |ψ'>.
@@ -423,6 +439,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     d = tab.d
     n = tab.n
     m = tab.m
+    _check_outcome(outcome, d)
 
     # get phase of the operator (if available), reduced so that the outcome
     # arithmetic below cannot overflow
@@ -514,9 +531,16 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
         # deterministic outcome, state unchanged
         if tab.storephase
             kacc = phase_exponent_from_coeffs!(tab)
-            d_phase = phase_modulus(d)
             if d == 2
-                return mod(-kacc + kop, d_phase)
+                # The eigenvalue is i^k; a Hermitian operator on Hermitian
+                # generators has even k, and (-1)^t = i^(2t).
+                k = mod(-kacc + kop, phase_modulus(d))
+                isodd(k) && throw(ArgumentError(
+                    "the measured operator has eigenvalue $(k == 1 ? "i" : "-i") on this state, " *
+                    "so it has no outcome in 0:1: the operator or a stored generator is not " *
+                    "Hermitian. Pass phase_policy=1 to measure the Hermitian operator, or use " *
+                    "expect_int! for the phase exponent."))
+                return k >> 1
             else
                 return mod(-kacc + kop, d)
             end

@@ -45,10 +45,24 @@ julia> expect!(state, x1) # Evaluate ⟨X₁⟩ in the post-measurement state.
 1.0 + 0.0im
 ```
 
-For odd prime `d`, an outcome `t` denotes the eigenvalue ``\omega^t``. For a
-nondeterministic qubit measurement, outcome `0` selects eigenvalue `+1` and
-outcome `1` selects eigenvalue `-1`. See [`measure!`](@ref) for deterministic
-outcomes and `phase_policy`.
+An outcome `t` lies in `0:(d - 1)` and denotes the eigenvalue ``\omega^t`` for
+odd prime `d` and ``(-1)^t`` for qubits. The `outcome` keyword and the returned
+value use this encoding in every branch, so a repeated measurement returns the
+outcome of the first:
+
+```jldoctest
+julia> state = DestabilizerTableau(2, 1; state=:product, basis=:Z);
+
+julia> measure!(state, SinglePauli(1, 1, 0); outcome=1) # Random branch, eigenvalue -1.
+1
+
+julia> measure!(state, SinglePauli(1, 1, 0)) # Now deterministic.
+1
+```
+
+With `storephase=false` a deterministic measurement returns `0` by convention,
+because the eigenvalue was not stored. See [`measure!`](@ref) for
+`phase_policy`.
 
 Without `outcome`, a random branch draws its outcome uniformly from
 `0:(d - 1)`, by default from the global RNG. Pass an RNG first, as in
