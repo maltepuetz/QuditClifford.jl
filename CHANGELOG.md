@@ -54,6 +54,20 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Fixed
 
+- The raw-matrix constructors `StabilizerTableau(d, tableau)` and
+  `DestabilizerTableau(d, tableau)` store a copy of `tableau`. A `Matrix{Int}`
+  with `n` columns in the natural orientation used to become the tableau's
+  storage itself: construction reduced the caller's matrix in place, later
+  operations kept changing it, and two tableaux built from one matrix shared
+  their state.
+- With `check=true`, the raw-matrix constructors reject a non-Hermitian qubit
+  generator (phase exponent `≢ x·z mod 2`, such as `i·Z`), which squares to
+  `-I` and stabilizes nothing. `check=false` still accepts it.
+- All tableau constructors reject a `PrecomputedInvMod` built for another
+  dimension. It used to be read past its end, producing invalid tableau
+  entries.
+- `StabilizerTableau(d, zeros(Int, 0, 0); m=0, storephase=false)` and the
+  `DestabilizerTableau` equivalent return an empty register; they used to hang.
 - `∘` with a named gate as an operand, as in `U ∘ Phase(1)` or
   `Fourier(1) ∘ Phase(2)`, throws an `ArgumentError` that points to
   `CliffordOperator(g, d)`. It used to return a Base `ComposedFunction`, which

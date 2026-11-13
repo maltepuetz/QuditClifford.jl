@@ -432,3 +432,75 @@ end
         end
     end
 end
+
+# The raw-matrix constructors reduce their input and then keep mutating it as
+# the tableau evolves, so they must work on a private copy whatever the input's
+# layout and element type.
+@testset "Raw-matrix constructors own their storage" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label d=$d" for d in (2, 3)
+            pm = QuditClifford.phase_modulus(d)
+            # Z₁, Z₂ on two qudits with a phase row.
+            reduced = zeros(Int, 5, 2); reduced[3, 1] = 1; reduced[4, 2] = 1
+            unreduced = copy(reduced); unreduced[3, 1] += d; unreduced[4, 2] -= d
+            unreduced[5, 1] = pm
+            inputs = [
+                ("reduced", copy(reduced), (;)),
+                ("unreduced", unreduced, (;)),
+                ("transposed", permutedims(reduced), (;)),
+                ("m columns", reduced[:, 1:1], (;)),
+                ("n columns, m < n", copy(reduced), (; m=1)),
+                ("Int8", Int8.(reduced), (;)),
+            ]
+            for (name, raw, kw) in inputs
+                @testset "$name" begin
+                    raw0 = copy(raw)
+                    a = TT(d, raw; kw...)
+                    b = TT(d, raw; kw...)
+                    @test raw == raw0                       # construction leaves it alone
+                    @test a.stab !== b.stab
+                    @test a.stab !== raw
+
+                    ref = copy(b.stab)
+                    measure!(a, SinglePauli(1, 1, 0); outcome=0)   # anticommutes with Z₁
+                    @test raw == raw0                       # so does a later update
+                    @test b.stab == ref                     # and b is unaffected
+
+                    raw .= 0
+                    @test b.stab == ref                     # nor does the caller reach in
+                    @test all(v -> 0 <= v < d, @view b.stab[1:4, :])
+                    @test 0 <= b.stab[5, 1] < pm
+                end
+            end
+        end
+    end
+end
+
+@testset "An inverse table must match the dimension" begin
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        raw = zeros(Int, 5, 2); raw[3, 1] = 1; raw[4, 2] = 1
+        for (d, wrong) in ((7, 3), (2, 3), (3, 5))
+            inv = QuditClifford.PrecomputedInvMod(wrong)
+            @test_throws ArgumentError TT(d, 2; state=:ghz, inversemod=inv)
+            @test_throws ArgumentError TT(d, raw; inversemod=inv)
+            msg = try; TT(d, raw; inversemod=inv); "" catch e; e.msg end
+            @test occursin("d - 1 = $(d - 1)", msg)
+        end
+        for d in (2, 3, 7)
+            @test TT(d, raw; inversemod=QuditClifford.PrecomputedInvMod(d)) isa TT
+            @test TT(d, raw; inversemod=QuditClifford.JustInTimeInvMod()) isa TT
+        end
+    end
+end
+
+@testset "Raw constructors accept an empty register" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        for (raw, sp) in ((zeros(Int, 0, 0), false), (zeros(Int, 1, 0), true))
+            tab = TT(d, raw; m=0, storephase=sp)
+            @test tab.n == tab.m == 0
+            @test size(tab.stab) == (sp ? 1 : 0, 0)
+            @test tab.storephase == sp
+        end
+    end
+end

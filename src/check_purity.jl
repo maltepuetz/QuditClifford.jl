@@ -129,6 +129,20 @@ is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
 # its own -- the two checks take it in turn, never at once.
 function _validate_generators!(tab::AbstractTableau)
     m = tab.m
+    # A qubit generator must also be Hermitian, a ≡ x·z (mod 2): otherwise it
+    # squares to -I and stabilizes nothing. Without a phase row there is no `a`
+    # to check.
+    if tab.d == 2 && tab.storephase
+        n, stab = tab.n, tab.stab
+        for j in 1:m
+            xz = dot_xz_col(stab, n, j, 2)
+            mod(stab[2n+1, j], 2) == xz && continue
+            throw(ArgumentError(
+                "Qubit stabilizer generators must be Hermitian, but generator $j " *
+                "has phase exponent $(stab[2n+1, j]) while x·z = $xz (mod 2), so " *
+                "it squares to -I. Pass check=false to skip this check."))
+        end
+    end
     if m > 1
         pair = _first_noncommuting_pair(
             tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m))

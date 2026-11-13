@@ -42,3 +42,14 @@ end
 
 @inline (jit::JustInTimeInvMod)(x::Int, d::Int) = Base.invmod(x, d)
 @inline (pre::PrecomputedInvMod)(x::Int, d::Int) = (@inbounds pre.lookuptable[x])
+
+# The lookup is unchecked, so a table built for another dimension would be read
+# past its end. Its length pins the dimension it was built for.
+_check_inversemod(::InverseMod, ::Int) = nothing
+function _check_inversemod(inv::PrecomputedInvMod, d::Int)
+    len = length(inv.lookuptable)
+    len == d - 1 || throw(ArgumentError(
+        "inversemod holds an inverse table of length $len, but d = $d needs " *
+        "length d - 1 = $(d - 1). Build it as PrecomputedInvMod(d)."))
+    return nothing
+end

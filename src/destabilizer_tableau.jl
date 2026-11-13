@@ -18,6 +18,8 @@ without first canonicalizing the stabilizer generators.
 - `tableau::AbstractMatrix{<:Integer}`: An integer stabilizer matrix in either
   `(2n + storephase) × m` or `m × (2n + storephase)` layout. The corresponding
   destabilizers are constructed automatically.
+  The tableau stores a reduced copy: the caller's matrix is never modified, and
+  later changes to it do not affect the tableau.
 
 # Keyword Arguments
 - `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases
@@ -32,10 +34,14 @@ without first canonicalizing the stabilizer generators.
   (for the `(d, tableau)` constructor).
 - `inversemod::InverseMod=PrecomputedInvMod(d)`: Inversion strategy used for
   phase calculations and construction of the dual basis.
+  A `PrecomputedInvMod` must be built for this `d`; a table of another length
+  throws.
 - `check::Bool=true`: For the `(d, tableau)` constructor only, verify that the
-  supplied generators commute and are independent, throwing `ArgumentError`
-  naming the offending pair or the rank if they do not. The preset constructors
-  satisfy both by construction and take no such keyword. `check=false` skips an
+  supplied generators commute and are independent, and at `d = 2` with a phase
+  row that each is Hermitian (phase exponent `≡ x·z mod 2`), throwing
+  `ArgumentError` naming the offending generator, pair or rank if not. The
+  preset constructors satisfy all of this by construction and take no such
+  keyword. `check=false` skips an
   `O(n^3)` validation and builds the tableau regardless -- every later operation
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
@@ -127,15 +133,14 @@ function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     check::Bool=true
 ) where {T<:InverseMod}
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
-    tab_in = (tableau isa Matrix{Int}) ? tableau : Matrix{Int}(tableau)
-    layout = _infer_tableau_layout(size(tab_in, 1), size(tab_in, 2), m, storephase)
+    layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     layout === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
 
-    if layout.transpose
-        tab_in = permutedims(tab_in)
-    end
+    # The build step reduces and stores its input in place, so it gets an array
+    # nobody else holds: `permutedims` allocates one, `Matrix{Int}` copies.
+    tab_in = layout.transpose ? permutedims(tableau) : Matrix{Int}(tableau)
 
     return _build_destabilizer_tableau(d, layout.n, layout.m, tab_in, layout.storephase, inversemod;
                                       check=check)
@@ -153,6 +158,7 @@ function _build_destabilizer_tableau(
     check::Bool=true,
 ) where {T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
+    _check_inversemod(inversemod, d)
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
@@ -175,8 +181,9 @@ function _build_destabilizer_tableau(
     # both passes below are pure overhead there -- and they are O(n^2) on a
     # matrix holding O(n) nonzeros.
     if preset_state === nothing
-        # Reduce entries mod d / mod phase modulus
-        @turbo for j in 1:n
+        # Reduce entries mod d / mod phase modulus. The `n > 0` guard is
+        # load-bearing: `@turbo` does not terminate on this nest at n = 0.
+        n > 0 && @turbo for j in 1:n
             for i in 1:(2n)
                 stab[i, j] = mod(stab[i, j], d)
             end
