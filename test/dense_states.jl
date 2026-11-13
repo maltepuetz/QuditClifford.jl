@@ -115,13 +115,14 @@ dense_unchanged(tab, snap) =
 # phases (refused even maximally mixed), purity where it applies, Hermitian
 # qubit generators reported by original column, and a positive budget. The
 # non-Hermitian fixture is Z₂ then XZ on qubit 1 with phase 0: commuting and
-# independent, so the constructors accept it, and the conversions must not.
+# independent, so check=false lets the constructors build it, and the
+# conversions must still refuse it.
 function dense_check_contract(f, TT; needs_pure::Bool)
     for state in (:ghz, :mixed)
         @test_throws ArgumentError f(TT(2, 2; state, storephase=false))
     end
     needs_pure && @test_throws ArgumentError f(TT(3, 2; state=:mixed))
-    bad = TT(2, [0 1; 0 0; 0 1; 1 0; 0 0]; m=2)
+    bad = TT(2, [0 1; 0 0; 0 1; 1 0; 0 0]; m=2, check=false)
     err = dense_thrown(() -> f(bad))
     @test err isa ArgumentError && occursin("column 2", err.msg)
     for budget in (0, -1)

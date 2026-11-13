@@ -198,3 +198,35 @@ end
         end
     end
 end
+
+# At d = 2 a generator with phase a ≢ x·z (mod 2) squares to -I and stabilizes
+# nothing, so check=true rejects it; odd d has no such condition.
+@testset "Raw qubit generators must be Hermitian" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau),
+                        ("DestabilizerTableau", DestabilizerTableau)]
+        @testset "$label" begin
+            for bad in ([0, 1, 1], [1, 1, 0], [1, 0, 3], [1, 1, 2])
+                raw = reshape(bad, 3, 1)
+                @test_throws ArgumentError TT(2, raw)
+                @test TT(2, raw; check=false) isa TT
+            end
+            for good in ([0, 1, 0], [0, 1, 2], [1, 1, 1], [1, 1, 3], [1, 0, 0])
+                @test TT(2, reshape(good, 3, 1)) isa TT
+            end
+
+            # The error names the offending column.
+            two = zeros(Int, 5, 2); two[3, 1] = 1; two[2, 2] = 1; two[5, 2] = 1
+            msg = try; TT(2, two); "" catch e; e.msg end
+            @test occursin("Hermitian", msg)
+            @test occursin("generator 2", msg)
+
+            # Without a phase row there is nothing to check.
+            @test TT(2, reshape([1, 1], 2, 1); storephase=false) isa TT
+            # Odd d: every phase is a valid generator.
+            for d in (3, 5)
+                @test TT(d, reshape([0, 1, 1], 3, 1)) isa TT
+                @test TT(d, reshape([1, 1, 2], 3, 1)) isa TT
+            end
+        end
+    end
+end
