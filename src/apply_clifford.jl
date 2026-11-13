@@ -680,29 +680,6 @@ end
 # Pauli conjugation                    #
 ########################################
 
-# All support/shape checks are read-only and precede preparation/allocation.
-# Register-size validation in _conjugate guarantees that 2n is representable.
-function _validate_pauli(op::GeneralPauli, n::Int)
-    len = length(op.xz)
-    len == 2n || throw(ArgumentError(
-        "GeneralPauli has length $len, expected 2n = $(2n)."))
-    return nothing
-end
-
-function _validate_pauli(op::FewQuditPauli, n::Int)
-    qudits, _, _, _ = _few_qudit_pauli_data(op)
-    @inbounds for i in eachindex(qudits)
-        q = qudits[i]
-        (1 <= q <= n) || throw(ArgumentError(
-            "Pauli qudit index $q is outside the register 1:$n."))
-        for r in 1:(i - 1)
-            qudits[r] == q && throw(ArgumentError(
-                "Pauli has a repeated qudit index $q; that has no product interpretation here."))
-        end
-    end
-    return nothing
-end
-
 # Internal precondition: dimension, register size, and support were validated.
 # Normalize into independent storage; the caller's object is never mutated.
 function _dense_pauli(op::GeneralPauli, n::Int, d::Int, p::Int)
@@ -758,7 +735,7 @@ function _conjugate(g::AbstractClifford, op::AbstractPauli, n::Int,
     dd = _resolve_clifford_dimension(g, d)
     n >= 0 || throw(ArgumentError("Register size n must be nonnegative, got $n."))
     n <= typemax(Int) ÷ 2 || throw(ArgumentError("Register size 2n must fit in Int."))
-    _validate_pauli(op, n)
+    _check_pauli_support(op, n)
     _validate_clifford_targets(g, n)
     p = phase_modulus(dd)
     prep = _prepare_for_conjugation(g, dd)

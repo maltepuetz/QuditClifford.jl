@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+using Random
 
 @testset "Phase-free expectations reduce exponents before commutation" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
@@ -233,4 +234,40 @@ end
             @test expect_int!(dt, op) == want
         end
     end
+end
+
+# Operands that are not Paulis on a 2-qudit register: out-of-range or repeated
+# qudit indices, and dense vectors of the wrong length.
+expval_invalid_ops() = (
+    SinglePauli(3, 1, 0), SinglePauli(0, 1, 0), SinglePauli(40, 0, 1),
+    DoublePauli(1, 0, 1, 3, 0, 1), DoublePauli(1, 0, 1, 1, 0, 1),
+    TriplePauli(1, 1, 0, 2, 0, 1, 1, 0, 1), TriplePauli(1, 1, 0, 2, 0, 1, 5, 0, 1),
+    NPauli((2, 2), (1, 0), (0, 1)), NPauli((40,), (1,), (1,)),
+    GeneralPauli([0, 1], 0), GeneralPauli([0, 1, 0, 0, 0, 0], 0),
+    Int[1, 0, 0], Int[1, 0, 0, 0, 0, 0],
+)
+
+@testset "expect! and expect_int! reject invalid operands before mutating" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3), storephase in (true, false), m in (1, 2)
+        @testset "$label d=$d storephase=$storephase m=$m" begin
+            tab = TT(d, 2; storephase=storephase)
+            random_state!(Xoshiro(5), tab; m=m)
+            before = copy(tab)
+            for op in expval_invalid_ops()
+                @test_throws ArgumentError expect!(tab, op)
+                @test_throws ArgumentError expect_int!(tab, op)
+                @test tab.stab == before.stab
+                @test tab.m == before.m
+                if tab isa DestabilizerTableau
+                    @test tab.destab == before.destab
+                end
+            end
+        end
+    end
+
+    # Z₁·Z₁ written with a repeated index is rejected rather than read as Z₁ alone.
+    tab = DestabilizerTableau(3, 2; state=:product, basis=:Z)
+    @test_throws "more than once" expect!(tab, DoublePauli(1, 0, 1, 1, 0, 1))
+    @test expect!(tab, SinglePauli(1, 0, 2)) == 1.0 + 0.0im
 end

@@ -224,11 +224,11 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
                 end
             end
 
-            @testset "rejects Paulis outside the register" for d in (2, 3)
+            @testset "rejects Paulis outside the register or with repeated qudits" for d in (2, 3)
                 tab = TT(d, 2; state=:ghz)
                 before = copy(tab)
                 for op in (SinglePauli(3, 1, 0), SinglePauli(0, 1, 0),
-                           DoublePauli(1, 1, 0, 3, 0, 1),
+                           DoublePauli(1, 1, 0, 3, 0, 1), DoublePauli(1, 1, 0, 1, 0, 1),
                            GeneralPauli([1, 0, 0], 0), Int[1, 0, 0])
                     @test_throws ArgumentError dephase!(tab, op)
                     @test tab.stab == before.stab && tab.m == before.m

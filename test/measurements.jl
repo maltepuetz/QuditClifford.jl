@@ -642,3 +642,41 @@ end
         end
     end
 end
+
+# Operands that are not Paulis on a 2-qudit register: out-of-range or repeated
+# qudit indices, and dense vectors of the wrong length.
+measval_invalid_ops() = (
+    SinglePauli(3, 1, 0), SinglePauli(0, 1, 0), SinglePauli(40, 0, 1),
+    DoublePauli(1, 0, 1, 3, 0, 1), DoublePauli(1, 1, 0, 1, 0, 1),
+    TriplePauli(1, 1, 0, 2, 0, 1, 1, 0, 1), TriplePauli(1, 1, 0, 2, 0, 1, 5, 0, 1),
+    NPauli((2, 2), (1, 0), (0, 1)), NPauli((40,), (1,), (1,)),
+    GeneralPauli([0, 1], 0), GeneralPauli([0, 1, 0, 0, 0, 0], 0),
+    Int[1, 0, 0], Int[1, 0, 0, 0, 0, 0],
+)
+
+@testset "measure! rejects invalid operands before mutating" begin
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        d in (2, 3), storephase in (true, false), m in (1, 2)
+        @testset "$label d=$d storephase=$storephase m=$m" begin
+            tab = TT(d, 2; storephase=storephase)
+            random_state!(Xoshiro(5), tab; m=m)
+            before = copy(tab)
+            for op in measval_invalid_ops()
+                @test_throws ArgumentError measure!(tab, op; outcome=0)
+                @test_throws ArgumentError measure!(Xoshiro(1), tab, op)
+                @test tab.stab == before.stab
+                @test tab.m == before.m
+                if tab isa DestabilizerTableau
+                    @test tab.destab == before.destab
+                end
+            end
+        end
+    end
+
+    @testset "message names the problem" begin
+        tab = StabilizerTableau(3, 2; state=:ghz)
+        @test_throws "outside the register" measure!(tab, SinglePauli(3, 1, 0))
+        @test_throws "more than once" measure!(tab, DoublePauli(1, 1, 0, 1, 0, 1))
+        @test_throws "expected 2n = 4" measure!(tab, GeneralPauli([0, 1], 0))
+    end
+end

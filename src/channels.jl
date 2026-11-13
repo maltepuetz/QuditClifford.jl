@@ -2,25 +2,6 @@
 # Channels on mixed stabilizer states      #
 ############################################
 
-# Throw an `ArgumentError` unless `op` acts inside the register of `tab`. The
-# check is O(k) for a k-qudit sparse Pauli and does not allocate.
-function _check_pauli_support(tab::AbstractTableau, op::_BuiltinFewQuditPauli)
-    qudits = _few_qudit_pauli_data(op)[1]
-    for q in qudits
-        1 <= q <= tab.n || throw(ArgumentError(
-            "Pauli acts on qudit $q, outside the register of n = $(tab.n) qudits."))
-    end
-    return nothing
-end
-
-function _check_pauli_support(tab::AbstractTableau, op::GeneralPauli)
-    length(op.xz) == 2 * tab.n || throw(ArgumentError(
-        "Pauli vector has length $(length(op.xz)), expected 2n = $(2 * tab.n)."))
-    return nothing
-end
-
-_check_pauli_support(::AbstractTableau, ::AbstractPauli) = nothing
-
 #############################################################
 # Type-specific hook for removing a generator               #
 #############################################################
