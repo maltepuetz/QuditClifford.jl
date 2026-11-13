@@ -381,7 +381,7 @@ function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
     # Commit. Stabilizer j is the Z image G[:, n + j] and its dual the X image
     # G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without any repair pass.
     stab = tab.stab
-    fill!(stab, 0)
+    _zero!(stab)
     @inbounds for j in 1:m
         for q in 1:S
             stab[q, j] = G[q, n + j]
@@ -406,7 +406,7 @@ function _write_random_duals!(tab::DestabilizerTableau, G::Matrix{Int}, m::Int,
                               D::Vector{Int})
     destab = tab.destab
     cache = tab.xdotz_cache
-    fill!(destab, 0)
+    _zero!(destab)
     fill!(cache, 0)
     @inbounds for j in 1:m
         for q in axes(destab, 1)
