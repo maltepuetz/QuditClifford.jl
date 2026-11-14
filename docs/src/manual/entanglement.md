@@ -66,7 +66,34 @@ julia> entanglement_profile(ghz)
  0
 ```
 
-[Entropy across every cut](@ref) builds a profile in a larger example.
+The destination of [`entanglement_profile!`](@ref) must be a writable,
+one-based `Int` vector of length `n + 1` that does not share storage with the
+tableau; every entry is overwritten.
+
+For a pure state a prefix and its complementary suffix have equal entropy, but
+the profile need not be symmetric: a Bell pair on sites 1 and 2 with an
+unentangled site 3 has profile `[0, 1, 0, 0]`. For a mixed state the last
+entry is `n - m`, the entropy of the whole state, and a maximally mixed chain
+has profile `[0, 1, …, n]`.
+
+With a site order, entry `l + 1` is the entropy of `order[1:l]`. On a periodic
+chain a cyclic shift gives every arc that starts at a chosen site. Here two
+Bell pairs sit on the opposite bonds `(1, 4)` and `(2, 3)` of a ring of four:
+
+```jldoctest entropy
+julia> ring = StabilizerTableau(3, 4; state = :product);
+
+julia> for (a, b) in ((1, 4), (2, 3))
+           apply!(ring, Fourier(a))
+           apply!(ring, SUM(a, b))
+       end
+
+julia> entanglement_profile(ring) == [0, 1, 2, 1, 0]
+true
+
+julia> entanglement_profile(ring, [2, 3, 4, 1]) == [0, 1, 0, 1, 0]
+true
+```
 
 ## Negativity
 
@@ -126,8 +153,36 @@ julia> tripartite_information(ghz, [1], [2], [3])
 1
 ```
 
-[Correlations in mixed states](@ref) uses these to tell quantum from classical
-correlations along a circuit.
+In the GHZ state the information shared by any two qudits is the same
+classical value, so it is counted twice and ``I_3 > 0``, and conditioning on a
+third qudit leaves nothing. A scrambled state behaves in the opposite way:
+information about one part is spread over the others jointly. The four-qutrit
+state ``\sum_{i,j} |i, j, i+j, i+2j\rangle``, in which every pair of qutrits
+is maximally entangled with the other pair, is the extreme case. Qutrits 1 and
+2 are uncorrelated on their own, but together with qutrit 3 they hold two
+units of correlation:
+
+```jldoctest information
+julia> ame = StabilizerTableau(3, 4; state = :product);
+
+julia> for g in (Fourier(1), Fourier(2), SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2))
+           apply!(ame, g)
+       end
+
+julia> mutual_information(ame, [1], [2]), mutual_information(ame, [1], [2, 3])
+(0, 2)
+
+julia> conditional_mutual_information(ame, [1], [2], [3])
+2
+
+julia> tripartite_information(ame, [1], [2], [3])
+-2
+```
+
+With one subsystem, [`mutual_information`](@ref) takes the second to be its
+complement, which for a pure state gives twice the entanglement entropy. With
+`C` empty, [`conditional_mutual_information`](@ref) is the mutual information
+of `A` and `B`.
 
 ## Cost and scratch space
 

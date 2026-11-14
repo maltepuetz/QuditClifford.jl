@@ -37,8 +37,6 @@ makedocs(;
         "Examples" => [
             "A two-qutrit measurement" => "examples/qutrit-measurement.md",
             "Entanglement through a measurement" => "examples/ghz-measurement.md",
-            "Entropy across every cut" => "examples/entropy-cuts.md",
-            "Correlations in mixed states" => "examples/mixed-correlations.md",
             "Purification by measurements" => "examples/purification.md",
             "Boundary dephasing" => "examples/boundary-dephasing.md",
             "Measurement-only Ising circuit" => "examples/measurement-only-ising.md",

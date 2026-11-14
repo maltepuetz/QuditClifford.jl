@@ -219,3 +219,40 @@ With `storephase=false`, a deterministic measurement returns `0` and
 [`expect_int!`](@ref) returns `0` for an operator in the stabilizer group,
 because the phase was not stored. [Measurements, Expectations and Channels](@ref)
 shows all three functions in use.
+
+## Coming from qubits
+
+The names are qudit-native, and no qubit aliases are exported. At `d = 2` the
+familiar gates and operators are:
+
+| Qubit | QuditClifford |
+|:---|:---|
+| `H` | `Fourier(q)` |
+| `S` | `Phase(q)` |
+| `CNOT` | `SUM(c, t)` |
+| `CZ` | `CPhase(q₁, q₂)` |
+| `SWAP` | `SWAP(q₁, q₂)` |
+| gates `X`, `Y`, `Z` | `PauliGate(q, 1, 0)`, `PauliGate(q, 1, 1)`, `PauliGate(q, 0, 1)` |
+| observables `X`, `Z` | `SinglePauli(q, 1, 0)`, `SinglePauli(q, 0, 1)` |
+| observable `Y` | `SinglePauli(q, 1, 1, 1)`, that is ``iXZ`` |
+| measurement result ``\pm 1`` | [`measure!`](@ref) returns `0` or `1` |
+| ``\langle P \rangle = \pm 1`` | [`expect_int!`](@ref) returns `0` or `2` |
+
+``S^\dagger`` is `Phase` applied three times, or
+`inv(CliffordOperator(Phase(q), 2))`. Three points differ from what a qubit
+library usually does:
+
+- `SinglePauli(q, 1, 1)` is ``XZ = -iY``, not `Y`; see
+  [Pauli operators and their ordering](@ref).
+- Phases count in units of ``i``, so a sign is the phase exponent `2`.
+- [`measure!`](@ref) counts in units of ``-1`` while [`expect_int!`](@ref)
+  counts in units of ``i``; see [Outcome and expectation encodings](@ref).
+
+For example, the Hadamard gate maps `Y` to ``-Y = i^3 XZ``:
+
+```jldoctest
+julia> conjugate(Fourier(1), SinglePauli(1, 1, 1, 1), 1; d = 2)
+[phase=3] X₁ Z₁
+```
+
+[The gate set](@ref) gives the action of every gate for general `d`.

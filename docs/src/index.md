@@ -133,8 +133,6 @@ Depth = 2
 Pages = [
     "examples/qutrit-measurement.md",
     "examples/ghz-measurement.md",
-    "examples/entropy-cuts.md",
-    "examples/mixed-correlations.md",
     "examples/purification.md",
     "examples/boundary-dephasing.md",
     "examples/measurement-only-ising.md",
