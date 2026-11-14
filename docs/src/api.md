@@ -61,19 +61,19 @@ random_clifford!
 random_state!
 ```
 
-## Measurements
+## Measurements and channels
 
 ```@docs
 measure!
+expect!
+expect_int!
 dephase!
 traceout!
 ```
 
-## Expectation values and entropy
+## Entanglement measures
 
 ```@docs
-expect!
-expect_int!
 entanglement_entropy
 entanglement_profile
 entanglement_profile!

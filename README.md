@@ -14,20 +14,22 @@
 [![Aqua](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24170577.svg)](https://doi.org/10.5281/zenodo.24170577)
 
-QuditClifford.jl is a Julia package for simulating qudit Clifford circuits. It
-provides stabilizer-tableau tools for prime-dimensional qudits, including
-Clifford unitaries, uniformly random Clifford operators and
-stabilizer states, projective Pauli measurements, expectation values,
-canonicalization, purity checks, and entanglement-entropy calculations. It
-supports qubits (`d = 2`) and odd prime dimensions (`d = 3, 5, 7, ...`), as
-well as pure and mixed stabilizer states.
+QuditClifford.jl simulates qubit and qudit Clifford circuits with stabilizer
+tableaux, for any prime local dimension `d` and for pure and mixed stabilizer
+states.
+
+- **Clifford unitaries:** named gates for every prime `d`, general Clifford
+  operators with composition and inversion, and uniformly random Cliffords and
+  stabilizer states.
+- **Measurements and expectation values:** projective Pauli measurements,
+  exact expectation values, and dephasing, trace-out and reset channels.
+- **Entanglement:** entropy, negativity, and mutual, conditional and
+  tripartite information as exact integers in units of `log d`.
+- **Inspection:** exact kets, state vectors and density matrices of small
+  states, for debugging.
 
 > **Development status:** QuditClifford.jl is under active development and has
 > not yet reached a stable release. APIs may change before version 1.0.
-
-Use `DestabilizerTableau` for repeated measurement and expectation workflows,
-or `StabilizerTableau` when compact storage is more important than maintaining
-a dual basis.
 
 ## Installation
 
@@ -40,93 +42,33 @@ QuditClifford requires Julia 1.10 or later.
 
 ## Quick start
 
-This example follows a generalized qutrit Bell state through a local
-measurement.
+Prepare an entangled pair of qutrits, measure one of them, and watch the
+entanglement disappear:
 
 ```julia
 julia> using QuditClifford
 
-# Construct a qutrit Bell state and inspect the entanglement between its sites.
-# d = 3 selects qutrits; n = 2 creates two sites; :ghz gives their Bell state.
-julia> state = DestabilizerTableau(3, 2; state=:ghz)
-Destabilizer Tableau:
-    Qudit dimension:  d = 3
-    Number of Qudits: n = 2
-    Generators:       m = 2
-    Tableau:
-     Stabilizers:
-      X     Z
-     1 1 | 0 0 | 0
-     0 0 | 1 2 | 0
-     ---------
-     Destabilizers:
-      X     Z
-     0 0 | 2 0
-     1 0 | 0 0
+julia> state = DestabilizerTableau(3, 2; state = :product);  # two qutrits in |00⟩
 
-julia> entanglement_entropy(state, [1]) # Entropy of the subsystem containing qutrit 1.
+julia> apply!(state, Fourier(1)); apply!(state, SUM(1, 2));  # entangle them
+
+julia> entanglement_entropy(state, [1])  # in units of log 3
 1
-```
 
-```julia
-# Construct X₁ and calculate its expectation before measurement.
-# X₁ is not fixed by the Bell stabilizers, so the expectation is zero.
-julia> x1 = SinglePauli(1, 1, 0) # Qudit 1 with X exponent 1 and Z exponent 0.
-X₁
+julia> t = measure!(state, SinglePauli(1, 0, 1));  # Z on qutrit 1: random t ∈ 0:2
 
-julia> expect!(state, x1)
-0.0 + 0.0im
-```
+julia> measure!(state, SinglePauli(2, 0, 1)) == t  # qutrit 2 now gives the same outcome
+true
 
-```julia
-# X₁ fails to commute with one stabilizer, so measuring it updates the tableau.
-julia> measure!(state, x1)
-2
-```
-
-```julia
-# measure! mutates state; display it again to inspect the updated generators.
-julia> state
-Destabilizer Tableau:
-    Qudit dimension:  d = 3
-    Number of Qudits: n = 2
-    Generators:       m = 2
-    Tableau:
-     Stabilizers:
-      X     Z
-     1 1 | 0 0 | 0
-     1 0 | 0 0 | 1
-     ---------
-     Destabilizers:
-      X     Z
-     0 0 | 0 2
-     0 0 | 2 1
-```
-
-```julia
-# Projection fixes X₁ to eigenvalue ω², changing its expectation from 0 to ω².
-julia> expect!(state, x1)
--0.5000000000000004 - 0.8660254037844385im
-```
-
-```julia
-# The local measurement separates the pair, so qutrit 1's entropy falls to zero.
 julia> entanglement_entropy(state, [1])
 0
 ```
 
-Entropies are returned in log-`d` units, so the initial value `1` corresponds
-to `log(3)` for this maximally entangled qutrit pair. Outcome `2` denotes the
-eigenvalue `ω²`. Since `X₁` does not commute with the original `Z₁Z₂²`
-stabilizer, `measure!` replaces that generator with one encoding the sampled
-eigenvalue and updates the dual destabilizers. The local projection also
-removes the entanglement between the two qutrits.
-
-Continue with [Getting Started](https://maltepuetz.github.io/QuditClifford.jl/dev/getting-started)
-for state and operator construction, explore complete workflows in
-[Examples](https://maltepuetz.github.io/QuditClifford.jl/dev/examples/qutrit-measurement), and
-read [Representation and Phase Conventions](https://maltepuetz.github.io/QuditClifford.jl/dev/manual/conventions)
-before constructing raw tableaux or interpreting phase exponents.
+[Getting Started](https://maltepuetz.github.io/QuditClifford.jl/stable/getting-started)
+walks through states, Pauli operators, gates and measurements step by step;
+the [manual](https://maltepuetz.github.io/QuditClifford.jl/stable/manual/) and
+the [examples](https://maltepuetz.github.io/QuditClifford.jl/stable/examples/qutrit-measurement)
+go further.
 
 ## Documentation and support
 

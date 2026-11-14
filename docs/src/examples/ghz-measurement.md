@@ -11,9 +11,7 @@ measurement separates qubit 1 while leaving the remaining GHZ cluster
 entangled.
 
 ```jldoctest ghz-measurement
-# Construct a four-qubit GHZ state.
-# d = 2 selects qubits; n = 4 creates four sites; :ghz selects the GHZ preset.
-julia> state = DestabilizerTableau(2, 4; state=:ghz)
+julia> state = DestabilizerTableau(2, 4; state = :ghz)
 Destabilizer Tableau:
     Qudit dimension:  d = 2
     Number of Qudits: n = 4
@@ -34,42 +32,34 @@ Destabilizer Tableau:
      1 1 1 0 | 0 0 0 0
 ```
 
+Before the measurement, the cut between qubits `{1, 2}` and `{3, 4}` carries
+one bit:
+
 ```jldoctest ghz-measurement
-# Compute entropy across the cut {1,2}|{3,4} before measurement.
-# The vector [1, 2] identifies the qubits in the first subsystem.
 julia> entanglement_entropy(state, [1, 2])
 1
 ```
 
+``X_1`` does not commute with the ``Z_1 Z_2`` generator, so its outcome is
+random and the measurement changes the state. `outcome = 0` selects the
+eigenvalue `+1` so that the example is reproducible:
+
 ```jldoctest ghz-measurement
-# Construct X₁: qubit 1 with X exponent 1 and Z exponent 0.
 julia> x1 = SinglePauli(1, 1, 0)
 X₁
-```
 
-```jldoctest ghz-measurement
-# X₁ does not commute with every GHZ stabilizer, so measurement changes state.
-# outcome=0 selects the +1 eigenvalue and makes the walkthrough reproducible.
-julia> measure!(state, x1; outcome=0)
+julia> measure!(state, x1; outcome = 0)
 0
-```
 
-```jldoctest ghz-measurement
-# The projection fixes X₁ to +1, so its post-measurement expectation is +1.
 julia> expect!(state, x1)
 1.0 + 0.0im
 ```
 
-```jldoctest ghz-measurement
-# Qubit 1 is now separated, so its single-site entropy falls to zero.
-julia> entanglement_entropy(state, [1])
-0
-```
+Qubit 1 is now a product factor, while qubits 2 to 4 remain in a GHZ state:
 
 ```jldoctest ghz-measurement
-# Qubits 2 and 3 remain inside the entangled three-qubit GHZ cluster.
-julia> entanglement_entropy(state, [2, 3])
-1
+julia> entanglement_entropy(state, [1]), entanglement_entropy(state, [2, 3])
+(0, 1)
 ```
 
 Entropy is an integer in log-`d` units. For qubits it is measured in bits; for

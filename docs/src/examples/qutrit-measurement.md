@@ -10,9 +10,7 @@ operator ``Z_1Z_2``. Each initial X stabilizer fails to commute with the
 measurement, so this example exercises the multi-generator update path.
 
 ```jldoctest qutrit-measurement
-# Construct two qutrits in an X-basis product state.
-# d = 3 selects qutrits; n = 2 creates two sites; basis=:X selects X eigenstates.
-julia> state = DestabilizerTableau(3, 2; state=:product, basis=:X)
+julia> state = DestabilizerTableau(3, 2; state = :product, basis = :X)
 Destabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 2
@@ -29,23 +27,22 @@ Destabilizer Tableau:
      0 0 | 0 2
 ```
 
-```jldoctest qutrit-measurement
-# Build Z₁Z₂ from two (qudit, X exponent, Z exponent) triplets.
-# The triplets (1, 0, 1) and (2, 0, 1) put one Z on each qutrit.
-julia> z1z2 = DoublePauli(1, 0, 1, 2, 0, 1)
-Z₁ Z₂
-```
+The operator ``Z_1 Z_2`` is two `(qudit, x, z)` triplets. The outcome of the
+measurement is random; `outcome = 2` selects the eigenvalue ``\omega^2`` so
+that the example is reproducible:
 
 ```jldoctest qutrit-measurement
-# Measure Z₁Z₂ and choose outcome exponent 2 to keep the example reproducible.
-# For d = 3, outcome 2 represents the eigenvalue ω².
-julia> measure!(state, z1z2; outcome=2)
+julia> z1z2 = DoublePauli(1, 0, 1, 2, 0, 1)
+Z₁ Z₂
+
+julia> measure!(state, z1z2; outcome = 2)
 2
 ```
 
+[`measure!`](@ref) changes the tableau in place. ``Z_1 Z_2`` is now a
+generator, and its phase column records the outcome:
+
 ```jldoctest qutrit-measurement
-# measure! mutates the tableau, so display state again to inspect the update.
-# Z₁Z₂ is now a stabilizer whose phase column encodes the sampled eigenvalue.
 julia> state
 Destabilizer Tableau:
     Qudit dimension:  d = 3
@@ -63,8 +60,10 @@ Destabilizer Tableau:
      0 0 | 0 2
 ```
 
+The expectation value of ``Z_1 Z_2``, zero before the measurement, is now
+``\omega^2``:
+
 ```jldoctest qutrit-measurement
-# Projection fixes ⟨Z₁Z₂⟩ to ω² instead of zero.
 julia> expect!(state, z1z2)
 -0.5000000000000004 - 0.8660254037844385im
 ```

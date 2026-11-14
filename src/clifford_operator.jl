@@ -37,7 +37,9 @@ copy and requires `d == g.d`.
   otherwise.
 
 # Keyword Arguments
-- `check::Bool=true`: verify `Fᵀ Ω F = Ω (mod d)` and, at `d = 2`, the parity
+- `check::Bool=true`: verify `Fᵀ Ω F = Ω (mod d)`, where `Ω = [0 I; −I 0]` in
+  `k × k` blocks is the symplectic form `⟨u, v⟩ = u_x·v_z − u_z·v_x`, and, at
+  `d = 2`, the parity
   `a[i] ≡ x(F[:,i])·z(F[:,i]) (mod 2)`. Passing `false` skips **only** those two
   algebraic checks — shapes, normalization, the cache and independent ownership
   still happen — and makes their preconditions the caller's responsibility.
@@ -469,8 +471,8 @@ end
 The composite that applies `V` first, then `U`.
 
 Requires equal dimensions and **identically ordered** targets — equal support
-sets in a different order are rejected, because automatic support reordering is
-deferred with the circuit layer. Computes `F_UV = F_U F_V (mod d)` and
+sets in a different order are rejected; there is no automatic support
+reordering. Computes `F_UV = F_U F_V (mod d)` and
 `a_UV[i] = a_V[i] + φ_U(F_V[:,i]) (mod p)` in `O(k³)`, using `F_UV[:,i]` as the
 phase evaluator's already-known output.
 

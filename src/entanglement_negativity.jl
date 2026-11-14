@@ -2,8 +2,8 @@
     entanglement_negativity(tab::AbstractTableau, A::AbstractVector, B::AbstractVector)
     entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
 
-Return the logarithmic negativity `E(A:B) = log_d ‖ρ_ABᵀᴮ‖₁` between the
-disjoint subsystems `A` and `B`, in log-`d` units (so `E = 1` means `log(d)`).
+Return the logarithmic negativity `ℰ(A:B) = log_d ‖ρ_ABᵀᴮ‖₁` between the
+disjoint subsystems `A` and `B`, in log-`d` units (so `ℰ = 1` means `log(d)`).
 `ρ_AB` is the state of `A ∪ B` with every other qudit traced out, and `ᵀᴮ` is
 the partial transpose on `B`. With only `A` given, `B` is its complement.
 
@@ -22,11 +22,11 @@ it is zero when either is empty.
 
 # Returns
 - An `Int`. The stabilizer state `ρ_AB` has a negativity spectrum that is flat,
-  so `E(A:B)` is always a whole number of `log(d)` units.
+  so `ℰ(A:B)` is always a whole number of `log(d)` units.
 
 # Method
 The generators are reduced to a basis of the stabilizer group of `ρ_AB` (the
-elements supported on `A ∪ B`), and `E(A:B)` is half the rank over `F_d` of
+elements supported on `A ∪ B`), and `ℰ(A:B)` is half the rank over `F_d` of
 the matrix of their pairwise symplectic products restricted to `A`. Since the
 elements commute, that matrix is minus the one restricted to `B`, so the
 smaller side is used. This takes at most `O(n*m^2)` time,
@@ -40,7 +40,7 @@ and allocates nothing unless `A` or `B` shares memory with
 - S. Sang, Y. Li, T. Zhou, X. Chen, T. H. Hsieh and M. P. A. Fisher,
   *Entanglement Negativity at Measurement-Induced Criticality*,
   PRX Quantum **2**, 030313 (2021), arXiv:2012.00031. Derives
-  `E = rank(K)/2` for qubit stabilizer states, with `K` the anticommutation
+  `ℰ = rank(K)/2` for qubit stabilizer states, with `K` the anticommutation
   matrix over `F_2`.
 - D. Fattal, T. S. Cubitt, Y. Yamamoto, S. Bravyi and I. L. Chuang,
   *Entanglement in the stabilizer formalism*, arXiv:quant-ph/0406168 (2004).
@@ -146,7 +146,7 @@ function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || m == 0) && return 0
     ws = tab.workspace
 
-    # E(A:B) = E(B:A), so the generators are restricted to the smaller side S.
+    # ℰ(A:B) = ℰ(B:A), so the generators are restricted to the smaller side S.
     side = NA <= NB ? 1 : 2
     NS = min(NA, NB)
     NC = n - NA - NB
