@@ -64,10 +64,10 @@ julia> entanglement_entropy(state, [1])
 0
 ```
 
-[Getting Started](https://maltepuetz.github.io/QuditClifford.jl/dev/getting-started)
+[Getting Started](https://maltepuetz.github.io/QuditClifford.jl/stable/getting-started)
 walks through states, Pauli operators, gates and measurements step by step;
-the [manual](https://maltepuetz.github.io/QuditClifford.jl/dev/manual/) and
-the [examples](https://maltepuetz.github.io/QuditClifford.jl/dev/examples/qutrit-measurement)
+the [manual](https://maltepuetz.github.io/QuditClifford.jl/stable/manual/) and
+the [examples](https://maltepuetz.github.io/QuditClifford.jl/stable/examples/qutrit-measurement)
 go further.
 
 ## Documentation and support
