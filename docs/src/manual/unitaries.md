@@ -116,7 +116,7 @@ julia> U = CliffordOperator(Fourier(1), 3);
 julia> U.d, U.targets
 (3, [1])
 
-julia> tab = StabilizerTableau(3, 2; state=:product, basis=:Z);
+julia> tab = StabilizerTableau(3, 2; state = :product, basis = :Z);
 
 julia> apply!(tab, U) === tab
 true

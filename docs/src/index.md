@@ -13,7 +13,7 @@ description: "QuditClifford.jl simulates qudit and qubit Clifford circuits in Ju
 hero:
   name: "QuditClifford.jl"
   text: "Stabilizer tableaux for prime-dimensional qudits"
-  tagline: Simulate qubit and qudit Clifford circuits with measurements, expectations, and entanglement workflows in pure Julia.
+  tagline: Simulate qubit and qudit Clifford circuits with measurements, expectation values and entanglement measures, in pure Julia.
   image:
     light: /logo-light.svg
     dark: /logo-dark.svg
@@ -54,11 +54,7 @@ features:
 
 ```@meta
 CurrentModule = QuditClifford
-DocTestSetup = quote
-    using QuditClifford
-    using Random
-    Random.seed!(4)
-end
+DocTestSetup = :(using QuditClifford)
 ```
 
 ```@raw html

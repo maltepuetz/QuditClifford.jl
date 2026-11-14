@@ -135,8 +135,8 @@ julia> entanglement_entropy(state, [1])
 Random outcomes come from the global RNG. Pass an RNG as the first argument,
 as in `measure!(rng, state, op)`, to make a simulation reproducible from a
 seed; [Random Sampling](@ref) shows how one RNG reproduces a whole circuit.
-[Measurements, Expectations and Channels](@ref) covers the measurement
-branches, the channels that forget outcomes, and the integer form
+[Measurements, Expectations and Channels](@ref) covers the three
+measurement cases, the channels that forget outcomes, and the integer form
 [`expect_int!`](@ref).
 
 ## Where next

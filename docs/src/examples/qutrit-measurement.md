@@ -11,8 +11,8 @@ measurement, so this example exercises the multi-generator update path.
 
 ```jldoctest qutrit-measurement
 # Construct two qutrits in an X-basis product state.
-# d = 3 selects qutrits; n = 2 creates two sites; basis=:X selects X eigenstates.
-julia> state = DestabilizerTableau(3, 2; state=:product, basis=:X)
+# d = 3 selects qutrits; n = 2 creates two sites; basis = :X selects X eigenstates.
+julia> state = DestabilizerTableau(3, 2; state = :product, basis = :X)
 Destabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 2
@@ -39,7 +39,7 @@ Z₁ Z₂
 ```jldoctest qutrit-measurement
 # Measure Z₁Z₂ and choose outcome exponent 2 to keep the example reproducible.
 # For d = 3, outcome 2 represents the eigenvalue ω².
-julia> measure!(state, z1z2; outcome=2)
+julia> measure!(state, z1z2; outcome = 2)
 2
 ```
 

@@ -20,7 +20,7 @@ A qutrit GHZ state shows the difference: two of its three qutrits share one
 unit of mutual information but no entanglement.
 
 ```jldoctest
-julia> ghz = StabilizerTableau(3, 3; state=:ghz);
+julia> ghz = StabilizerTableau(3, 3; state = :ghz);
 
 julia> mutual_information(ghz, [1], [2])
 1
@@ -36,7 +36,7 @@ With only one subsystem, the second is its complement. For a pure state the
 negativity then equals the entanglement entropy:
 
 ```jldoctest
-julia> ghz = StabilizerTableau(3, 3; state=:ghz);
+julia> ghz = StabilizerTableau(3, 3; state = :ghz);
 
 julia> entanglement_negativity(ghz, [1]) == entanglement_entropy(ghz, [1])
 true
@@ -67,12 +67,12 @@ state ``\sum_{i,j} |i, j, i+j, i+2j\rangle``, in which every pair of qutrits
 is maximally entangled with the other pair, is the extreme case:
 
 ```jldoctest
-julia> ghz = StabilizerTableau(3, 4; state=:ghz);
+julia> ghz = StabilizerTableau(3, 4; state = :ghz);
 
 julia> tripartite_information(ghz, [1], [2], [3])
 1
 
-julia> ame = StabilizerTableau(3, 4; state=:product);
+julia> ame = StabilizerTableau(3, 4; state = :product);
 
 julia> for g in (Fourier(1), Fourier(2), SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2))
            apply!(ame, g)
@@ -105,7 +105,7 @@ can remove correlation or create it. In the GHZ state, qudit 3 holds the same
 classical value that qudits 1 and 2 share, so given qudit 3 nothing is left:
 
 ```jldoctest
-julia> ghz = StabilizerTableau(3, 4; state=:ghz);
+julia> ghz = StabilizerTableau(3, 4; state = :ghz);
 
 julia> mutual_information(ghz, [1], [2]), conditional_mutual_information(ghz, [1], [2], [3])
 (1, 0)
@@ -117,7 +117,7 @@ correlation. The difference is the tripartite information,
 ``I_3(A:B:C) = I(A:B) - I(A:B|C)``:
 
 ```jldoctest
-julia> ame = StabilizerTableau(3, 4; state=:product);
+julia> ame = StabilizerTableau(3, 4; state = :product);
 
 julia> for g in (Fourier(1), Fourier(2), SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2))
            apply!(ame, g)

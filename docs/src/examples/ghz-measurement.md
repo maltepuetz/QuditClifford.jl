@@ -13,7 +13,7 @@ entangled.
 ```jldoctest ghz-measurement
 # Construct a four-qubit GHZ state.
 # d = 2 selects qubits; n = 4 creates four sites; :ghz selects the GHZ preset.
-julia> state = DestabilizerTableau(2, 4; state=:ghz)
+julia> state = DestabilizerTableau(2, 4; state = :ghz)
 Destabilizer Tableau:
     Qudit dimension:  d = 2
     Number of Qudits: n = 4
@@ -49,8 +49,8 @@ X₁
 
 ```jldoctest ghz-measurement
 # X₁ does not commute with every GHZ stabilizer, so measurement changes state.
-# outcome=0 selects the +1 eigenvalue and makes the walkthrough reproducible.
-julia> measure!(state, x1; outcome=0)
+# outcome = 0 selects the +1 eigenvalue and makes the walkthrough reproducible.
+julia> measure!(state, x1; outcome = 0)
 0
 ```
 

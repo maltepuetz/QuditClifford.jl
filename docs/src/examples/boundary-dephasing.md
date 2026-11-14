@@ -48,7 +48,7 @@ using Statistics
 # p is the measurement probability per site and step, depth the number of
 # brick layers, and gates[i] the preallocated Clifford on the bond (i, i + 1).
 function boundary_dephasing_trajectory(rng, d, L, gates; p, depth=4L)
-    tab = DestabilizerTableau(d, L; state=:Z, storephase=false)
+    tab = DestabilizerTableau(d, L; state = :Z, storephase = false)
 
     for step in 1:depth
         # Odd steps act on the bonds (1,2), (3,4), …; even steps on (2,3), (4,5), ….

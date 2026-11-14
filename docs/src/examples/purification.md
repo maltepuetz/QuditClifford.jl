@@ -74,7 +74,7 @@ function purification_trajectory(
     iseven(n) || throw(ArgumentError("n must be even"))
 
     # Phases are unnecessary because only the rank of the tableau is tracked.
-    tab = DestabilizerTableau(d, n; state=:mixed, storephase=false)
+    tab = DestabilizerTableau(d, n; state = :mixed, storephase = false)
     @assert tab.m == 0
 
     # Pre-filling with n extends a completed trajectory along its pure plateau.

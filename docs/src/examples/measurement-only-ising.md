@@ -28,7 +28,7 @@ function measurement_only_ising(rng, L;
     depth=8L,
 )
     # Begin with |+⟩^L, an unentangled X-basis product state.
-    state = DestabilizerTableau(2, L; state=:X)
+    state = DestabilizerTableau(2, L; state = :X)
 
     for _ in 1:depth
         # First measure ZZ† on every periodic edge.

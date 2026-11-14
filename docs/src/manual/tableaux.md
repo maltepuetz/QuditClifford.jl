@@ -38,7 +38,8 @@ with a destabilizer tableau.
 
 Both types are constructed from `(d, n)` with a preset `state`: `:mixed` (the
 default, maximally mixed, `m = 0`), `:product` with a `basis` (`:X`, `:Y`,
-`:Z`, or one basis per qudit), or `:ghz`:
+`:Z`, or one basis per qudit), or `:ghz`. `state = :X`, `:Y` or `:Z` is
+shorthand for a product state in that basis. For example:
 
 ```jldoctest presets
 julia> StabilizerTableau(3, 3; state = :ghz)

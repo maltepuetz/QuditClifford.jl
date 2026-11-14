@@ -10,7 +10,7 @@ chain in one elimination. Entry `l + 1` is the entropy of sites `1:l`, so the
 vector includes both the empty prefix and the whole chain.
 
 ```jldoctest
-julia> state = DestabilizerTableau(3, 4; state=:ghz);
+julia> state = DestabilizerTableau(3, 4; state = :ghz);
 
 julia> entanglement_profile(state)
 5-element Vector{Int64}:
@@ -32,7 +32,7 @@ For repeated measurements, reuse an output vector with
 [`entanglement_profile!`](@ref) to avoid allocating a result each time:
 
 ```jldoctest
-julia> state = DestabilizerTableau(3, 4; state=:ghz);
+julia> state = DestabilizerTableau(3, 4; state = :ghz);
 
 julia> profile = Vector{Int}(undef, state.n + 1);
 
@@ -42,7 +42,7 @@ true
 julia> profile == [0, 1, 1, 1, 0]
 true
 
-julia> measure!(state, SinglePauli(1, 0, 1); outcome=0);
+julia> measure!(state, SinglePauli(1, 0, 1); outcome = 0);
 
 julia> entanglement_profile!(profile, state);
 
@@ -69,7 +69,7 @@ chain, a cyclic shift gives every arc that starts at a chosen site. Here two
 Bell pairs sit on the opposite bonds `(1, 4)` and `(2, 3)` of a ring of four:
 
 ```jldoctest
-julia> ring = StabilizerTableau(3, 4; state=:product);
+julia> ring = StabilizerTableau(3, 4; state = :product);
 
 julia> for (a, b) in ((1, 4), (2, 3))
            apply!(ring, Fourier(a))
