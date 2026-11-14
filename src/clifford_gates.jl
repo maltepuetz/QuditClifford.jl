@@ -38,9 +38,12 @@ dimension, and supports composition and inversion. [`random_clifford`](@ref)
 samples one uniformly.
 
 # Examples
-```julia
-g = Fourier(1)
-g isa AbstractClifford
+```jldoctest
+julia> g = Fourier(1)
+Fourier(1)
+
+julia> g isa AbstractClifford
+true
 ```
 """
 abstract type AbstractClifford end
@@ -66,8 +69,17 @@ On basis states it is `|k⟩ ↦ d^{-1/2} Σ_j ω^{jk} |j⟩` with `ω = exp(2π
 At `d = 2` this is the Hadamard gate.
 
 # Examples
-```julia
-apply!(tab, Fourier(1))
+```jldoctest
+julia> conjugate(Fourier(1), SinglePauli(1, 1, 0), 1; d = 3)
+Z₁
+
+julia> conjugate(Fourier(1), SinglePauli(1, 0, 1), 1; d = 3)
+X₁²
+
+julia> tab = StabilizerTableau(3, 1; state = :product, basis = :Z);
+
+julia> apply!(tab, Fourier(1)) == StabilizerTableau(3, 1; state = :product, basis = :X)
+true
 ```
 """
 struct Fourier <: AbstractClifford
@@ -84,8 +96,17 @@ For odd prime `d` this is `diag(ω^{j(j-1)/2})`; at `d = 2` it is `diag(1, i)`,
 the qubit `S` gate, and its `X` image carries phase exponent 1.
 
 # Examples
-```julia
-apply!(tab, Phase(1))
+```jldoctest
+julia> conjugate(Phase(1), SinglePauli(1, 1, 0), 1; d = 3)
+X₁ Z₁
+
+julia> conjugate(Phase(1), SinglePauli(1, 1, 0), 1; d = 2)   # S X S† = Y = iXZ
+[phase=1] X₁ Z₁
+
+julia> tab = StabilizerTableau(2, 1; state = :product, basis = :X);
+
+julia> apply!(tab, Phase(1)) == StabilizerTableau(2, 1; state = :product, basis = :Y)
+true
 ```
 """
 struct Phase <: AbstractClifford
@@ -104,8 +125,15 @@ to zero throws `ArgumentError` when the gate is applied. At `d = 2` the only
 valid coefficient is odd, and the gate is the identity.
 
 # Examples
-```julia
-apply!(tab, Multiplier(1, 2))   # valid for d ≥ 3
+```jldoctest
+julia> conjugate(Multiplier(1, 2), SinglePauli(1, 1, 0), 1; d = 3)
+X₁²
+
+julia> conjugate(Multiplier(1, 2), SinglePauli(1, 0, 1), 1; d = 3)   # 2⁻¹ = 2 mod 3
+Z₁²
+
+julia> conjugate(Multiplier(1, 2), SinglePauli(1, 0, 1), 1; d = 5)   # 2⁻¹ = 3 mod 5
+Z₁³
 ```
 """
 struct Multiplier <: AbstractClifford
@@ -124,8 +152,12 @@ on a Pauli with exponents `(x', z')`, where `ω = exp(2πi/d)`; at `d = 2`,
 `ω = −1`, so the shift is a sign.
 
 # Examples
-```julia
-apply!(tab, PauliGate(2, 1, 0))   # conjugate by X on qudit 2
+```jldoctest
+julia> conjugate(PauliGate(2, 1, 0), SinglePauli(2, 0, 1), 2; d = 3)   # conjugate Z₂ by X₂
+[phase=2] Z₂
+
+julia> conjugate(PauliGate(2, 1, 0), SinglePauli(2, 0, 1), 2; d = 2)   # X Z X† = -Z
+[phase=2] Z₂
 ```
 """
 struct PauliGate <: AbstractClifford
@@ -145,8 +177,15 @@ Images are `X₁ ↦ X₁X₂^a`, `X₂ ↦ X₂`, `Z₁ ↦ Z₁`, `Z₂ ↦ Z�
 `a = 1` this is `CNOT`. A coefficient congruent to zero is a valid identity.
 
 # Examples
-```julia
-apply!(tab, SUM(1, 3))
+```jldoctest
+julia> conjugate(SUM(1, 3), SinglePauli(1, 1, 0), 3; d = 3)
+X₁ X₃
+
+julia> conjugate(SUM(1, 3), SinglePauli(3, 0, 1), 3; d = 3)
+Z₁² Z₃
+
+julia> SUM(1, 3) == SUM(1, 3, 1)
+true
 ```
 """
 struct SUM <: AbstractClifford
@@ -170,8 +209,12 @@ Images are `X₁ ↦ X₁Z₂^a`, `X₂ ↦ Z₁^aX₂`, with both `Z` images fi
 with `a = 1` this is `CZ`. A coefficient congruent to zero is a valid identity.
 
 # Examples
-```julia
-apply!(tab, CPhase(1, 2))
+```jldoctest
+julia> conjugate(CPhase(1, 2), SinglePauli(1, 1, 0), 2; d = 3)
+X₁ Z₂
+
+julia> conjugate(CPhase(1, 2, 2), SinglePauli(2, 1, 0), 2; d = 3)
+Z₁² X₂
 ```
 """
 struct CPhase <: AbstractClifford
@@ -191,8 +234,9 @@ CPhase(qudit1::Int, qudit2::Int) = CPhase(qudit1, qudit2, 1)
 Exchange two qudits: `X₁ ↦ X₂`, `X₂ ↦ X₁`, `Z₁ ↦ Z₂`, `Z₂ ↦ Z₁`.
 
 # Examples
-```julia
-apply!(tab, SWAP(1, 4))
+```jldoctest
+julia> conjugate(SWAP(1, 4), DoublePauli(1, 1, 0, 2, 0, 1), 4; d = 3)
+Z₂ X₄
 ```
 """
 struct SWAP <: AbstractClifford

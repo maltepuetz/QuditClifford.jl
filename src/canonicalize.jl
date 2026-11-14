@@ -271,9 +271,13 @@ updating phases consistently and caching pivot metadata.
 - `nothing`. Mutates `tab`.
 
 # Examples
-```julia
-tab = DestabilizerTableau(2, 3; state=:ghz)
-canonicalize!(tab)
+```jldoctest
+julia> tab = DestabilizerTableau(2, 3; state = :ghz);
+
+julia> canonicalize!(tab)
+
+julia> tab == DestabilizerTableau(2, 3; state = :ghz)   # the same state
+true
 ```
 
 # Notes

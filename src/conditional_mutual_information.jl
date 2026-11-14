@@ -42,15 +42,21 @@ nothing unless a subsystem shares memory with `tab.c_workspace`, in which
 case it is copied first.
 
 # Examples
-```julia
-ghz = StabilizerTableau(3, 4; state=:ghz)
-conditional_mutual_information(ghz, [1], [2], [3])  # 0: qudit 3 accounts for the correlation
-mutual_information(ghz, [1], [2])                   # 1
+```jldoctest
+julia> ghz = StabilizerTableau(3, 4; state = :ghz);
 
-# A Bell pair on qudits 1 and 3, with qudit 2 in |0⟩.
-bell = StabilizerTableau(3, 3; state=:product, basis=[:X, :Z, :Z])
-apply!(bell, SUM(1, 3))
-conditional_mutual_information(bell, [1], [3], [2])  # 2
+julia> conditional_mutual_information(ghz, [1], [2], [3])  # qudit 3 accounts for the correlation
+0
+
+julia> mutual_information(ghz, [1], [2])
+1
+
+julia> bell = StabilizerTableau(3, 3; state = :product, basis = [:X, :Z, :Z]);
+
+julia> apply!(bell, SUM(1, 3));   # a Bell pair on qudits 1 and 3, with qudit 2 in |0⟩
+
+julia> conditional_mutual_information(bell, [1], [3], [2])
+2
 ```
 """
 function conditional_mutual_information(

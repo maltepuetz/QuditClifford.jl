@@ -52,13 +52,19 @@ over `F_d`, is the same construction for prime `d`. The package tests check
 it against a dense partial transpose for `d = 2, 3, 5, 7`.
 
 # Examples
-```julia
-bell = StabilizerTableau(3, 2; state=:ghz)
-entanglement_negativity(bell, [1], [2])  # 1
+```jldoctest
+julia> bell = StabilizerTableau(3, 2; state = :ghz);
 
-ghz = StabilizerTableau(3, 3; state=:ghz)
-entanglement_negativity(ghz, [1], [2])   # 0: tracing out qudit 3 leaves only classical correlations
-entanglement_negativity(ghz, [1])        # 1, the same as entanglement_entropy(ghz, [1])
+julia> entanglement_negativity(bell, [1], [2])
+1
+
+julia> ghz = StabilizerTableau(3, 3; state = :ghz);
+
+julia> entanglement_negativity(ghz, [1], [2])   # tracing out qudit 3 leaves only classical correlations
+0
+
+julia> entanglement_negativity(ghz, [1]) == entanglement_entropy(ghz, [1]) == 1
+true
 ```
 """
 function entanglement_negativity(

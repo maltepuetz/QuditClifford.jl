@@ -58,13 +58,21 @@ its hash.
   with `phase_policy=2`, is not covered.
 
 # Examples
-```julia
-a = StabilizerTableau(3, 4; state=:ghz)
-b = copy(a)
-canonicalize!(b)
-a == b                                   # true: same state, possibly another basis
-a == DestabilizerTableau(3, 4; state=:ghz)   # true
-a == StabilizerTableau(3, 4; state=:product) # false
+```jldoctest
+julia> a = StabilizerTableau(3, 4; state = :ghz);
+
+julia> b = copy(a);
+
+julia> canonicalize!(b)
+
+julia> a == b                                         # same state, possibly another basis
+true
+
+julia> a == DestabilizerTableau(3, 4; state = :ghz)
+true
+
+julia> a == StabilizerTableau(3, 4; state = :product)
+false
 ```
 """
 function Base.:(==)(a::AbstractTableau, b::AbstractTableau)

@@ -71,11 +71,22 @@ independent copies. Allocating `conjugate`, `inv`, and composition leave operand
 semantic data and scratch untouched.
 
 # Examples
-```julia
-F = [0 1; 1 0]                     # Fourier at d = 2, as a stored operator
-U = CliffordOperator(2, [1], F, [0, 0])
-apply!(tab, U)
-inv(U)
+```jldoctest
+julia> F = [0 1; 1 0];                     # Fourier at d = 2, as a stored operator
+
+julia> U = CliffordOperator(2, [1], F, [0, 0])
+CliffordOperator(d=2, targets=[1], k=1)
+
+julia> U == CliffordOperator(Fourier(1), 2)
+true
+
+julia> tab = StabilizerTableau(2, 1; state = :product, basis = :Z);
+
+julia> apply!(tab, U) == StabilizerTableau(2, 1; state = :product, basis = :X)
+true
+
+julia> inv(U) == U                        # the Hadamard gate is its own inverse
+true
 ```
 
 See also [`AbstractClifford`](@ref), [`apply!`](@ref), [`conjugate`](@ref).
@@ -428,8 +439,17 @@ at `d = 2`, whose ordered-product evaluator is `O(k²)` per column.
 under state evolution by `U` is `conjugate(inv(U), op)`.
 
 # Examples
-```julia
-W = inv(CliffordOperator(Fourier(1), 3))
+```jldoctest
+julia> F = CliffordOperator(Fourier(1), 3);
+
+julia> W = inv(F)
+CliffordOperator(d=3, targets=[1], k=1)
+
+julia> conjugate(W, conjugate(F, SinglePauli(1, 1, 0), 1), 1)
+X₁
+
+julia> F ∘ W == CliffordOperator(3, [1], [1 0; 0 1], [0, 0])
+true
 ```
 """
 function Base.inv(U::CliffordOperator)
@@ -485,9 +505,18 @@ named gate or with a `CliffordOperator`, throws an `ArgumentError`; materialize
 it first with `CliffordOperator(g, d)`.
 
 # Examples
-```julia
-U = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
-apply!(tab, U)        # same as apply!(tab, Fourier(1)); apply!(tab, Phase(1))
+```jldoctest
+julia> U = CliffordOperator(Phase(1), 2) ∘ CliffordOperator(Fourier(1), 2)
+CliffordOperator(d=2, targets=[1], k=1)
+
+julia> a = apply!(StabilizerTableau(2, 1; state = :product, basis = :Z), U);
+
+julia> b = StabilizerTableau(2, 1; state = :product, basis = :Z);
+
+julia> apply!(b, Fourier(1)); apply!(b, Phase(1));
+
+julia> a == b
+true
 ```
 """
 function Base.:∘(U::CliffordOperator, V::CliffordOperator)

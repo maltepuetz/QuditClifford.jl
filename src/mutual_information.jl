@@ -36,11 +36,17 @@ and allocates nothing unless `A` or `B` shares memory with
 `tab.c_workspace`, in which case it is copied first.
 
 # Examples
-```julia
-ghz = StabilizerTableau(3, 3; state=:ghz)
-mutual_information(ghz, [1], [2])     # 1: classical correlation
-entanglement_negativity(ghz, [1], [2]) # 0
-mutual_information(ghz, [1])          # 2, twice entanglement_entropy(ghz, [1])
+```jldoctest
+julia> ghz = StabilizerTableau(3, 3; state = :ghz);
+
+julia> mutual_information(ghz, [1], [2])        # classical correlation
+1
+
+julia> entanglement_negativity(ghz, [1], [2])
+0
+
+julia> mutual_information(ghz, [1])             # twice entanglement_entropy(ghz, [1])
+2
 ```
 """
 function mutual_information(tab::AbstractTableau, A::AbstractVector, B::AbstractVector)
@@ -103,16 +109,20 @@ overwrites the scratch arrays `tab.workspace`, `tab.c_workspace` and
 with `tab.c_workspace`, in which case it is copied first.
 
 # Examples
-```julia
-ghz = StabilizerTableau(3, 4; state=:ghz)
-tripartite_information(ghz, [1], [2], [3])  # 1
+```jldoctest
+julia> ghz = StabilizerTableau(3, 4; state = :ghz);
 
-# |i, j, i+j, i+2j⟩ summed over i and j: every pair of qutrits is maximally
-# entangled with the other pair.
-ame = StabilizerTableau(3, 4; state=:product)
-foreach(q -> apply!(ame, Fourier(q)), (1, 2))
-foreach(g -> apply!(ame, g), (SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2)))
-tripartite_information(ame, [1], [2], [3])  # -2
+julia> tripartite_information(ghz, [1], [2], [3])
+1
+
+julia> ame = StabilizerTableau(3, 4; state = :product);
+
+julia> foreach(q -> apply!(ame, Fourier(q)), (1, 2))
+
+julia> foreach(g -> apply!(ame, g), (SUM(1, 3), SUM(2, 3), SUM(1, 4), SUM(2, 4, 2)))
+
+julia> tripartite_information(ame, [1], [2], [3])
+-2
 ```
 """
 function tripartite_information(

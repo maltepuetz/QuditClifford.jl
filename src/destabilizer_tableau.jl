@@ -1,7 +1,7 @@
 """
-    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true)
+    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d))
     DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing)
+    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true)
 
 Construct a destabilizer tableau for an `n`-qudit *stabilizer density operator*
 (mixed-state stabilizer formalism).
@@ -47,12 +47,21 @@ without first canonicalizing the stabilizer generators.
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
 
 # Examples
-```julia
-tab = DestabilizerTableau(2, 3; state=:mixed)
-tab = DestabilizerTableau(2, 3; state=:product, basis=:X)
+```jldoctest
+julia> tab = DestabilizerTableau(2, 3; state = :mixed);
 
-raw = reshape(Int[0, 1, 0], 3, 1)
-tab = DestabilizerTableau(2, raw)
+julia> tab.m, is_pure(tab)
+(0, false)
+
+julia> tab = DestabilizerTableau(2, 3; state = :product, basis = :X);
+
+julia> tab.m, is_pure(tab)
+(3, true)
+
+julia> raw = reshape([0, 1, 0], 3, 1);   # one qubit, generator Z, phase exponent 0
+
+julia> DestabilizerTableau(2, raw) == DestabilizerTableau(2, 1; state = :product, basis = :Z)
+true
 ```
 
 # Notes
