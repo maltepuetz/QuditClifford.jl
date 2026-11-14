@@ -1,7 +1,7 @@
 """
-    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true)
+    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d))
     StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, check::Bool=true)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true)
 
 Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -32,12 +32,21 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
 
 # Examples
-```julia
-tab = StabilizerTableau(2, 3; state=:mixed)
-tab = StabilizerTableau(2, 3; state=:product, basis=:X)
+```jldoctest
+julia> tab = StabilizerTableau(2, 3; state = :mixed);
 
-raw = reshape(Int[0, 1, 0], 3, 1)
-tab = StabilizerTableau(2, raw)
+julia> tab.m, is_pure(tab)
+(0, false)
+
+julia> tab = StabilizerTableau(2, 3; state = :product, basis = :X);
+
+julia> tab.m, is_pure(tab)
+(3, true)
+
+julia> raw = reshape([0, 1, 0], 3, 1);   # one qubit, generator Z, phase exponent 0
+
+julia> StabilizerTableau(2, raw) == StabilizerTableau(2, 1; state = :product, basis = :Z)
+true
 ```
 
 # Notes
@@ -252,10 +261,18 @@ Reset an existing destabilizer or stabilizer tableau in-place to a preset state.
 - `basis=:Z`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
 
 # Examples
-```julia
-tab = DestabilizerTableau(2, 3; state=:mixed)
-reset!(tab; state=:product, basis=:Z)
-reset!(tab, :ghz)
+```jldoctest
+julia> tab = DestabilizerTableau(2, 3; state = :mixed);
+
+julia> reset!(tab; state = :product, basis = :Z);
+
+julia> tab == DestabilizerTableau(2, 3; state = :product, basis = :Z)
+true
+
+julia> reset!(tab, :ghz);
+
+julia> tab == DestabilizerTableau(2, 3; state = :ghz)
+true
 ```
 
 # Notes
@@ -291,10 +308,18 @@ Use `copy!(dst, tab)` to overwrite an existing tableau instead of allocating a
 new one, for example when branching many trajectories off one state.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 4; state=:ghz)
-branch = copy(tab)
-measure!(branch, SinglePauli(1, 1, 0))   # tab is unchanged
+```jldoctest
+julia> tab = DestabilizerTableau(3, 4; state = :ghz);
+
+julia> branch = copy(tab);
+
+julia> measure!(branch, SinglePauli(1, 1, 0); outcome = 0);
+
+julia> tab == DestabilizerTableau(3, 4; state = :ghz)   # tab is unchanged
+true
+
+julia> branch == tab
+false
 ```
 """
 function Base.copy(tab::StabilizerTableau{T}) where {T}
@@ -332,13 +357,18 @@ inversion strategy and workspaces. Both tableaux must be of the same kind.
 before `dst` is modified.
 
 # Examples
-```julia
-tab = StabilizerTableau(2, 8; state=:ghz)
-branch = StabilizerTableau(2, 8)
-for _ in 1:100
-    copy!(branch, tab)
-    measure!(branch, SinglePauli(1, 1, 0))
-end
+```jldoctest
+julia> tab = StabilizerTableau(2, 8; state = :ghz);
+
+julia> branch = StabilizerTableau(2, 8);
+
+julia> for _ in 1:100
+           copy!(branch, tab)
+           measure!(branch, SinglePauli(1, 1, 0); outcome = 0)
+       end
+
+julia> tab == StabilizerTableau(2, 8; state = :ghz)
+true
 ```
 """
 function Base.copy!(dst::StabilizerTableau, src::StabilizerTableau)

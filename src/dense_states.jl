@@ -180,9 +180,14 @@ represents.
   order, first amplitude real and positive.
 
 # Examples
-```julia
-tab = StabilizerTableau(3, 100; state=:ghz)
-ket(tab)          # (|00…0⟩ + |11…1⟩ + |22…2⟩)/√3, three terms at any n
+```jldoctest
+julia> ket(StabilizerTableau(3, 2; state = :ghz))
+StabilizerKet (d = 3, n = 2, 3 terms):
+  (|00⟩ + |11⟩ + |22⟩)/√3
+
+julia> ket(StabilizerTableau(3, 100; state = :ghz))   # three terms at any n
+StabilizerKet (d = 3, n = 100, 3 terms):
+  (|0000000000000000…0000000000000000⟩ + …)/√3
 ```
 
 # Notes
@@ -297,9 +302,11 @@ positive.
 - `Vector{ComplexF64}` of length `d^n`.
 
 # Examples
-```julia
-tab = StabilizerTableau(2, 2; state=:product, basis=[:Z, :X])
-state_vector(tab)       # |0⟩ ⊗ |+⟩ = [1, 1, 0, 0] / √2
+```jldoctest
+julia> tab = StabilizerTableau(2, 2; state = :product, basis = [:Z, :X]);
+
+julia> state_vector(tab) ≈ [1, 1, 0, 0] / √2   # |0⟩ ⊗ |+⟩
+true
 ```
 
 # Notes
@@ -381,9 +388,15 @@ state is pure. Basis ordering is the one [`state_vector`](@ref) uses.
 - `Matrix{ComplexF64}` of size `d^n × d^n`.
 
 # Examples
-```julia
-tab = StabilizerTableau(2, 2; state=:ghz)
-density_matrix(tab)     # (|00⟩ + |11⟩)(⟨00| + ⟨11|) / 2
+```jldoctest
+julia> tab = StabilizerTableau(2, 2; state = :ghz);
+
+julia> real(density_matrix(tab))   # (|00⟩ + |11⟩)(⟨00| + ⟨11|) / 2
+4×4 Matrix{Float64}:
+ 0.5  0.0  0.0  0.5
+ 0.0  0.0  0.0  0.0
+ 0.0  0.0  0.0  0.0
+ 0.5  0.0  0.0  0.5
 ```
 
 # Notes

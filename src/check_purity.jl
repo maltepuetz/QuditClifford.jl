@@ -25,10 +25,14 @@ a bug.
 - `Bool`: whether the represented state is pure.
 
 # Examples
-```julia
-tab = StabilizerTableau(2, 3; state=:ghz)
-is_pure(tab)               # true, from m == n alone
-is_pure(tab; verify=true)  # true, re-derived from the generators
+```jldoctest
+julia> tab = StabilizerTableau(2, 3; state = :ghz);
+
+julia> is_pure(tab)                 # from m == n alone
+true
+
+julia> is_pure(tab; verify = true)  # re-derived from the generators
+true
 ```
 
 # Notes

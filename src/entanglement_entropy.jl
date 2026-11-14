@@ -17,10 +17,14 @@ Compute the stabilizer entanglement entropy of a subsystem.
 - An integer `S(A)` in log-`d` units (so `S=1` means entropy `log(d)`).
 
 # Examples
-```julia
-tab = DestabilizerTableau(2, 3; state=:ghz)
-S1 = entanglement_entropy(tab, [1])      # 1
-S2 = entanglement_entropy(tab, [1, 2])   # 1
+```jldoctest
+julia> tab = DestabilizerTableau(2, 3; state = :ghz);
+
+julia> entanglement_entropy(tab, [1])
+1
+
+julia> entanglement_entropy(tab, [1, 2])
+1
 ```
 
 # Notes
@@ -87,10 +91,29 @@ suffix; the prefix profile itself need not be symmetric. For a mixed state,
 these are subsystem von Neumann entropies, not an entanglement measure.
 
 # Examples
-```julia
-entanglement_profile(StabilizerTableau(3, 4; state=:ghz)) # [0, 1, 1, 1, 0]
-entanglement_profile(StabilizerTableau(3, 3))             # [0, 1, 2, 3]
-entanglement_profile(StabilizerTableau(3, 4; state=:ghz), [3, 4, 1, 2]) # [0, 1, 1, 1, 0]
+```jldoctest
+julia> entanglement_profile(StabilizerTableau(3, 4; state = :ghz))
+5-element Vector{Int64}:
+ 0
+ 1
+ 1
+ 1
+ 0
+
+julia> entanglement_profile(StabilizerTableau(3, 3))
+4-element Vector{Int64}:
+ 0
+ 1
+ 2
+ 3
+
+julia> entanglement_profile(StabilizerTableau(3, 4; state = :ghz), [3, 4, 1, 2])
+5-element Vector{Int64}:
+ 0
+ 1
+ 1
+ 1
+ 0
 ```
 """
 function entanglement_profile(tab::AbstractTableau)
@@ -128,13 +151,42 @@ preserves generators and canonicalization caches, and allocates nothing once
 compiled for ordinary vectors and views of independent arrays.
 
 # Examples
-```julia
-tab = StabilizerTableau(3, 4; state=:ghz)
-dest = Vector{Int}(undef, tab.n + 1)
-entanglement_profile!(dest, tab) # dest is now [0, 1, 1, 1, 0]
-reset!(tab; state=:mixed)
-entanglement_profile!(dest, tab) # the same dest is now [0, 1, 2, 3, 4]
-entanglement_profile!(dest, tab, [4, 3, 2, 1]) # also [0, 1, 2, 3, 4]
+```jldoctest
+julia> tab = StabilizerTableau(3, 4; state = :ghz);
+
+julia> dest = Vector{Int}(undef, tab.n + 1);
+
+julia> entanglement_profile!(dest, tab);
+
+julia> dest
+5-element Vector{Int64}:
+ 0
+ 1
+ 1
+ 1
+ 0
+
+julia> reset!(tab; state = :mixed);
+
+julia> entanglement_profile!(dest, tab);   # reuses dest
+
+julia> dest
+5-element Vector{Int64}:
+ 0
+ 1
+ 2
+ 3
+ 4
+
+julia> entanglement_profile!(dest, tab, [4, 3, 2, 1]);
+
+julia> dest
+5-element Vector{Int64}:
+ 0
+ 1
+ 2
+ 3
+ 4
 ```
 """
 function entanglement_profile!(profile::AbstractVector{Int}, tab::AbstractTableau)

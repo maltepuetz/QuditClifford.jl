@@ -583,10 +583,15 @@ zero), or if a stored [`CliffordOperator`](@ref)'s dimension does not match
 `tab.d`. Validation happens before any mutation.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 2; state=:product, basis=:Z)
-apply!(tab, Fourier(1))
-apply!(tab, SUM(1, 2))
+```jldoctest
+julia> tab = DestabilizerTableau(3, 2; state = :product, basis = :Z);
+
+julia> apply!(tab, Fourier(1));
+
+julia> apply!(tab, SUM(1, 2));
+
+julia> tab == DestabilizerTableau(3, 2; state = :ghz)
+true
 ```
 
 # Notes
@@ -778,9 +783,12 @@ malformed dense length, a sparse index outside `1:n` or repeated, or a gate
 target outside `1:n`.
 
 # Examples
-```julia
-conjugate(Fourier(1), SinglePauli(1, 1, 0), 2; d = 3)   # X₁ ↦ Z₁
-conjugate(SUM(1, 2), GeneralPauli([1, 0, 0, 0], 0); d = 2)
+```jldoctest
+julia> conjugate(Fourier(1), SinglePauli(1, 1, 0), 2; d = 3)   # X₁ ↦ Z₁
+Z₁
+
+julia> conjugate(SUM(1, 2), GeneralPauli([1, 0, 0, 0], 0); d = 2)
+X₁ X₂
 ```
 
 # Notes

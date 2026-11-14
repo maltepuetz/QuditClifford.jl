@@ -5,9 +5,12 @@ Abstract supertype for Pauli operators supported by QuditClifford.
 Concrete operators can be used with [`measure!`](@ref) and [`expect!`](@ref).
 
 # Examples
-```julia
-op = SinglePauli(1, 1, 0)
-op isa AbstractPauli
+```jldoctest
+julia> op = SinglePauli(1, 1, 0)
+X₁
+
+julia> op isa AbstractPauli
+true
 ```
 """
 abstract type AbstractPauli end
@@ -27,9 +30,12 @@ For odd prime `d`, phase exponent `k` represents ``\\omega^k``, where
 represents ``i^k``, with `k` reduced modulo `4`.
 
 # Examples
-```julia
-op = DoublePauli(1, 1, 0, 3, 0, 1)  # X1 * Z3
-op isa FewQuditPauli
+```jldoctest
+julia> op = DoublePauli(1, 1, 0, 3, 0, 1)
+X₁ Z₃
+
+julia> op isa FewQuditPauli
+true
 ```
 """
 abstract type FewQuditPauli <: AbstractPauli end
@@ -47,9 +53,12 @@ Pauli operator acting on a single qudit, with X/Z exponents and an optional phas
 - `phase::Int`: Phase exponent `k`. Interpreted as `ω^k` for odd prime `d` and `i^k` for `d=2`.
 
 # Examples
-```julia
-op = SinglePauli(2, 1, 0)        # X on qudit 2
-op = SinglePauli(1, 0, 1, 2)     # i^2 Z on qudit 1 when d=2
+```jldoctest
+julia> SinglePauli(2, 1, 0)        # X on qudit 2
+X₂
+
+julia> SinglePauli(1, 0, 1, 2)     # i² Z on qudit 1 when d = 2
+[phase=2] Z₁
 ```
 """
 struct SinglePauli <: FewQuditPauli
@@ -69,15 +78,22 @@ end
 Pauli operator acting on two qudits.
 
 # Arguments
-- `qudit1::Int`, `qudit2::Int`: 1-based qudit indices.
+- `qudit1::Int`, `qudit2::Int`: 1-based qudit indices. They must be distinct.
+  The constructor does not check this; a function that takes the operator
+  together with a register size, such as [`measure!`](@ref), [`expect!`](@ref),
+  [`expect_int!`](@ref), [`dephase!`](@ref) or [`conjugate`](@ref), throws an
+  `ArgumentError` for a repeated index before it changes any state.
 - `x1::Int`, `z1::Int`: Exponents for the first qudit.
 - `x2::Int`, `z2::Int`: Exponents for the second qudit.
 - `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
 
 # Examples
-```julia
-op = DoublePauli(1, 1, 0, 2, 0, 1)    # X1 * Z2
-op = DoublePauli(1, 0, 1, 2, 0, 1, 3) # i^3 Z1 * Z2 when d=2
+```jldoctest
+julia> DoublePauli(1, 1, 0, 2, 0, 1)
+X₁ Z₂
+
+julia> DoublePauli(1, 0, 1, 2, 0, 1, 3)   # i³ Z₁ Z₂ when d = 2
+[phase=3] Z₁ Z₂
 ```
 """
 struct DoublePauli <: FewQuditPauli
@@ -104,13 +120,19 @@ end
 Pauli operator acting on three qudits.
 
 # Arguments
-- `qudit1::Int`, `qudit2::Int`, `qudit3::Int`: 1-based qudit indices.
+- `qudit1::Int`, `qudit2::Int`, `qudit3::Int`: 1-based qudit indices. They must
+  be pairwise distinct. The constructor does not check this; a function that
+  takes the operator together with a register size, such as [`measure!`](@ref),
+  [`expect!`](@ref), [`expect_int!`](@ref), [`dephase!`](@ref) or
+  [`conjugate`](@ref), throws an `ArgumentError` for a repeated index before it
+  changes any state.
 - `x1::Int`, `z1::Int`, `x2::Int`, `z2::Int`, `x3::Int`, `z3::Int`: Exponents for each qudit.
 - `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
 
 # Examples
-```julia
-op = TriplePauli(1, 1, 0, 2, 0, 1, 3, 1, 1)  # X1 * Z2 * X3Z3
+```jldoctest
+julia> TriplePauli(1, 1, 0, 2, 0, 1, 3, 1, 1)
+X₁ Z₂ X₃ Z₃
 ```
 """
 struct TriplePauli <: FewQuditPauli
@@ -142,8 +164,9 @@ Pauli operator acting on `D` qudits specified by tuples.
 - `phase::Int`: Phase exponent `k` (interpreted as `ω^k` or `i^k` depending on `d`).
 
 # Examples
-```julia
-op = NPauli((1, 3), (1, 0), (0, 1))  # X1 * Z3
+```jldoctest
+julia> NPauli((1, 3), (1, 0), (0, 1))
+X₁ Z₃
 ```
 """
 struct NPauli{D} <: FewQuditPauli

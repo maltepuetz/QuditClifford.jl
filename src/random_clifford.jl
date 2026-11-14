@@ -209,10 +209,18 @@ A fixed seed reproduces the result for the same RNG type, Julia version and
 package version. The draw stream is not a cross-version guarantee.
 
 # Examples
-```julia
-using Random
-U = random_clifford(Xoshiro(1), 3, 1:2)    # a random two-qutrit Clifford
-apply!(tab, U)
+```jldoctest
+julia> using Random
+
+julia> U = random_clifford(Xoshiro(1), 3, 1:2)    # a random two-qutrit Clifford
+CliffordOperator(d=3, targets=[1, 2], k=2)
+
+julia> tab = StabilizerTableau(3, 2; state = :product);
+
+julia> apply!(tab, U);
+
+julia> is_pure(tab)
+true
 ```
 
 See also [`random_clifford!`](@ref), [`random_state!`](@ref).
@@ -268,13 +276,21 @@ operator's action in place.
   for [`apply!`](@ref); use independent copies instead.
 
 # Examples
-```julia
-using Random
-rng = Xoshiro(7)
-U = random_clifford(rng, 2, [3, 4])
-for layer in 1:10
-    apply!(tab, random_clifford!(rng, U))
-end
+```jldoctest
+julia> using Random
+
+julia> rng = Xoshiro(7);
+
+julia> tab = StabilizerTableau(2, 4; state = :product);
+
+julia> U = random_clifford(rng, 2, [3, 4]);
+
+julia> for layer in 1:10
+           apply!(tab, random_clifford!(rng, U))
+       end
+
+julia> entanglement_entropy(tab, [1, 2])   # the layers act on qudits 3 and 4 only
+0
 ```
 
 See also [`random_clifford`](@ref).
@@ -344,11 +360,20 @@ its dual basis and cache, with no separate reconstruction.
   package version.
 
 # Examples
-```julia
-using Random
-tab = DestabilizerTableau(3, 4)
-random_state!(Xoshiro(1), tab)            # a random pure state
-random_state!(Xoshiro(2), tab; m = 2)     # a random stabilizer code
+```jldoctest
+julia> using Random
+
+julia> tab = DestabilizerTableau(3, 4);
+
+julia> random_state!(Xoshiro(1), tab);            # a random pure state
+
+julia> tab.m, is_pure(tab)
+(4, true)
+
+julia> random_state!(Xoshiro(2), tab; m = 2);     # a random stabilizer code
+
+julia> tab.m, is_pure(tab)
+(2, false)
 ```
 
 See also [`random_clifford`](@ref), [`reset!`](@ref).

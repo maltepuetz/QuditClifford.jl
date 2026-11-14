@@ -358,21 +358,42 @@ Projectively measure a Pauli operator `op` and update `tab` in-place.
   the eigenvalue.
 
 # Throws
-- `ArgumentError` if `outcome` is outside `0:(d-1)`, if `op` is not a Pauli on the
-  register, or if a random measurement would append to a full tableau.
+- `ArgumentError` if `op` is not a Pauli on the register: a sparse Pauli with a qudit
+  index outside `1:n` or with a repeated index, a [`GeneralPauli`](@ref) whose vector
+  does not have length `2n`, or a plain vector whose length is neither `2n` nor `2n+1`.
+- `ArgumentError` if `outcome` is outside `0:(d-1)`.
+- `ArgumentError` if `phase_policy` is not `0`, `1` or `2`. This is checked for every
+  `d`, but only when `storephase=true`; without a phase row the keyword is not read.
+- `ArgumentError` if a random measurement would append a generator to a tableau that
+  already has `m == n`, or if a [`DestabilizerTableau`](@ref) cannot build the
+  destabilizer of an appended generator. Neither occurs for a tableau whose generators
+  commute and are independent, which the raw-matrix constructors verify unless
+  `check=false`.
 - `ArgumentError` for `d=2` with `storephase=true` if the measurement is deterministic
   with eigenvalue `±i`. This needs a non-Hermitian `op` kept by `phase_policy` `0` or
   `2`, or a non-Hermitian stored generator. `tab` still represents the same state.
 
 # Examples
-```julia
-tab = DestabilizerTableau(2, 2; state=:product, basis=:Z)
-op = SinglePauli(1, 1, 0)           # X on qudit 1
-t = measure!(Xoshiro(1), tab, op)   # random outcome from a seeded RNG, tableau updated
+```jldoctest
+julia> using Random
 
-tab = DestabilizerTableau(3, 2; state=:ghz)
-op3 = DoublePauli(1, 0, 1, 2, 0, 2) # Z1 * Z2^2
-t3 = measure!(tab, op3)            # deterministic outcome t3=0, tableau unchanged
+julia> tab = DestabilizerTableau(2, 2; state = :product, basis = :Z);
+
+julia> t = measure!(Xoshiro(1), tab, SinglePauli(1, 1, 0));   # X on qudit 1: random outcome
+
+julia> t in 0:1
+true
+
+julia> measure!(tab, SinglePauli(1, 1, 0)) == t               # repeating it is deterministic
+true
+
+julia> measure!(tab, SinglePauli(2, 1, 0); outcome = 1)       # a chosen outcome for a random branch
+1
+
+julia> ghz = DestabilizerTableau(3, 2; state = :ghz);
+
+julia> measure!(ghz, DoublePauli(1, 0, 1, 2, 0, 2))           # Z₁ Z₂², fixed by the state
+0
 ```
 
 # Notes

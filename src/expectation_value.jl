@@ -63,9 +63,14 @@ Return the expectation value ⟨P⟩ as a `ComplexF64` for a Pauli operator `op`
 - `ComplexF64` expectation value. Returns `0.0 + 0.0im` if ⟨P⟩ = 0.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 1; state=:product, basis=:Z)
-val = expect!(tab, SinglePauli(1, 0, 1))  # ⟨Z⟩ = 1 + 0im
+```jldoctest
+julia> tab = DestabilizerTableau(3, 1; state = :product, basis = :Z);
+
+julia> expect!(tab, SinglePauli(1, 0, 1))   # ⟨Z⟩
+1.0 + 0.0im
+
+julia> expect!(tab, SinglePauli(1, 1, 0))   # ⟨X⟩
+0.0 + 0.0im
 ```
 
 # Notes

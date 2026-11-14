@@ -74,10 +74,13 @@ The commutation pass costs `O(km)` for a `k`-qudit sparse Pauli, and removing a
 generator adds `O(nm)`.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 2; state=:ghz)
-dephase!(tab, SinglePauli(1, 0, 1))   # Z on qudit 1: the GHZ state becomes classical
-tab.m                                  # 1
+```jldoctest
+julia> tab = DestabilizerTableau(3, 2; state = :ghz);
+
+julia> dephase!(tab, SinglePauli(1, 0, 1));   # Z on qudit 1: the GHZ state becomes classical
+
+julia> tab.m
+1
 ```
 """
 function dephase!(tab::AbstractTableau, op::AbstractVector{<:Integer})
@@ -136,10 +139,13 @@ it is computed, so it supports both tableau types, every prime `d` and
 `storephase=false`, and allocates nothing. The cost is `O(|sites|·nm)`.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 3; state=:ghz)
-traceout!(tab, 1)                # qudit 1 becomes maximally mixed
-entanglement_entropy(tab, [1])   # 1
+```jldoctest
+julia> tab = DestabilizerTableau(3, 3; state = :ghz);
+
+julia> traceout!(tab, 1);               # qudit 1 becomes maximally mixed
+
+julia> entanglement_entropy(tab, [1])
+1
 ```
 """
 function traceout!(tab::AbstractTableau, sites::AbstractVector)
@@ -221,10 +227,18 @@ canonical afterwards, and `tab.m` equals the rank after tracing out `sites` plus
 `length(sites)`.
 
 # Examples
-```julia
-tab = DestabilizerTableau(3, 3; state=:ghz)
-reset!(tab, 1)                      # qudit 1 is |0⟩, the other two are correlated but mixed
-reset!(tab, [2, 3]; basis=[:X, :Y]) # per-site bases
+```jldoctest
+julia> tab = DestabilizerTableau(3, 3; state = :ghz);
+
+julia> reset!(tab, 1);                         # qudit 1 is |0⟩, the other two are correlated but mixed
+
+julia> expect!(tab, SinglePauli(1, 0, 1)), is_pure(tab)
+(1.0 + 0.0im, false)
+
+julia> reset!(tab, [2, 3]; basis = [:X, :Y]);  # per-site bases
+
+julia> is_pure(tab)
+true
 ```
 """
 function reset!(tab::AbstractTableau, sites::AbstractVector; basis=:Z)
