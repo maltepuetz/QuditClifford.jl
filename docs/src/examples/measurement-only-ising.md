@@ -63,7 +63,9 @@ logarithmically. See Lang and Büchler,
 
 The next helper averages the entropy arc over independent trajectories. A
 single trajectory is noisy, whereas this ensemble average exposes the scaling
-shared by typical trajectories. Qubit entropy is measured in bits.
+shared by typical trajectories. [`entanglement_profile!`](@ref) returns the
+entropy of every prefix `1:l` from one elimination, so a whole arc costs about
+as much as a single entropy. Qubit entropy is measured in bits.
 
 ```@example ising_circuit
 # Estimate the mean entropy as a function of subsystem size.
@@ -80,13 +82,14 @@ function mean_entropy_arc(L;
     cuts = collect(1:(L - 1))
     entropies = zeros(length(cuts), trajectories)
 
+    # profile[l + 1] is the entropy of sites 1:l, for l = 0, …, L.
+    profile = Vector{Int}(undef, L + 1)
+
     # Accumulate the entropy arc over measurement trajectories.
     for t in 1:trajectories
         state = measurement_only_ising(rng, L; p=p, depth=depth)
-        for j in cuts
-            subsystem = collect(1:j)
-            entropies[j, t] = entanglement_entropy(state, subsystem)
-        end
+        entanglement_profile!(profile, state)
+        entropies[:, t] .= @view profile[2:L]
     end
 
     mean_entropy = mean(entropies, dims=2)[:]
@@ -111,7 +114,7 @@ cuts, entropy_arc = mean_entropy_arc(
     L; p=0.5, depth=8L, trajectories=250, seed=1234
 )
 
-# Fit every independently measured cut position.
+# Fit all cut positions.
 log_chord = log2.((L / π) .* sinpi.(cuts ./ L))
 offset, slope = hcat(ones(length(cuts)), log_chord) \ entropy_arc
 c_tilde = 3 * slope
@@ -148,8 +151,7 @@ figure
 ```
 
 The points form the expected approximately symmetric entropy arc. Small
-left-right differences remain because every cut is sampled independently with
-a finite trajectory ensemble. Increase `L`, `depth`, and `trajectories` for a
+left-right differences remain because the trajectory ensemble is finite. Increase `L`, `depth`, and `trajectories` for a
 scaling analysis rather than interpreting this one finite-size fit.
 
 For increasing `L`, `depth`, and trajectory count, `c_tilde` should approach
