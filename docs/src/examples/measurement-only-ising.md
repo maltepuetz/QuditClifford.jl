@@ -98,8 +98,8 @@ end
 nothing # hide
 ```
 
-The following plot averages over ``250`` trajectories at the critical point. It calculates
-all ``L-1`` nontrivial cuts. The line is a fit to the periodic chord-length form
+The following plot averages over ``4000`` trajectories at the critical point.
+It calculates all ``L-1`` nontrivial cuts. The line is a fit to the periodic chord-length form
 ``S(\ell)=S_0+(\widetilde c/3)\log_2[(L/\pi)\sin(\pi\ell/L)]``.
 
 ```@example ising_circuit
@@ -111,7 +111,7 @@ include(joinpath(pkgdir(QuditClifford), "docs", "makie_theme.jl")) # hide
 # More trajectories reduce sample noise but increase documentation build time.
 L = 32
 cuts, entropy_arc = mean_entropy_arc(
-    L; p=0.5, depth=8L, trajectories=250, seed=1234
+    L; p=0.5, depth=8L, trajectories=4000, seed=1234
 )
 
 # Fit all cut positions.
@@ -151,10 +151,11 @@ figure
 ```
 
 The points form the expected approximately symmetric entropy arc. Small
-left-right differences remain because the trajectory ensemble is finite. Increase `L`, `depth`, and `trajectories` for a
-scaling analysis rather than interpreting this one finite-size fit.
+left-right differences remain because the trajectory ensemble is finite.
+Increase `L` and `depth` for a scaling analysis rather than interpreting this
+one finite-size fit.
 
-For increasing `L`, `depth`, and trajectory count, `c_tilde` should approach
+For increasing `L` and `depth`, `c_tilde` should approach
 the percolation effective entanglement central charge
 
 ```math
