@@ -1189,7 +1189,9 @@ end
 
 Register `dense` (every `d` in `dense_ds` at size `n`), `modulus` (every prime
 in [`MODULUS_PRIMES`](@ref) at `modulus_n`), and the `channels`,
-`information`, `gates` and `tableau` groups at size `n`. Everything here
+`information`, `gates` and `tableau` groups at size `n`. `information` runs at
+`d = 2`, where the eliminations work on packed bits, and at `d = 3`, where they
+work on bytes. Everything here
 builds its fixtures with `random_state!`, so a baseline without it keeps its
 column and loses only these groups.
 """
@@ -1205,7 +1207,9 @@ function register_breadth_groups!(suite, types; n::Int, dense_ds, modulus_n::Int
             suite["modulus"]["$tn/d=$d/n=$modulus_n"] = modulus_group(; d, n = modulus_n, T)
         end
         suite["channels"]["$tn/d=3/n=$n"] = channel_group(; d = 3, n, T)
-        suite["information"]["$tn/d=3/n=$n"] = information_group(; d = 3, n, T)
+        for d in (2, 3)
+            suite["information"]["$tn/d=$d/n=$n"] = information_group(; d, n, T)
+        end
         suite["gates"]["$tn/d=5/n=$n"] = gate_group(; d = 5, n, T)
         suite["tableau"]["$tn/d=3/n=$n"] = tableau_group(; d = 3, n, T)
     end

@@ -89,9 +89,9 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 308 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 525 | ~200 s (183 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048} | 2, 3, 5, 7 | 1107 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 324 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 541 | ~205 s (189 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048} | 2, 3, 5, 7 | 1123 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 The `dense`, `channels`, `information`, `gates` and `tableau` groups use the
 largest `n` of the profile and the `modulus` group `n = 64` (`8` in `smoke`).
@@ -217,7 +217,8 @@ chain, and the single-site `reset!` on a pure dense state (`d = 3`), each from
 a restored snapshot. `information` times `mutual_information`,
 `tripartite_information`, `conditional_mutual_information` and
 `entanglement_negativity` on adjacent quarters of a dense state, pure and at
-`m = n/2`; none of them changes the state, so they need no restore.
+`m = n/2`, at `d = 2` (eliminations on packed bits) and `d = 3` (on bytes);
+none of them changes the state, so they need no restore.
 
 `gates` covers the named gates the `clifford` spine leaves out --
 `Multiplier`, `PauliGate`, `CPhase`, `SWAP` and `SUM` with coefficient `2` --
