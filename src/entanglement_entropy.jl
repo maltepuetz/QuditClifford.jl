@@ -37,9 +37,10 @@ function entanglement_entropy(
     check::Bool=true,
 ) where T<:AbstractVector
 
-    # The check and the complement rank both write c_workspace while reading
-    # `subsystem`, so a `subsystem` stored there is copied first.
-    subsystem = Base.unalias(tab.c_workspace, subsystem)
+    # The check and the complement rank both write c_workspace, and the rank
+    # writes a rank workspace, while reading `subsystem`, so a `subsystem`
+    # stored in any of them is copied first.
+    subsystem = _unalias_rank_workspaces(tab, Base.unalias(tab.c_workspace, subsystem))
     check && _check_subsystem!(tab, subsystem)
     N_A = length(subsystem)
     n = tab.n
@@ -81,10 +82,12 @@ agreement with `entanglement_entropy(tab, order[1:l])`. A cyclic shift of
 chain. The cost is the same as for the natural order.
 
 A single right-endpoint elimination computes the whole profile in
-`O(n*m^2 + n)` time (at most cubic in `n`), using the tableau's scratch
-`workspace` and allocating only the result vector. Stabilizers, destabilizers,
-phases and canonicalization caches are preserved. Phase storage is not required.
-Use [`entanglement_profile!`](@ref) to reuse an existing output vector.
+`O(n*m^2 + n)` time (at most cubic in `n`), using one of the tableau's scratch
+workspaces and allocating only the result vector. The elimination runs on
+bit-packed words for `d = 2` and on one byte per entry for other `d ≤ 255`.
+Stabilizers, destabilizers, phases and canonicalization caches are preserved.
+Phase storage is not required. Use [`entanglement_profile!`](@ref) to reuse an
+existing output vector.
 
 For a pure state, each prefix has the same entropy as its complementary
 suffix; the prefix profile itself need not be symmetric. For a mixed state,
@@ -143,12 +146,14 @@ exactly once. This is checked before `dest` is written: a wrong length throws
 a `DimensionMismatch`, and an out-of-range or repeated site throws an
 `ArgumentError`. The check uses `tab.c_workspace` as its scratch mask, so a
 rejected `order` leaves `dest`, the generators and the caches unchanged but
-not that workspace. An `order` that shares memory with `tab.workspace` or
-`tab.c_workspace` is copied before either is written, which allocates.
+not that workspace. An `order` that shares memory with `tab.c_workspace` or
+a rank workspace is copied before either is written, which allocates.
 
-The method reuses `tab.workspace` (and `tab.c_workspace` to check `order`),
-preserves generators and canonicalization caches, and allocates nothing once
-compiled for ordinary vectors and views of independent arrays.
+The method reuses the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
+`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
+`tab.c_workspace` to check `order`. It preserves generators and
+canonicalization caches, and allocates nothing once compiled for ordinary
+vectors and views of independent arrays.
 
 # Examples
 ```jldoctest
@@ -268,9 +273,10 @@ function _entanglement_profile!(
     length(profile) == n + 1 || throw(DimensionMismatch(
         "The entropy profile destination must have length $(n + 1); got $(length(profile))."))
     if order !== nothing
-        # The check writes c_workspace and the copy below writes workspace
-        # while both read `order`, so an `order` stored in either is copied.
-        order = Base.unalias(tab.c_workspace, Base.unalias(tab.workspace, order))
+        # The check writes c_workspace and the copy below writes a rank
+        # workspace while both read `order`, so an `order` stored in any of
+        # them is copied.
+        order = _unalias_rank_workspaces(tab, Base.unalias(tab.c_workspace, order))
         _check_site_order!(tab, order)
     end
     if m == 0
@@ -279,58 +285,19 @@ function _entanglement_profile!(
         end
         return profile
     end
-    ws = tab.workspace
-    stab = tab.stab
-    # Site-local row order makes a bottom-up pivot identify the rightmost
-    # support of a generator: rows 2k-1 and 2k hold the X and Z exponents of
-    # the k-th site in the order. Copy only active columns and omit the phase row.
-    if order === nothing
-        @turbo for j in 1:m, q in 1:n
-            ws[2q - 1, j] = stab[q, j]
-            ws[2q, j] = stab[n + q, j]
-        end
-    else
-        @turbo for j in 1:m, k in 1:n
-            q = order[k]
-            ws[2k - 1, j] = stab[q, j]
-            ws[2k, j] = stab[n + q, j]
-        end
-    end
-
-    # Initially count generators by right endpoint in the result storage.
     # Each reduced generator has a distinct bottommost nonzero (pivot) row.
     # In any nontrivial combination, the largest pivot row involved cannot
     # cancel. Thus a combination is supported on the first l sites of the
     # order exactly when all its participating pivots are at rows <= 2l, so
     # counting those pivots gives the number of independent stabilizers
-    # contained in the prefix.
-    fill!(profile, 0)
-    c = 1
-    for r in (2n):-1:1
-        c > m && break
-        j = c
-        while j <= m && ws[r, j] == 0
-            j += 1
-        end
-        j > m && continue
-
-        # Unprocessed columns are zero below r. Only rows 1:r need updating.
-        if j != c
-            @turbo for i in 1:r
-                t = ws[i, c]
-                ws[i, c] = ws[i, j]
-                ws[i, j] = t
-            end
-        end
-        scale_mod!(view(ws, 1:r, c), tab.inversemod(ws[r, c], d), d)
-        for jj in (c + 1):m
-            beta = ws[r, jj]
-            beta == 0 && continue
-            # jj > c, so the source and destination occupy disjoint columns.
-            submul_mod!(view(ws, 1:r, jj), view(ws, 1:r, c), beta, d)
-        end
-        profile[cld(r, 2) + 1] += 1
-        c += 1
+    # contained in the prefix. The counts go into the result storage first.
+    sites = order === nothing ? Base.OneTo(n) : order
+    if d == 2
+        _profile_pivots_gf2!(profile, tab, sites)
+    elseif _uses_narrow_rank(d)
+        _profile_pivots!(profile, tab, tab.narrow_workspace, sites)
+    else
+        _profile_pivots!(profile, tab, tab.workspace, sites)
     end
 
     contained = 0
@@ -341,21 +308,124 @@ function _entanglement_profile!(
     return profile
 end
 
+# Copy rows interleaved by site: rows 2k-1 and 2k hold the X and Z exponents
+# of `sites[k]`, so that a bottom-up pivot identifies the rightmost support of
+# a generator. Only the active columns are copied, without the phase row.
+function _copy_sites_interleaved!(ws::AbstractMatrix{Int}, stab::AbstractMatrix{Int},
+                                  n::Int, m::Int, sites::AbstractVector)
+    @turbo for j in 1:m, k in 1:n
+        q = sites[k]
+        ws[2k - 1, j] = stab[q, j]
+        ws[2k, j] = stab[n + q, j]
+    end
+    return ws
+end
+
+function _copy_sites_interleaved!(ws::AbstractMatrix{UInt8}, stab::AbstractMatrix{Int},
+                                  n::Int, m::Int, sites::AbstractVector)
+    @inbounds for j in 1:m
+        @simd for k in 1:n
+            q = sites[k]
+            ws[2k - 1, j] = stab[q, j] % UInt8
+            ws[2k, j] = stab[n + q, j] % UInt8
+        end
+    end
+    return ws
+end
+
+# Bottom-up column elimination on the interleaved rows; `profile[l + 1]`
+# receives the number of pivots on the rows of site l. `ws` is the Int or the
+# UInt8 workspace.
+function _profile_pivots!(
+    profile::AbstractVector{Int},
+    tab::AbstractTableau,
+    ws::AbstractMatrix,
+    sites::AbstractVector,
+)
+    n, m, d = tab.n, tab.m, tab.d
+    _copy_sites_interleaved!(ws, tab.stab, n, m, sites)
+    fill!(profile, 0)
+    c = 1
+    @inbounds for r in (2n):-1:1
+        c > m && break
+        j = c
+        while j <= m && iszero(ws[r, j])
+            j += 1
+        end
+        j > m && continue
+
+        # Unprocessed columns are zero below r. Only rows 1:r need updating.
+        rows = 1:r
+        j != c && _swap_cols!(ws, rows, c, j)
+        # Eliminating with multiples of the unscaled pivot column changes the
+        # other columns exactly as normalizing it first would.
+        alpha = tab.inversemod(Int(ws[r, c]), d)
+        src = view(ws, rows, c)
+        for jj in (c + 1):m
+            beta = Int(ws[r, jj])
+            beta == 0 && continue
+            # jj > c, so the source and destination occupy disjoint columns.
+            _submul_col!(view(ws, rows, jj), src, mul_mod(beta, alpha, d), d)
+        end
+        profile[cld(r, 2) + 1] += 1
+        c += 1
+    end
+    return profile
+end
+
+# `_profile_pivots!` for d = 2 on bit-packed columns, where row r is bit r - 1
+# of the column. Bits above r in the word holding r are rows already
+# processed, so they are zero in the remaining columns and the update can run
+# over whole words 1:w.
+function _profile_pivots_gf2!(
+    profile::AbstractVector{Int},
+    tab::AbstractTableau,
+    sites::AbstractVector,
+)
+    n, m = tab.n, tab.m
+    W = tab.bit_workspace
+    _pack_sites_gf2!(W, tab.stab, n, m, sites, n)
+    fill!(profile, 0)
+    c = 1
+    @inbounds for r in (2n):-1:1
+        c > m && break
+        w = (r - 1) >> 6 + 1
+        bit = one(UInt64) << ((r - 1) & 63)
+        j = c
+        while j <= m && iszero(W[w, j] & bit)
+            j += 1
+        end
+        j > m && continue
+        j != c && _swap_cols!(W, 1:w, c, j)
+        for jj in (c + 1):m
+            iszero(W[w, jj] & bit) && continue
+            @simd for l in 1:w
+                W[l, jj] = xor(W[l, jj], W[l, c])
+            end
+        end
+        profile[cld(r, 2) + 1] += 1
+        c += 1
+    end
+    return profile
+end
+
+# Rank of the generator columns 1:mcols restricted to the sites of
+# `subsystem`, or to the sites outside it with `complement=true`. The rows go
+# into the workspace that `d` selects (see src/rank_workspaces.jl), and the
+# tableau itself is not changed.
 function rank_subsystem_cols!(
     tab::AbstractTableau,
     subsystem::AbstractVector,
     mcols::Int;
     complement::Bool=false,
 )
-    stab = tab.stab
-    ws = tab.workspace
     n = tab.n
-
     if complement
         N = n - length(subsystem)
         N == 0 && return 0
-
-        # Use c_workspace as a temporary membership mask (0/1).
+        # Mark the subsystem in c_workspace, then compact the unmarked sites
+        # into its front in increasing order. Entry k is written only after
+        # entries 1:k have been read, so the compaction can run in place.
         mask = tab.c_workspace
         @turbo for i in 1:n
             mask[i] = 0
@@ -363,75 +433,85 @@ function rank_subsystem_cols!(
         @inbounds for i in eachindex(subsystem)
             mask[subsystem[i]] = 1
         end
-
-        row = 1
-        @inbounds for qudit in 1:n
-            if mask[qudit] == 0
-                @turbo for j in 1:mcols
-                    ws[row, j] = stab[qudit, j]
-                    ws[row+N, j] = stab[qudit+n, j]
-                end
-                row += 1
+        k = 0
+        @inbounds for q in 1:n
+            if mask[q] == 0
+                k += 1
+                mask[k] = q
             end
         end
-        return rank_fp_cols!(
-            view(ws, 1:2*N, 1:mcols),
-            tab.d,
-            tab.inversemod,
-        )
+        return _rank_on_sites!(tab, view(mask, 1:N), N, mcols)
     end
-
     N = length(subsystem)
     N == 0 && return 0
-    @turbo for j in 1:mcols, i in eachindex(subsystem)
-        qudit = subsystem[i]
-        ws[i, j] = stab[qudit, j]
-        ws[i+N, j] = stab[qudit+n, j]
-    end
+    return _rank_on_sites!(tab, subsystem, N, mcols)
+end
 
-    return rank_fp_cols!(
-        view(ws, 1:2*N, 1:mcols),
-        tab.d,
-        tab.inversemod,
-    )
+# Rank of the generator columns 1:mcols restricted to `sites[1:N]`.
+function _rank_on_sites!(tab::AbstractTableau, sites::AbstractVector, N::Int, mcols::Int)
+    n, d = tab.n, tab.d
+    mcols == 0 && return 0
+    if d == 2
+        W = tab.bit_workspace
+        nw = _pack_sites_gf2!(W, tab.stab, n, mcols, sites, N)
+        return _rank_gf2_cols!(view(W, 1:nw, 1:mcols), 2N)
+    elseif _uses_narrow_rank(d)
+        ws = tab.narrow_workspace
+        _copy_sites!(ws, tab.stab, n, mcols, sites, N, 0)
+        return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
+    else
+        ws = tab.workspace
+        _copy_sites!(ws, tab.stab, n, mcols, sites, N, 0)
+        return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
+    end
 end
 
 # Column-wise Gaussian elimination over F_d; returns the number of pivots.
 #
 # Because only that count is returned, the elimination runs forwards only. `A`
 # is therefore left in column echelon form and **not** in RCEF: pivot rows keep
-# whatever entries they had in earlier columns. Do not read a decomposition off
-# it. (`_canonicalize_tableau!` does need the reduced form, since
-# `coeffs_from_generators!` reads coefficients from pivot rows -- that is a
-# separate implementation and this shortcut must not be carried over to it.)
+# whatever entries they had in earlier columns, and the pivot columns are not
+# normalized. Do not read a decomposition off it. (`_canonicalize_tableau!`
+# does need the reduced form, since `coeffs_from_generators!` reads
+# coefficients from pivot rows -- that is a separate implementation and this
+# shortcut must not be carried over to it.)
 #
 # Pivots are taken from rows `1:pivot_rows` only, while the column operations
 # act on whole columns. With `piv` pivots found, columns `piv+1:m` are then
 # zero on rows `1:pivot_rows`: a row without a pivot was zero in every column
 # from the current one on, and only those columns are combined afterwards. As
 # the operations are invertible, those columns are a basis of the combinations
-# of the input columns that vanish on `1:pivot_rows`.
+# of the input columns that vanish on `1:pivot_rows`. Their entries do not
+# depend on whether a pivot column is normalized first: subtracting
+# `beta * inv(p)` times the pivot column is the same update.
 #
-# `{Int}` is the real contract, not a narrowing for convenience: the inner
-# loops go through `src/modular.jl`, whose primitives take `AbstractVector{Int}`
-# and whose tiers assume Int arithmetic. Declaring it here makes a wrong
-# element type a signature mismatch at the call, rather than a MethodError
-# raised from inside `scale_mod!`.
+# The same invariant means that, at pivot row `r`, every column from the
+# current one on is already zero on rows `1:r-1`, so the swap and the updates
+# run over rows `r:end` only.
+#
+# The element type is the contract: `Int` entries go through the primitives in
+# src/modular.jl, and `UInt8` entries (for `d <= 255`) through `_submul_u8!`.
+# Any other element type is a MethodError at the call.
 function rank_fp_cols!(
-    A::AbstractMatrix{Int},
+    A::AbstractMatrix{T},
     d::Int,
     inversemod::InverseMod,
     pivot_rows::Int=size(A, 1),
-)
-    m = size(A, 2)
+) where {T<:Union{Int,UInt8}}
+    T === UInt8 && !_uses_narrow_rank(d) && throw(ArgumentError(
+        "UInt8 elimination needs d <= $_NARROW_RANK_MAX_D; got d = $d."))
+    nr, m = size(A)
+    0 <= pivot_rows <= nr || throw(ArgumentError(
+        "pivot_rows must lie in 0:$nr; got $pivot_rows."))
+    Base.require_one_based_indexing(A)
 
     r = 1
     c = 1
     piv = 0
-    while r <= pivot_rows && c <= m
+    @inbounds while r <= pivot_rows && c <= m
         # find a pivot in row r
         j = c
-        while j <= m && A[r, j] == 0
+        while j <= m && iszero(A[r, j])
             j += 1
         end
         if j > m
@@ -439,26 +519,19 @@ function rank_fp_cols!(
             continue
         end
 
-        if j != c
-            @turbo for i in axes(A, 1)
-                t = A[i, c]
-                A[i, c] = A[i, j]
-                A[i, j] = t
-            end
-        end
-
-        # scale pivot column so A[r,c] = 1
-        α = inversemod(A[r, c], d)
-        scale_mod!(view(A, axes(A, 1), c), α, d)
+        rows = r:nr
+        j != c && _swap_cols!(A, rows, c, j)
 
         # Eliminate row r from the columns still to be processed. That is what
         # keeps the pivot count honest; earlier columns are never read again,
         # so reducing them too would only cost time.
+        alpha = inversemod(Int(A[r, c]), d)
+        src = view(A, rows, c)
         for jj in (c+1):m
-            β = A[r, jj]
-            β == 0 && continue
+            beta = Int(A[r, jj])
+            beta == 0 && continue
             # jj > c, so these are disjoint columns.
-            submul_mod!(view(A, axes(A, 1), jj), view(A, axes(A, 1), c), β, d)
+            _submul_col!(view(A, rows, jj), src, mul_mod(beta, alpha, d), d)
         end
 
         piv += 1

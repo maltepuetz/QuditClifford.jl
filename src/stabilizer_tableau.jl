@@ -82,7 +82,7 @@ mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     inversemod::T                      # inverse mod function for dimension d
 
     # workspaces
-    workspace::Matrix{Int}             # 2n×n (used by entropy calculations)
+    workspace::Matrix{Int}             # 2n×n (rank eliminations for d > 255, commutation checks)
     generator_workspace::Vector{Int}   # length 2n + storephase
 
     # workspace for canonicalize!
@@ -93,6 +93,10 @@ mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     res_workspace::Vector{Int}         # length 2n
     c_workspace::Vector{Int}           # length n
     zacc_workspace::Vector{Int}        # length n
+
+    # rank elimination workspaces (see src/rank_workspaces.jl)
+    narrow_workspace::Matrix{UInt8}    # 2n×n for d ≤ 255, else 0×0
+    bit_workspace::Matrix{UInt64}      # cld(2n, 64)×n for d = 2, else 0×0
 end
 
 function StabilizerTableau(d::Int, n::Int;
@@ -200,6 +204,8 @@ function _build_stabilizer_tableau(
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, n),
+        _narrow_rank_workspace(d, n),
+        _bit_rank_workspace(d, n),
     )
 
     # A preset filler satisfies the generator contract by definition, so the
@@ -338,6 +344,8 @@ function Base.copy(tab::StabilizerTableau{T}) where {T}
         zero(tab.res_workspace),
         zero(tab.c_workspace),
         zero(tab.zacc_workspace),
+        zero(tab.narrow_workspace),
+        zero(tab.bit_workspace),
     )
 end
 

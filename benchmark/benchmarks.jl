@@ -98,6 +98,15 @@ register_breadth_groups!(SUITE, TYPES; n = last(CONFIG.ns), dense_ds = CONFIG.ds
 register_entropy_profile_group!(SUITE, TYPES,
                                PROFILE == "full" ? (64, 128, 256, 512) : CONFIG.ns)
 
+# -------------------------------------------------------------------- rank
+# Half-chain entropy and the entropy profile on a uniformly random and on a
+# monitored-circuit state at d = 2 (bit-packed), 3 and 31 (one byte per
+# entry). The large sizes cost up to seconds per sample, so they are
+# full-profile only.
+register_rank_group!(SUITE, (2, 3, 31),
+                     PROFILE == "smoke" ? (8,) :
+                     PROFILE == "ci" ? (256,) : (256, 1024, 2048))
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in

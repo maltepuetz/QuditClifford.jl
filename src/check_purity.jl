@@ -38,7 +38,8 @@ true
 # Notes
 - Neither form changes the represented state or emits diagnostic output.
 - `is_pure(tab)` reads only `tab.m` and `tab.n`; `verify=true` additionally
-  borrows `tab.workspace`.
+  borrows `tab.workspace` and the rank workspace for `d` (`tab.bit_workspace`
+  for `d = 2`, `tab.narrow_workspace` for other `d ≤ 255`).
 """
 function is_pure(tab::AbstractTableau; verify::Bool=false)
     tab.m == tab.n || return false
@@ -93,26 +94,17 @@ function is_commuting(tab::AbstractTableau)
     m = tab.m
     m <= 1 && return true
     # `workspace` is 2n x n and m <= n, so the m x m block fits. Borrowing it
-    # is safe: `is_pure` runs this to completion before `is_independent` touches
-    # the same buffer, and no other consumer holds it across this call.
+    # is safe: `is_pure` runs this to completion before `is_independent`, which
+    # eliminates in the same buffer for d > 255, and no other consumer holds it
+    # across this call.
     return _first_noncommuting_pair(
         tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m)) == (0, 0)
 end
 
-# Rank of the active generator columns over GF(d). Consumes `workspace`, which
-# `rank_fp_cols!` is free to leave in column echelon form -- nothing reads it
-# back.
-function _generator_rank(tab::AbstractTableau)
-    n = tab.n
-    m = tab.m
-    d = tab.d
-    m == 0 && return 0
-    ws = tab.workspace
-    @turbo for j in 1:m, i in 1:(2n)
-        ws[i, j] = tab.stab[i, j]
-    end
-    return rank_fp_cols!(view(ws, 1:2n, 1:m), d, tab.inversemod)
-end
+# Rank of the active generator columns over GF(d). Consumes the rank
+# workspace that `d` selects, which the elimination is free to leave in column
+# echelon form -- nothing reads it back.
+_generator_rank(tab::AbstractTableau) = _rank_on_sites!(tab, Base.OneTo(tab.n), tab.n, tab.m)
 
 """Check if the active stabilizer generators are linearly independent (rank m)."""
 is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m

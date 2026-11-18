@@ -89,12 +89,14 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 284 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 477 | ~170 s (measured locally: 145 s of samples, 18 s warmup, the rest suite construction) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128 | 2, 3, 5, 7 | 999 | ~25 min (budget sum; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 308 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 525 | ~200 s (183 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048} | 2, 3, 5, 7 | 1107 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 The `dense`, `channels`, `information`, `gates` and `tableau` groups use the
 largest `n` of the profile and the `modulus` group `n = 64` (`8` in `smoke`).
+The `rank` group runs `d = 2, 3, 31` in every profile, at `n = 8` in `smoke`
+and `n = 256` in `ci`.
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -110,7 +112,9 @@ The `midcircuit` and `dense` leaves at `d = 5` and the `modulus` leaves at
 `d = 443` hold general residues and do reach it.
 
 The divide-twice fallback is reached by the `probe/fallback-prime` rows and by
-the `modulus` leaves at `d = 131` and `d = 1031`. `d = 131` is rejected by the
+the `modulus` leaves at `d = 131` and `d = 1031`, except `entropy/half` at
+`d = 131`: every rank elimination with `d <= 255` runs in a UInt8 workspace
+outside `src/modular.jl`. `d = 131` is rejected by the
 Barrett guard and `d = 1031` lies above its table; either is necessary but not
 sufficient, for the same reason as above. `n = 16` in the fallback probe is
 there because the fallback's per-call tier dispatch is a fixed cost that only
@@ -137,6 +141,22 @@ bytes after compilation.
 Within one revision, divide the loop median by the profile median to measure
 the speedup from computing all cuts together. This differs from the usual
 base/head ratio, which compares the same leaf across revisions.
+
+The `rank` group times the half-chain `entanglement_entropy` and
+`entanglement_profile!` on two pure `StabilizerTableau` states per `d` and
+`n`: a uniformly random one (`random`, half-chain entropy about `n/2`) and
+the end of 64 layers of the monitored brickwork circuit at `p = 0.15`
+(`monitored`, half-chain entropy a few to a few dozen). It covers the three
+element types the rank elimination uses: bit-packed words at `d = 2`, one
+byte per entry at `d = 3` (multiply-free updates only) and at `d = 31`
+(general multipliers). The `Int` elimination above `d = 255` is covered by the
+`modulus` leaves at `d = 443` and `d = 1031`. The `full` profile adds
+`n = 1024` and `2048`, where the eliminations run from about 1 ms to about
+0.4 s per sample on a development machine and building the fixtures takes
+about five minutes. A baseline without `random_state!` or
+`entanglement_profile!` skips the group; `test_workloads.jl` checks that the
+fixtures are deterministic and pure and that every leaf runs without
+allocating.
 
 The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
 {d = 2, d = 3, d = 5} × two sizes: `construct`, the three `measure!` branches

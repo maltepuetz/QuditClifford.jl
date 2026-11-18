@@ -64,6 +64,25 @@ dependency bump — carries the `skip-changelog` label instead.
   faster and the named gates 1.6–3×; at `n = 64` the gains are 2–7×. A
   monitored random circuit (`d = 3`, `n = 32`) runs 1.6–1.9× faster.
   Operators on four or more qudits are unchanged.
+- The rank eliminations behind `entanglement_entropy`, `entanglement_profile`,
+  `entanglement_profile!`, `mutual_information`, `tripartite_information`,
+  `conditional_mutual_information`, `entanglement_negativity` and
+  `is_pure(tab; verify = true)` copy the generator rows into a narrow
+  workspace and eliminate there, with identical results and no new
+  allocations. Entropies, profiles and the generator rank use bit-packed
+  `UInt64` words at `d = 2`; every other quantity at `d = 2`, and all of them
+  at other `d ≤ 255`, use one byte per entry. Above 255 the `Int` workspace
+  remains, and its elimination skips the rows that are already zero. At
+  `n = 2048`, the half-chain entropy of a random pure state is 40× faster
+  at `d = 2`, 11× at `d = 3` and 16× at `d = 31`, and its profile 48×, 8×
+  and 11× faster; on a monitored-circuit state with little entanglement the
+  gains are 2.5–12×. At `n = 512` the mutual, tripartite and conditional
+  mutual information and the negativity are 4–13× faster for `d ≤ 255` and
+  1.1–1.5× at `d = 257`, and `is_pure(tab; verify = true)`, which also checks
+  commutation, 1.2–3.8×. Each
+  tableau with `d ≤ 255` holds a new `2n × n` byte workspace, and one with
+  `d = 2` also `2n × n` bits: 6–7 % more memory for a `StabilizerTableau`,
+  4–5 % for a `DestabilizerTableau`.
 
 ### Documentation
 
