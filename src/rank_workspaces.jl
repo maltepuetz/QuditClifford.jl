@@ -5,8 +5,7 @@
 # generator rank) therefore copy the rows they need into a workspace of a
 # narrower type and eliminate there:
 #
-#   d == 2      bits packed into UInt64 words (`bit_workspace`), when the
-#               caller has a GF(2) variant, else the UInt8 workspace
+#   d == 2      bits packed into UInt64 words (`bit_workspace`)
 #   d <= 255    one UInt8 per entry (`narrow_workspace`)
 #   otherwise   the Int `workspace` and the primitives in src/modular.jl
 #
@@ -21,9 +20,13 @@ const _NARROW_RANK_MAX_D = 255
 _narrow_rank_workspace(d::Int, n::Int) =
     _uses_narrow_rank(d) ? zeros(UInt8, 2n, n) : zeros(UInt8, 0, 0)
 
-# One column holds 2n bits, the X and Z exponents of n sites, for d == 2.
+# For d == 2. A column holds the X and Z exponents of n sites as 2n bits, in
+# up to three row blocks that each start on a fresh word (see
+# `_copy_sites!`). Splitting the 2n bits into three word-aligned blocks takes
+# at most two words more than cld(2n, 64); `_negativity_from_mask!` shows the
+# same bound for its two blocks and the bit matrix it stacks below them.
 _bit_rank_workspace(d::Int, n::Int) =
-    d == 2 ? zeros(UInt64, cld(2n, 64), n) : zeros(UInt64, 0, 0)
+    d == 2 ? zeros(UInt64, cld(2n, 64) + 2, n) : zeros(UInt64, 0, 0)
 
 # A caller's vector that shares memory with a rank workspace is copied before
 # the workspace is written.
@@ -153,6 +156,47 @@ function _copy_sites!(
     return offset + 2N
 end
 
+# On a bit-packed workspace, `offset` counts bits and is a multiple of 64. The
+# block takes rows offset+1:offset+2N as bits, packed as below, and the return
+# value is rounded up to the next multiple of 64, so that the next block
+# starts on a fresh word. The bits in between are zero.
+function _copy_sites!(
+    ws::AbstractMatrix{UInt64},
+    stab::AbstractMatrix{Int},
+    n::Int,
+    m::Int,
+    sites::AbstractVector,
+    N::Int,
+    offset::Int,
+)
+    offset & 63 == 0 || throw(ArgumentError(
+        "a bit-packed block must start on a word boundary; got bit offset $offset."))
+    nw = _pack_sites_gf2!(view(ws, ((offset >> 6) + 1):size(ws, 1), 1:m), stab, n, m, sites, N)
+    return offset + 64nw
+end
+
+# The row after a block of `N` sites that starts after row `offset`, as
+# returned by `_copy_sites!`.
+@inline _block_end(::AbstractMatrix, offset::Int, N::Int) = offset + 2N
+@inline _block_end(::AbstractMatrix{UInt64}, offset::Int, N::Int) = offset + 64cld(2N, 64)
+
+# `rank_fp_cols!` on rows r0+1:r1 and columns `cols` of a rank workspace,
+# pivoting on rows r0+1:r0+pivot_rows. On a bit-packed workspace the rows are
+# bits, and r0 is a multiple of 64 as `_copy_sites!` leaves it.
+@inline _block_rank!(
+    ws::AbstractMatrix{<:Union{Int,UInt8}}, r0::Int, r1::Int, cols::UnitRange{Int},
+    d::Int, inversemod::InverseMod, pivot_rows::Int=r1 - r0,
+) = rank_fp_cols!(view(ws, (r0 + 1):r1, cols), d, inversemod, pivot_rows)
+
+@inline function _block_rank!(
+    ws::AbstractMatrix{UInt64}, r0::Int, r1::Int, cols::UnitRange{Int},
+    ::Int, ::InverseMod, pivot_rows::Int=r1 - r0,
+)
+    r0 & 63 == 0 || throw(ArgumentError(
+        "a bit-packed block must start on a word boundary; got bit offset $r0."))
+    return _rank_gf2_cols!(view(ws, ((r0 >> 6) + 1):cld(r1, 64), cols), pivot_rows)
+end
+
 ##########################
 # GF(2) on packed words  #
 ##########################
@@ -188,18 +232,22 @@ function _pack_sites_gf2!(
     return nw
 end
 
-# Rank over GF(2) of the columns of `W`, whose rows `1:nbits` are packed as
-# above. Top-down column elimination like `rank_fp_cols!`: once row `r` has
-# been processed, every column from the current one on is zero on rows 1:r,
-# so the updates start at the word holding row r.
-function _rank_gf2_cols!(W::AbstractMatrix{UInt64}, nbits::Int)
+# Rank over GF(2) of the columns of `W`, packed as above, on rows
+# 1:pivot_bits. Top-down column elimination like `rank_fp_cols!`, with the
+# same contract: pivots come from rows 1:pivot_bits only, the XOR updates run
+# over every word of `W`, and with `piv` pivots found, columns piv+1:m are
+# zero on rows 1:pivot_bits and a basis of the combinations of the input
+# columns that vanish there. Once row `r` has been processed, every column
+# from the current one on is zero on rows 1:r, so the updates start at the
+# word holding row r.
+function _rank_gf2_cols!(W::AbstractMatrix{UInt64}, pivot_bits::Int)
     nw, m = size(W)
-    nbits <= 64nw || throw(DimensionMismatch(
-        "_rank_gf2_cols!: $nbits rows do not fit in $nw words."))
+    0 <= pivot_bits <= 64nw || throw(DimensionMismatch(
+        "_rank_gf2_cols!: $pivot_bits rows do not fit in $nw words."))
     r = 1
     c = 1
     piv = 0
-    @inbounds while r <= nbits && c <= m
+    @inbounds while r <= pivot_bits && c <= m
         w = (r - 1) >> 6 + 1
         bit = one(UInt64) << ((r - 1) & 63)
         j = c
@@ -222,4 +270,47 @@ function _rank_gf2_cols!(W::AbstractMatrix{UInt64}, nbits::Int)
         c += 1
     end
     return piv
+end
+
+# The matrix K[i, j] = x_i·z_j + z_i·x_j over GF(2) of the columns
+# piv+1:piv+k of `W`, restricted to the site rows in words w0+1:w0+nw, packed
+# into rows 1:k of words wK+1:wK+cld(k, 64) and columns 1:k. Bits 2t-2 and
+# 2t-1 of a word hold the X and Z exponents of one site, so masking the even
+# bits after a one-bit shift pairs x of one column with z of the other. The
+# parity of a sum of popcounts is the parity of the popcount of their XOR, so
+# one accumulator per pair suffices. K is symmetric with a zero diagonal. The
+# words of K must not overlap words w0+1:w0+nw.
+function _symplectic_gram_gf2!(
+    W::AbstractMatrix{UInt64},
+    w0::Int,
+    nw::Int,
+    piv::Int,
+    k::Int,
+    wK::Int,
+)
+    even = 0x5555555555555555
+    nwK = cld(k, 64)
+    checkbounds(W, (w0 + 1):(w0 + nw), (piv + 1):(piv + k))
+    checkbounds(W, (wK + 1):(wK + nwK), 1:k)
+    @inbounds for j in 1:k, l in (wK + 1):(wK + nwK)
+        W[l, j] = zero(UInt64)
+    end
+    @inbounds for j in 2:k
+        cj = piv + j
+        wj = wK + ((j - 1) >> 6) + 1
+        bj = one(UInt64) << ((j - 1) & 63)
+        for i in 1:(j - 1)
+            ci = piv + i
+            acc = zero(UInt64)
+            @simd for l in (w0 + 1):(w0 + nw)
+                a = W[l, ci]
+                b = W[l, cj]
+                acc = xor(acc, xor(a & (b >> 1), (a >> 1) & b))
+            end
+            p = (count_ones(acc & even) & 1) % UInt64
+            W[wK + ((i - 1) >> 6) + 1, j] |= p << ((i - 1) & 63)
+            W[wj, i] |= p * bj
+        end
+    end
+    return W
 end

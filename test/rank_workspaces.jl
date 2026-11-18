@@ -83,6 +83,38 @@ function rw_local_state(rng, TT, d, n, m0; layers=3)
     return tab
 end
 
+# The reference values of the four information measures.
+function rw_information(tab, A, B, C)
+    n = tab.n
+    S(X) = rw_entropy(tab, X)
+    mi = isempty(A) || isempty(B) ? 0 : S(A) + S(B) - S(vcat(A, B))
+    mic = isempty(A) || length(A) == n ? 0 : S(A) + S(setdiff(1:n, A)) - S(1:n)
+    cmi = isempty(A) || isempty(B) ? 0 :
+          S(vcat(A, C)) + S(vcat(B, C)) - S(C) - S(vcat(A, B, C))
+    i3 = isempty(A) || isempty(B) || isempty(C) ? 0 :
+         S(A) + S(B) + S(C) - S(vcat(A, B)) - S(vcat(A, C)) - S(vcat(B, C)) +
+         S(vcat(A, B, C))
+    return (mi, mic, cmi, i3, rw_negativity(tab, A, B), rw_negativity(tab, A, setdiff(1:n, A)))
+end
+
+rw_measured(tab, A, B, C) = (mutual_information(tab, A, B), mutual_information(tab, A),
+                             conditional_mutual_information(tab, A, B, C),
+                             tripartite_information(tab, A, B, C),
+                             entanglement_negativity(tab, A, B), entanglement_negativity(tab, A))
+
+# Pack the 0/1 rows of `A` into words, row i at bit i - 1 of each column.
+function rw_pack_rows(A::AbstractMatrix)
+    nr, nc = size(A)
+    W = zeros(UInt64, cld(nr, 64), nc)
+    for j in 1:nc, i in 1:nr
+        W[(i - 1) >> 6 + 1, j] |= UInt64(A[i, j]) << ((i - 1) & 63)
+    end
+    return W
+end
+
+rw_unpack_rows(W, nr) = [Int((W[(i - 1) >> 6 + 1, j] >> ((i - 1) & 63)) & 1)
+                         for i in 1:nr, j in 1:size(W, 2)]
+
 rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                              sort(randperm(rng, n)[1:rand(rng, 0:n)]),
                              sort(randperm(rng, n)[1:rand(rng, 0:n)])])
@@ -92,7 +124,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
         for TT in (StabilizerTableau, DestabilizerTableau), n in (1, 5, 64, 65)
             t2 = TT(2, n)
             @test size(t2.narrow_workspace) == (2n, n)
-            @test size(t2.bit_workspace) == (cld(2n, 64), n)
+            @test size(t2.bit_workspace) == (cld(2n, 64) + 2, n)
             t3 = TT(251, n)
             @test size(t3.narrow_workspace) == (2n, n)
             @test size(t3.bit_workspace) == (0, 0)
@@ -162,6 +194,110 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                 m > 0 && 2N % 64 != 0 && @test W[nw, 1] >> (2N % 64) == 0
                 @test RW._rank_gf2_cols!(view(W, 1:nw, 1:m), 2N) ==
                       (m == 0 ? 0 : rw_rank(rw_restrict(tab, sites), 2))
+            end
+        end
+    end
+
+    @testset "GF(2) rank with a pivot row limit keeps the echelon contract" begin
+        rng = Xoshiro(13)
+        for (rows, cols) in ((1, 1), (7, 5), (64, 9), (65, 40), (130, 70), (200, 33))
+            for trial in 1:6
+                inner = rand(rng, 1:min(rows, cols))
+                A = trial <= 3 ? rand(rng, 0:1, rows, cols) :
+                    mod.(rand(rng, 0:1, rows, inner) * rand(rng, 0:1, inner, cols), 2)
+                for pivot_rows in unique((rows, rows ÷ 2, 63, 64, 65, 1, 0))
+                    pivot_rows <= rows || continue
+                    ref, R = rw_colreduce(A, 2, pivot_rows)
+                    W = rw_pack_rows(A)
+                    @test RW._rank_gf2_cols!(W, pivot_rows) == ref
+                    @test rw_unpack_rows(W, rows)[:, (ref + 1):end] == R[:, (ref + 1):end]
+                end
+            end
+        end
+        @test_throws DimensionMismatch RW._rank_gf2_cols!(zeros(UInt64, 1, 2), 65)
+    end
+
+    @testset "Bit-packed blocks start on a fresh word" begin
+        rng = Xoshiro(17)
+        n, m = 70, 50
+        tab = StabilizerTableau(2, n)
+        random_state!(rng, tab; m)
+        W = fill(typemax(UInt64), cld(2n, 64) + 2, n)
+        sites1 = sort(randperm(rng, n)[1:33])
+        sites2 = sort(randperm(rng, n)[1:1])
+        o1 = RW._copy_sites!(W, tab.stab, n, m, sites1, 33, 0)
+        @test o1 == 128 == RW._block_end(W, 0, 33)
+        o2 = RW._copy_sites!(W, tab.stab, n, m, sites2, 1, o1)
+        @test o2 == 192 == RW._block_end(W, o1, 1)
+        @test RW._copy_sites!(W, tab.stab, n, m, sites2, 0, o2) == o2
+        U = rw_unpack_rows(W, o2)
+        for j in 1:m
+            @test U[1:2:66, j] == tab.stab[sites1, j]
+            @test U[2:2:66, j] == tab.stab[n .+ sites1, j]
+            @test all(iszero, U[67:128, j])
+            @test U[129:130, j] == [tab.stab[sites2[1], j], tab.stab[n + sites2[1], j]]
+            @test all(iszero, U[131:192, j])
+        end
+        @test_throws ArgumentError RW._copy_sites!(W, tab.stab, n, m, sites2, 1, 2)
+        inv = RW.PrecomputedInvMod(2)
+        @test RW._block_rank!(W, 128, 192, 1:m, 2, inv) ==
+              rw_rank(rw_restrict(tab, sites2), 2)
+        @test_throws ArgumentError RW._block_rank!(W, 2, 192, 1:m, 2, inv)
+        @test RW._block_end(zeros(UInt8, 1, 1), 5, 3) == 11
+    end
+
+    @testset "GF(2) symplectic Gram matrix" begin
+        rng = Xoshiro(19)
+        for (NS, k, piv) in ((1, 2, 0), (31, 5, 3), (32, 64, 1), (33, 65, 2), (70, 130, 0))
+            nw = cld(2NS, 64)
+            w0 = 1
+            wK = w0 + nw + 1
+            W = rand(rng, UInt64, wK + cld(k, 64), piv + k)
+            # the site rows hold only whole sites; bits past them are zero
+            2NS % 64 != 0 && (W[w0 + nw, :] .&= (one(UInt64) << (2NS % 64)) - 1)
+            S = rw_unpack_rows(W[(w0 + 1):(w0 + nw), :], 2NS)
+            X = S[1:2:end, (piv + 1):end]
+            Z = S[2:2:end, (piv + 1):end]
+            Kref = mod.(transpose(X) * Z .+ transpose(Z) * X, 2)
+            before = W[(w0 + 1):(w0 + nw), :]
+            RW._symplectic_gram_gf2!(W, w0, nw, piv, k, wK)
+            @test rw_unpack_rows(W[(wK + 1):end, 1:k], k) == Kref
+            @test W[(w0 + 1):(w0 + nw), :] == before
+        end
+        @test_throws BoundsError RW._symplectic_gram_gf2!(zeros(UInt64, 2, 3), 0, 1, 0, 3, 2)
+    end
+
+    # Qubit states large enough that the bit-packed row blocks span several
+    # words and do not end on a word boundary, and partitions that fill the
+    # bit workspace to its last word: three blocks of 2N = 66 bits at n = 99
+    # take six words, and n = 3 split into singletons takes three.
+    @testset "$(nameof(TT)), d=2, multi-word blocks" for TT in (StabilizerTableau, DestabilizerTableau)
+        rng = Xoshiro(hash((TT, :multiword)) % UInt)
+        for n in (3, 33, 65, 99, 130)
+            states = Any[]
+            for m in unique((n ÷ 2, n - 1, n))
+                tab = TT(2, n)
+                random_state!(rng, tab; m)
+                push!(states, tab)
+            end
+            push!(states, rw_local_state(rng, TT, 2, n, 0), rw_local_state(rng, TT, 2, n, n),
+                  TT(2, n; state=:ghz))
+            partitions = Any[]
+            for _ in 1:3
+                perm = randperm(rng, n)
+                cuts = sort(rand(rng, 0:n, 3))
+                push!(partitions, (perm[1:cuts[1]], perm[(cuts[1] + 1):cuts[2]],
+                                   perm[(cuts[2] + 1):cuts[3]]))
+            end
+            N = n ÷ 3
+            perm = randperm(rng, n)
+            push!(partitions, (perm[1:N], perm[(N + 1):2N], perm[(2N + 1):3N]),
+                  (perm[1:1], perm[2:2], perm[3:min(n, 3)]),
+                  (perm[1:(n - 2)], perm[(n - 1):(n - 1)], perm[n:n]))
+            for tab in states, (A, B, C) in partitions
+                before = copy(tab.stab)
+                @test rw_measured(tab, A, B, C) == rw_information(tab, A, B, C)
+                @test tab.stab == before
             end
         end
     end
@@ -246,20 +382,30 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
     end
 
     @testset "No allocations once compiled" begin
-        rw_alloc_entropy(tab, A) = @allocated entanglement_entropy(tab, A)
-        rw_alloc_profile(dest, tab) = @allocated entanglement_profile!(dest, tab)
-        rw_alloc_rank(tab) = @allocated RW._generator_rank(tab)
-        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31, 257), m in (4, 8)
-            tab = TT(d, 8)
+        # One entry per function, so a failure shows which one allocated.
+        rw_allocs(tab, dest, A, B, C) = (
+            (@allocated entanglement_entropy(tab, A)),
+            (@allocated entanglement_profile!(dest, tab)),
+            (@allocated RW._generator_rank(tab)),
+            (@allocated mutual_information(tab, A, B)),
+            (@allocated mutual_information(tab, A)),
+            (@allocated tripartite_information(tab, A, B, C)),
+            (@allocated conditional_mutual_information(tab, A, B, C)),
+            (@allocated entanglement_negativity(tab, A, B)),
+            (@allocated entanglement_negativity(tab, A)),
+        )
+        # n = 70 at d = 2 puts the bit-packed row blocks across several words.
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31, 257),
+            n in (8, 70), m in (n ÷ 2, n)
+            d != 2 && n > 8 && continue
+            tab = TT(d, n)
             random_state!(Xoshiro(5), tab; m)
             A = [1, 3, 4]
-            dest = zeros(Int, 9)
-            rw_alloc_entropy(tab, A)
-            rw_alloc_profile(dest, tab)
-            rw_alloc_rank(tab)
-            @test rw_alloc_entropy(tab, A) == 0
-            @test rw_alloc_profile(dest, tab) == 0
-            @test rw_alloc_rank(tab) == 0
+            B = collect(5:2:n)
+            C = collect(6:2:n)
+            dest = zeros(Int, n + 1)
+            rw_allocs(tab, dest, A, B, C)
+            @test rw_allocs(tab, dest, A, B, C) == ntuple(_ -> 0, 9)
         end
     end
 end

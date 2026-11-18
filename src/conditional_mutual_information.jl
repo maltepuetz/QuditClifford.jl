@@ -33,14 +33,15 @@ stabilizers supported on `A ∪ B ∪ C`. With `K_X` that basis restricted to
 `X`, each entropy above is `|X| - k + rank(K_Y)` with `Y` the rest of
 `A ∪ B ∪ C`, and the sizes and `k` cancel:
 `I(A:B|C) = rank(K_A) + rank(K_B) - rank(K_AB)`. The rows of `C` are never
-read. For a pure state `I(A:B|C) = I(A:B|D)`, with `D` the traced-out
-qudits, so whichever of `C` and `D` is smaller is traced out. This takes at most `O(n*m^2)` time, cubic in `n`, reads only the X and
-Z rows, and leaves the generators, phases, destabilizers and
-canonicalization caches unchanged. It overwrites the scratch arrays
-`tab.c_workspace` and `tab.zacc_workspace` and the rank workspace for `d`
-(`tab.narrow_workspace` for `d ≤ 255`, else `tab.workspace`), and allocates
-nothing unless a subsystem shares memory with `tab.c_workspace`, in which
-case it is copied first.
+read. For a pure state `I(A:B|C) = I(A:B|D)`, with `D` the traced-out qudits,
+so whichever of `C` and `D` is smaller is traced out. This takes at most
+`O(n*m^2)` time, cubic in `n`, reads only the X and Z rows, and leaves the
+generators, phases, destabilizers and canonicalization caches unchanged. It
+overwrites the scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and
+the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
+`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
+allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
+which case it is copied first.
 
 # Examples
 ```jldoctest
@@ -89,7 +90,9 @@ function conditional_mutual_information(
     # Rows are stacked as [D; X; Y] with Y the smaller of A and B, since Y is
     # eliminated twice.
     x, y = NA >= NB ? (1, 2) : (2, 1)
-    if _uses_narrow_rank(tab.d)
+    if tab.d == 2
+        return _cmi_from_groups!(tab, tab.bit_workspace, first, counts, x, y)
+    elseif _uses_narrow_rank(tab.d)
         return _cmi_from_groups!(tab, tab.narrow_workspace, first, counts, x, y)
     end
     return _cmi_from_groups!(tab, tab.workspace, first, counts, x, y)
@@ -107,9 +110,8 @@ function _cmi_from_groups!(
     # Every elimination after the one on D combines only the columns
     # rank_D+1:m, the basis of the stabilizers that vanish on D, so the rows
     # of Y in those columns still have the rank of K_Y.
-    rows_X = 2 * (counts[1] + counts[x + 1])
-    rows = rows_X + 2 * counts[y + 1]
-    rank_Y = rank_fp_cols!(view(ws, (rows_X + 1):rows, (rank_D + 1):tab.m),
-                           tab.d, tab.inversemod)
+    rows_X = _block_end(ws, _block_end(ws, 0, counts[1]), counts[x + 1])
+    rows = _block_end(ws, rows_X, counts[y + 1])
+    rank_Y = _block_rank!(ws, rows_X, rows, (rank_D + 1):tab.m, tab.d, tab.inversemod)
     return rank_X + rank_Y - rank_XY
 end

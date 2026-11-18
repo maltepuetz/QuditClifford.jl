@@ -32,9 +32,9 @@ three entropies is instead computed on the smaller side of its cut, as
 time, cubic in `n`, reads only the X and Z rows, and leaves the generators,
 phases, destabilizers and canonicalization caches unchanged. It overwrites the
 scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and the rank
-workspace for `d` (`tab.narrow_workspace` for `d ≤ 255`, else
-`tab.workspace`), and allocates nothing unless `A` or `B` shares memory with
-`tab.c_workspace`, in which case it is copied first.
+workspace for `d` (`tab.bit_workspace` for `d = 2`, `tab.narrow_workspace`
+for other `d ≤ 255`, else `tab.workspace`), and allocates nothing unless `A`
+or `B` shares memory with `tab.c_workspace`, in which case it is copied first.
 
 # Examples
 ```jldoctest
@@ -106,9 +106,10 @@ seven entropies are instead computed on the smaller side of each cut, as
 `O(n*m^2)` time, cubic in `n`, reads only the X and Z rows, and leaves the
 generators, phases, destabilizers and canonicalization caches unchanged. It
 overwrites the scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and
-the rank workspace for `d` (`tab.narrow_workspace` for `d ≤ 255`, else
-`tab.workspace`), and allocates nothing unless a subsystem shares memory
-with `tab.c_workspace`, in which case it is copied first.
+the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
+`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
+allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
+which case it is copied first.
 
 # Examples
 ```jldoctest
@@ -144,7 +145,9 @@ function tripartite_information(
     (NA == 0 || NB == 0 || NC == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)
-    if _uses_narrow_rank(tab.d)
+    if tab.d == 2
+        return _tripartite_from_groups!(tab, tab.bit_workspace, first, counts)
+    elseif _uses_narrow_rank(tab.d)
         return _tripartite_from_groups!(tab, tab.narrow_workspace, first, counts)
     end
     return _tripartite_from_groups!(tab, tab.workspace, first, counts)
@@ -180,7 +183,9 @@ end
 # site. `NA` and `NB` are the sizes of A and B.
 function _mutual_information_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
-    if _uses_narrow_rank(tab.d)
+    if tab.d == 2
+        return _mutual_information_from_mask!(tab, tab.bit_workspace, NA, NB)
+    elseif _uses_narrow_rank(tab.d)
         return _mutual_information_from_mask!(tab, tab.narrow_workspace, NA, NB)
     end
     return _mutual_information_from_mask!(tab, tab.workspace, NA, NB)
@@ -201,13 +206,13 @@ function _mutual_information_from_mask!(tab::AbstractTableau, ws::AbstractMatrix
     rows = _copy_site_rows!(tab, ws, first[3], NB, rows_A)
     # Pivoting on the traced-out rows alone leaves columns piv+1:m zero there,
     # and those columns are a basis of the k stabilizers supported on A ∪ B.
-    piv = rank_fp_cols!(view(ws, 1:rows, 1:m), d, tab.inversemod, rows_D)
+    piv = _block_rank!(ws, 0, rows, 1:m, d, tab.inversemod, rows_D)
     k = m - piv
     k == 0 && return 0
     # The two restrictions occupy disjoint rows, so each elimination leaves
     # the other's entries intact.
-    rank_A = rank_fp_cols!(view(ws, (rows_D + 1):rows_A, (piv + 1):m), d, tab.inversemod)
-    rank_B = rank_fp_cols!(view(ws, (rows_A + 1):rows, (piv + 1):m), d, tab.inversemod)
+    rank_A = _block_rank!(ws, rows_D, rows_A, (piv + 1):m, d, tab.inversemod)
+    rank_B = _block_rank!(ws, rows_A, rows, (piv + 1):m, d, tab.inversemod)
     return rank_A + rank_B - k
 end
 
@@ -217,8 +222,8 @@ end
 # labelled `x` and `y`; `first` and `counts` describe the site list built by
 # `_group_sites_by_label!`, and `ws` is the rank workspace.
 #
-# The rows are stacked as [D; X; Y] and eliminated in that order. Each call
-# to `rank_fp_cols!` leaves its remaining columns zero on the rows it pivoted
+# The rows are stacked as [D; X; Y] (see `_copy_sites!` for the layout) and
+# eliminated in that order. Each call to `rank_fp_cols!` leaves its remaining columns zero on the rows it pivoted
 # on, so the next call continues on those columns and the rows below, and the
 # pivot counts add up to the ranks of the leading row blocks.
 function _traced_rank_pair!(
@@ -233,12 +238,11 @@ function _traced_rank_pair!(
     rows_D = _copy_site_rows!(tab, ws, first[1], counts[1], 0)
     rows_X = _copy_site_rows!(tab, ws, first[x + 1], counts[x + 1], rows_D)
     rows = _copy_site_rows!(tab, ws, first[y + 1], counts[y + 1], rows_X)
-    rank_D = rank_fp_cols!(view(ws, 1:rows, 1:m), d, tab.inversemod, rows_D)
+    rank_D = _block_rank!(ws, 0, rows, 1:m, d, tab.inversemod, rows_D)
     c = rank_D
-    rank_X = rank_fp_cols!(view(ws, (rows_D + 1):rows, (c + 1):m), d, tab.inversemod,
-                           rows_X - rows_D)
+    rank_X = _block_rank!(ws, rows_D, rows, (c + 1):m, d, tab.inversemod, rows_X - rows_D)
     c += rank_X
-    rank_Y = rank_fp_cols!(view(ws, (rows_X + 1):rows, (c + 1):m), d, tab.inversemod)
+    rank_Y = _block_rank!(ws, rows_X, rows, (c + 1):m, d, tab.inversemod)
     return rank_D, rank_X, rank_X + rank_Y
 end
 
@@ -270,5 +274,5 @@ function _pure_labelled_entropy(
         (labels >> l) & 1 == 1 || continue
         rows = _copy_site_rows!(tab, ws, first[l + 1], counts[l + 1], rows)
     end
-    return rank_fp_cols!(view(ws, 1:rows, 1:tab.m), tab.d, tab.inversemod) - N
+    return _block_rank!(ws, 0, rows, 1:tab.m, tab.d, tab.inversemod) - N
 end
