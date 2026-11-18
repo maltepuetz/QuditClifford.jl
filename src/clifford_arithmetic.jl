@@ -44,3 +44,34 @@ end
     B = max(d - 1, phase_modulus(d) - 1)
     return B <= isqrt(typemax(Int) ÷ S)
 end
+
+# Barrett constant `(M, s)` for the tuple kernels, or `(0, 0)` when there is
+# none: `div(x, d) == (x * M) >> s` and `x * M` fits in `Int` for every
+# `0 <= x <= X`, with `X = 2S·d·(d-1)` the largest unreduced value those
+# kernels form for a support of `S = 2k` coordinates (each call site states its
+# own bound). This is the constant of `src/modular.jl`'s Barrett tier with the
+# bound raised from `(d-1)^2` to `X`, and the shift chosen per modulus.
+#
+# `clifford_fast_dots(4S, d)` bounds `4S(d-1)^2 >= X`, so `X` itself is formed
+# without overflow. The shift is the largest that keeps `X * M < 2^63`: with
+# `X < 2^L`, `L <= 62` and `2^lg <= d`, `M <= 2^(s-lg) + 1` gives
+# `X * M < 2^(L+s-lg) + 2^L <= 2^63`. Exactness is the same criterion
+# as `_barrett_ok`, `e * X < 2^s` for `e = M*d - 2^s`, tested by division so
+# the product is never formed. Acceptance is NOT monotonic in `d`: a modulus
+# whose `e` happens to be small passes where a smaller one fails, so never
+# replace the test with a bound on `d`. Two divisions, once per preparation.
+@inline function clifford_barrett(S::Int, d::Int)
+    (S > 0 && d >= 2 && clifford_fast_dots(4S, d)) || return (0, 0)
+    X = 2S * d * (d - 1)
+    L = 64 - leading_zeros(X)
+    L <= 62 || return (0, 0)
+    lg = 63 - leading_zeros(d)
+    s = 62 - L + lg
+    M = cld(1 << s, d)
+    e = M * d - (1 << s)
+    (e == 0 || X <= ((1 << s) - 1) ÷ e) || return (0, 0)
+    return (M, s)
+end
+
+# `x mod d` for `0 <= x <= X` under a constant from `clifford_barrett`.
+@inline _barrett_reduce(x::Int, d::Int, M::Int, s::Int) = x - ((x * M) >> s) * d

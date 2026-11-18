@@ -1128,3 +1128,143 @@ end
         @test prepared_apply_allocations(tab, prep) == 0
     end
 end
+
+@testset "Stored k ≤ 3 apply! uses the tuple backing and matches the dense one" begin
+    n = 9
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+        sp in (false, true), k in 1:4, m in (n, 5)
+        rng = Random.Xoshiro(20261118 + 100d + 10k + m)
+        tab = TT(d, n; storephase = sp)
+        random_state!(rng, tab; m)
+        U = random_clifford(rng, d, randperm(rng, n)[1:k])
+        ref = deepcopy(tab)
+        QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, sp))
+        usnap = operator_snapshot(U)
+        @test apply!(tab, U) === tab
+        @test tab.stab == ref.stab
+        @test tab.m == ref.m
+        @test !tab.iscanonical
+        @test operator_snapshot(U) == usnap
+        if TT === DestabilizerTableau
+            @test tab.destab == ref.destab
+            @test tab.xdotz_cache == ref.xdotz_cache
+        end
+        if k <= 3
+            stored_apply_allocations(tab, U)
+            @test stored_apply_allocations(tab, U) == 0
+        end
+    end
+end
+
+@testset "Tuple preparation of a stored operator carries its data" begin
+    for d in (2, 3), sp in (false, true), k in 1:3
+        U = random_clifford(Random.Xoshiro(7 + k), d, collect(10:-3:(13 - 3k)))
+        p = QC._prepare_tuple(U, sp, Val(k))
+        @test p isa QC.PreparedClifford{k,2k}
+        @test collect(p.targets) == U.targets
+        @test [p.F[j][i] for i in 1:2k, j in 1:2k] == U.F
+        @test collect(p.a) == U.a
+        @test p.d == d && p.storephase == sp && p.fast == U.fast
+        @test collect(p.D) == (sp && d != 2 ? U.image_xdotz : zeros(Int, 2k))
+        @test p.bm != 0
+    end
+end
+
+# Every reduction site of the tuple kernel on all three tiers: Barrett,
+# unreduced sums with one `mod`, and overflow-safe per-term arithmetic. At
+# d = 2 the first is the closed-form phase and the others the ordered product.
+@testset "Tuple kernel tiers agree with each other and with the oracle" begin
+    for d in (2, 3, 5, 7, 31), k in 1:3
+        rng = Random.Xoshiro(20261118 + 10d + k)
+        S = 2k
+        U = random_clifford(rng, d, collect(1:k))
+        barrett = QC._prepare_tuple(U, true, Val(k))
+        @test barrett.bm != 0
+        zeroQ = ntuple(_ -> ntuple(_ -> 0, S), S)
+        modtier = QC.PreparedClifford{k,S}(barrett.targets, barrett.F, barrett.a,
+                                           barrett.D, d, barrett.p, barrett.inv2,
+                                           true, true, 0, 0, zeroQ)
+        safe = QC.PreparedClifford{k,S}(barrett.targets, barrett.F, barrett.a,
+                                        barrett.D, d, barrett.p, barrett.inv2,
+                                        false, true)
+        @test safe.bm == 0
+        vs = d^S <= 4096 ? vec([Tuple(t) for t in Iterators.product(ntuple(_ -> 0:(d - 1), S)...)]) :
+             vcat([ntuple(_ -> d - 1, S)], [ntuple(_ -> rand(rng, 0:(d - 1)), S) for _ in 1:2000])
+        for v in vs
+            out = QC._matvec(barrett, v)
+            @test out == QC._matvec(modtier, v) == QC._matvec(safe, v)
+            @test collect(out) == Int.(mod.(big.(U.F) * collect(v), d))
+            φ = QC._phase(barrett, v, out)
+            @test φ == QC._phase(modtier, v, out) == QC._phase(safe, v, out)
+            @test φ == phase_reference_dense(U.F, U.a, collect(v), d)
+            @test QC._col_xdotz_prepared(barrett, v) == QC._col_xdotz_prepared(modtier, v) ==
+                  mod(sum(v[q] * v[k + q] for q in 1:k), d)
+        end
+    end
+end
+
+@testset "Closed-form qubit phase matches the ordered-product oracle" begin
+    rng = Random.Xoshiro(20261118)
+    for k in (1, 2, 3, 5), _ in 1:20
+        S = 2k
+        F = rand(rng, 0:1, S, S)                 # need not be symplectic
+        a = rand(rng, 0:3, S)
+        tF = ntuple(j -> ntuple(i -> F[i, j], S), S)
+        Q = QC._qubit_cross_bits(tF, k)
+        for _ in 1:20
+            v = rand(rng, 0:1, S)
+            @test QC._phase_qubit_closed(Tuple(v), Tuple(a), Q) ==
+                  phase_reference_dense(F, a, v, 2) ==
+                  QC._phase_qubit(Tuple(v), tF, Tuple(a), k)
+        end
+    end
+end
+
+@testset "clifford_barrett constants are exact over their whole range" begin
+    isprime_small(p) = p >= 2 && all(q -> p % q != 0, 2:isqrt(p))
+    rng = Random.Xoshiro(1)
+    for S in (2, 4, 6), d in filter(isprime_small, 2:1024)
+        M, s = QC.clifford_barrett(S, d)
+        X = 2S * d * (d - 1)
+        # Every prime up to 1024 takes the Barrett tier at these supports, so
+        # a guard that started rejecting everything would fail here.
+        @test M != 0
+        @test big(X) * M <= typemax(Int)
+        xs = X <= 50_000 ? (0:X) : vcat(0:2000, (X - 2000):X, rand(rng, 0:X, 5000))
+        @test all(x -> QC._barrett_reduce(x, d, M, s) == mod(x, d), xs)
+    end
+    # Outside the fast guard, or where no shift is exact, there is no constant,
+    # and application still reduces correctly through the `mod` tier.
+    @test QC.clifford_barrett(4, 2147483647) == (0, 0)
+    d = 1_000_003
+    @test QC.clifford_fast_dots(16, d)
+    @test QC.clifford_barrett(4, d) == (0, 0)
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        rng = Random.Xoshiro(3)
+        tab = TT(d, 4; inversemod = QC.JustInTimeInvMod())
+        random_state!(rng, tab)
+        U = random_clifford(rng, d, [1, 3])
+        ref = deepcopy(tab)
+        QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, true))
+        apply!(tab, U)
+        @test tab.stab == ref.stab
+        TT === DestabilizerTableau && @test tab.xdotz_cache == ref.xdotz_cache
+    end
+end
+
+@testset "Stored k ≤ 3 apply! at m = 0 validates and clears iscanonical only" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), k in 1:3
+        U = random_clifford(Random.Xoshiro(k), d, collect(1:k))
+        tab = TT(d, 4; state = :mixed)
+        canonicalize!(tab)
+        @test tab.iscanonical
+        before = copy(tab.stab)
+        @test apply!(tab, U) === tab
+        @test tab.stab == before
+        @test !tab.iscanonical
+        TT === DestabilizerTableau && @test all(iszero, tab.xdotz_cache)
+        wrongd = TT(5, 4; state = :mixed)
+        @test_throws ArgumentError apply!(wrongd, U)
+        k > 1 && @test_throws ArgumentError apply!(TT(d, k - 1; state = :mixed), U)
+    end
+end

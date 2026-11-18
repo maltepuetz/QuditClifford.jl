@@ -214,7 +214,7 @@ target) and `SUM` (two non-adjacent targets, the same `spread_sites` qudits
 the `measure!` leaves use) applied to a freshly restored `:ghz` state, across
 both tableau types and every `d` and `n` in the profile — three named-gate
 leaves per `(type, d, n)` cell. `storephase = true` throughout, so both the
-`d = 2` bitmask phase evaluator and the odd-prime one run: `Fourier` has zero
+`d = 2` phase evaluator and the odd-prime one run: `Fourier` has zero
 image `x·z`, so its phase term is a pure cross-term, while `Phase` has a
 nonzero one and exercises the `D` vector. Gate application costs `O(k²·m)`
 for `k ≤ 2` targets — linear in the generator count rather than
@@ -245,6 +245,14 @@ visible on its own. A single such call is far below the timer floor, so this
 leaf runs many evaluations per sample instead of the usual snapshot restore —
 safe because `apply!` at `m = 0` is idempotent (the column loops run zero
 times, and only `iscanonical` changes).
+
+A third sibling, `stored/random/...`, applies a uniformly random operator from
+`random_clifford` at `k ∈ {1, 2, 3}` (`"apply!/k=$k"`) to the same scrambled
+tableau, on targets spread over the register. These are the operators random
+monitored circuits draw: a dense `F` and generic phases, where the fixture
+above is built from a short sequence of named gates. Supports of up to three
+qudits take the unrolled tuple kernel; `k = 8` in the base leaf keeps the
+dense backing under coverage.
 
 `CliffordOperator` construction, checked and unchecked, is timed separately
 again: it takes no tableau, so it depends only on `d` and `k`, never on the

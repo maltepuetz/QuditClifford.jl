@@ -477,6 +477,41 @@ function stored_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 8),
 end
 
 """
+    spread_targets(n, k)
+
+`k` distinct sites spread evenly over `1:n`, for `1 <= k <= n`: site `i` is
+`cld(i * n, k + 1)`, which is strictly increasing because consecutive values
+differ by `n / (k + 1) >= n / (n + 1)` and each lies in `(i - 1, i]` when that
+step is below one.
+"""
+spread_targets(n::Int, k::Int) = [cld(i * n, k + 1) for i in 1:k]
+
+"""
+    stored_random_clifford_group(; d, n, T, ks = (1, 2, 3), seed = 20261118)
+
+`apply!` of a uniformly random stored `CliffordOperator`, as drawn by
+`random_clifford`, for one `(type, d, n)` cell: `"apply!/k=\$k"` for each
+support size `k` in `ks`, on [`spread_targets`](@ref) of a
+[`scrambled_tableau`](@ref) built once for the cell. A random operator has a
+dense `F` and generic phases, unlike [`stored_clifford_fixture`](@ref), whose
+images are short products of named gates; random monitored circuits draw
+exactly these one- and two-qudit operators.
+"""
+function stored_random_clifford_group(; d::Int, n::Int, T, ks = (1, 2, 3),
+                                      seed::Int = 20261118)
+    mk = tableau_maker(T, d, n)
+    scrambled = scrambled_tableau(mk, d, n; seed = 20260910)
+    group = BenchmarkGroup()
+    for k in unique(collect(ks))
+        1 <= k <= n || continue
+        U = QuditClifford.random_clifford(Random.Xoshiro(seed + k), d,
+                                          spread_targets(n, k))
+        group["apply!/k=$k"] = bench_apply_on(scrambled, U)
+    end
+    return group
+end
+
+"""
     stored_clifford_construct_group(d; ks = (1, 2, 8))
 
 `CliffordOperator` construction, checked and unchecked, for each support size
@@ -601,7 +636,8 @@ end
 # the same `ks`, once per `d` rather than once per `(T, n)` cell, since
 # neither touches a tableau. `stored_clifford_safe_group` takes no `ks`: it is
 # pinned to one fixed, large `d` and registered unconditionally, in every
-# profile.
+# profile. `stored_random_clifford_group` has its own support sizes, the ones
+# random circuits draw, and needs `random_clifford` on top of the stored API.
 function register_clifford_group!(suite, types, ds, ns; ks = (1, 2, 8),
                                   product::Bool = false, api::Module = QuditClifford)
     required = (:apply!, :Fourier, :Phase, :SUM)
@@ -614,6 +650,12 @@ function register_clifford_group!(suite, types, ds, ns; ks = (1, 2, 8),
     for T in types, d in ds, n in ns
         suite["clifford"]["stored/$(nameof(T))/d=$d/n=$n"] =
             stored_clifford_group(; d, n, T, ks, product)
+    end
+    if isdefined(api, :random_clifford)
+        for T in types, d in ds, n in ns
+            suite["clifford"]["stored/random/$(nameof(T))/d=$d/n=$n"] =
+                stored_random_clifford_group(; d, n, T)
+        end
     end
     # Construction and the algebra ops (conjugate/inv/compose) depend only on
     # d and k, not on T or n, so both are registered once per d here rather

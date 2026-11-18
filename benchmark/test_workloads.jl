@@ -407,6 +407,24 @@ const TIER_COUNTS = zeros(Int, 2)
         end
     end
 
+    @testset "Random stored Clifford leaves run" begin
+        for n in 1:12, k in 1:n
+            t = spread_targets(n, k)
+            @test allunique(t) && all(in(1:n), t)
+        end
+        for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5), n in (2, 16)
+            group = stored_random_clifford_group(; d, n, T)
+            @test length(keys(group)) == count(<=(n), (1, 2, 3))
+            for (path, leaf) in BenchmarkTools.leaves(group)
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+            end
+        end
+        suite = BenchmarkGroup()
+        register_clifford_group!(suite, (StabilizerTableau,), (3,), (8,))
+        @test haskey(suite["clifford"], "stored/random/StabilizerTableau/d=3/n=8")
+    end
+
     @testset "Stored construct group is registered once per d and all its leaves run" begin
         for d in (2, 3, 5)
             group = stored_clifford_construct_group(d)

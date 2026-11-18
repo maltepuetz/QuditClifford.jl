@@ -54,6 +54,16 @@ dependency bump — carries the `skip-changelog` label instead.
   preference for `QuditClifford`, as described in PrecompileTools' docs.
 - Preset construction (`StabilizerTableau(d, n; state)`, `DestabilizerTableau`)
   zeroes the tableau once instead of twice: about 25–38 % faster at `n = 256`.
+- `apply!` of a Clifford gate is faster, with identical results and no
+  allocations. A stored `CliffordOperator` on one to three qudits runs on the
+  same unrolled kernel as the named gates, the kernel's inner closures are
+  inlined, matrix–vector products and phases reduce with a validated Barrett
+  constant (bit operations at `d = 2`), and the qubit phase is evaluated in
+  closed form without data-dependent branches. At `n = 256` a random one-qudit
+  operator applies 2.4–4.7× faster, a random two-qudit operator 2.3–3.6×
+  faster and the named gates 1.6–3×; at `n = 64` the gains are 2–7×. A
+  monitored random circuit (`d = 3`, `n = 32`) runs 1.6–1.9× faster.
+  Operators on four or more qudits are unchanged.
 
 ### Documentation
 
