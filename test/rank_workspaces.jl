@@ -123,7 +123,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
     @testset "Workspace shapes" begin
         for TT in (StabilizerTableau, DestabilizerTableau), n in (1, 5, 64, 65)
             t2 = TT(2, n)
-            @test size(t2.narrow_workspace) == (2n, n)
+            @test size(t2.narrow_workspace) == (0, 0)
             @test size(t2.bit_workspace) == (cld(2n, 64) + 2, n)
             t3 = TT(251, n)
             @test size(t3.narrow_workspace) == (2n, n)
@@ -131,10 +131,12 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             t4 = TT(257, n)
             @test size(t4.narrow_workspace) == (0, 0)
             @test size(t4.bit_workspace) == (0, 0)
-            c = copy(t2)
-            @test size(c.narrow_workspace) == size(t2.narrow_workspace)
-            @test c.narrow_workspace !== t2.narrow_workspace
-            @test c.bit_workspace !== t2.bit_workspace
+            c2 = copy(t2)
+            @test size(c2.bit_workspace) == size(t2.bit_workspace)
+            @test c2.bit_workspace !== t2.bit_workspace
+            c3 = copy(t3)
+            @test size(c3.narrow_workspace) == size(t3.narrow_workspace)
+            @test c3.narrow_workspace !== t3.narrow_workspace
         end
     end
 
@@ -371,12 +373,13 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             tab = StabilizerTableau(d, 6)
             random_state!(Xoshiro(3), tab; m=6)
             expected = entanglement_entropy(tab, [1, 2])
-            # A 2-element view into the UInt8 workspace, filled with sites 1, 2.
-            ws = tab.narrow_workspace
-            ws[1, 1] = 1
-            ws[2, 1] = 2
-            @test entanglement_entropy(tab, view(ws, 1:2, 1)) == expected
-            @test entanglement_profile(tab, view(ws, 1:6, 1) .= 1:6) ==
+            # A 2-element view into the rank workspace for d, filled with
+            # sites 1, 2.
+            ws = d == 2 ? tab.bit_workspace : tab.narrow_workspace
+            ws[1] = 1
+            ws[2] = 2
+            @test entanglement_entropy(tab, view(ws, 1:2)) == expected
+            @test entanglement_profile(tab, view(ws, 1:6) .= 1:6) ==
                   entanglement_profile(tab)
         end
     end

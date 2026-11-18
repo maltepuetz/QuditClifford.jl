@@ -6,7 +6,7 @@
 # narrower type and eliminate there:
 #
 #   d == 2      bits packed into UInt64 words (`bit_workspace`)
-#   d <= 255    one UInt8 per entry (`narrow_workspace`)
+#   d <= 255    one UInt8 per entry (`narrow_workspace`), for d >= 3
 #   otherwise   the Int `workspace` and the primitives in src/modular.jl
 #
 # Each elimination streams the remaining matrix once per pivot, so the cost at
@@ -16,9 +16,10 @@ const _NARROW_RANK_MAX_D = 255
 
 @inline _uses_narrow_rank(d::Int) = d <= _NARROW_RANK_MAX_D
 
-# 2n x n UInt8 for d <= 255, else empty: no caller reaches it at larger d.
+# 2n x n UInt8 for 3 <= d <= 255, else empty: every caller takes the bit
+# workspace at d == 2 and the Int workspace above 255.
 _narrow_rank_workspace(d::Int, n::Int) =
-    _uses_narrow_rank(d) ? zeros(UInt8, 2n, n) : zeros(UInt8, 0, 0)
+    d != 2 && _uses_narrow_rank(d) ? zeros(UInt8, 2n, n) : zeros(UInt8, 0, 0)
 
 # For d == 2. A column holds the X and Z exponents of n sites as 2n bits, in
 # up to three row blocks that each start on a fresh word (see

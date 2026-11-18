@@ -95,7 +95,7 @@ mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     zacc_workspace::Vector{Int}        # length n
 
     # rank elimination workspaces (see src/rank_workspaces.jl)
-    narrow_workspace::Matrix{UInt8}    # 2n×n for d ≤ 255, else 0×0
+    narrow_workspace::Matrix{UInt8}    # 2n×n for 3 ≤ d ≤ 255, else 0×0
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 

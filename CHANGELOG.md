@@ -80,10 +80,10 @@ dependency bump — carries the `skip-changelog` label instead.
   `n = 2048`, and the negativity 14–19× and 34–63×. At `n = 512` these
   measures are 4–13× faster for other `d ≤ 255` and 1.1–1.5× at `d = 257`,
   and `is_pure(tab; verify = true)`, which also checks commutation, is
-  1.2–3.8× faster. Each tableau with `d ≤ 255` holds a new `2n × n` byte
-  workspace, and one with `d = 2` also `2n × n` bits plus two words per
-  column: 6–7 % more memory for a `StabilizerTableau`, 4–5 % for a
-  `DestabilizerTableau`.
+  1.2–3.8× faster. Each tableau with `3 ≤ d ≤ 255` holds a new `2n × n` byte
+  workspace, 6 % more memory for a `StabilizerTableau` and 4 % for a
+  `DestabilizerTableau`. One with `d = 2` holds `2n × n` bits plus two words
+  per column instead, 0.8–1.6 % and 0.5–1.1 % more for `n` from 64 to 2048.
 
 ### Documentation
 
