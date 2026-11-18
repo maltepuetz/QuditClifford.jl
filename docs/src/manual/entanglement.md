@@ -192,6 +192,17 @@ multi-entropy quantities share one elimination instead of calling
 states. All of them overwrite the tableau's scratch workspaces but never its
 generators, phases, destabilizers or canonicalization caches.
 
+The eliminations do not run on the stored `Int` entries. Each function copies
+the rows it needs into a workspace of the narrowest type that holds a residue
+mod `d`: one bit per entry for `d = 2`, one byte for `d ≤ 255`, and the full
+`Int` above that. An elimination streams the matrix once per pivot, so at large
+`n` its cost follows the bytes per entry rather than the arithmetic. At
+`n = 512`, qubits are two to four times faster than `d = 3`, and `d = 257` is
+more than ten times slower than `d = 251`. The workspaces are allocated with
+the tableau, so the calls themselves do not allocate. They add about 1 % to the
+memory of a qubit tableau, and for `3 ≤ d ≤ 255` about 6 % to a
+[`StabilizerTableau`](@ref) and 4 % to a [`DestabilizerTableau`](@ref).
+
 Subsystems are checked to hold distinct sites in `1:n`, and the subsystems of
 one call to be disjoint, throwing `ArgumentError` otherwise.
 [`entanglement_entropy`](@ref) alone lets you skip that ``O(n)`` check with

@@ -293,16 +293,19 @@ end
 qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.PrecomputedInvMod(d))
 
 @testset "rank_fp_cols! pivot count" begin
-    # The signature says AbstractMatrix{Int} because the inner loops go through
-    # src/modular.jl, whose primitives are AbstractVector{Int}. Pin that the
-    # rejection happens at the signature: without the element type on the
-    # argument the call is accepted and then dies inside scale_mod!, which
-    # reports a MethodError naming a function the caller never mentioned.
+    # The signature names the element types that have an inner loop: Int
+    # through src/modular.jl, UInt8 through `_submul_u8!`. Pin that any other
+    # one is rejected at the signature rather than deep inside a primitive,
+    # which would report a MethodError naming a function the caller never
+    # mentioned.
     @testset "Element type is part of the signature" begin
         A = Int[1 0 1; 0 1 1; 1 1 0]
         @test qc_rank(A, 2) == 2
-        for AT in (Int32, Int64, UInt8, Float64)
-            AT === Int && continue
+        @test qc_rank(UInt8.(A), 2) == 2
+        # Int is Int32 on 32-bit hosts, so the narrower signed type is
+        # whichever of the two Int is not.
+        other_int = Int === Int64 ? Int32 : Int64
+        for AT in (other_int, UInt16, Float64)
             @test_throws MethodError qc_rank(AT.(A), 2)
         end
     end

@@ -29,12 +29,13 @@ The generators are reduced to a basis of the stabilizer group of `ρ_AB` (the
 elements supported on `A ∪ B`), and `ℰ(A:B)` is half the rank over `F_d` of
 the matrix of their pairwise symplectic products restricted to `A`. Since the
 elements commute, that matrix is minus the one restricted to `B`, so the
-smaller side is used. This takes at most `O(n*m^2)` time,
-cubic in `n`, reads only the X and Z rows, and leaves the generators, phases,
-destabilizers and canonicalization caches unchanged. It overwrites the
-scratch arrays `tab.workspace`, `tab.c_workspace` and `tab.zacc_workspace`,
-and allocates nothing unless `A` or `B` shares memory with
-`tab.c_workspace`, in which case it is copied first.
+smaller side is used. This takes at most `O(n*m^2)` time, cubic in `n`, reads
+only the X and Z rows, and leaves the generators, phases, destabilizers and
+canonicalization caches unchanged. It overwrites the scratch arrays
+`tab.c_workspace` and `tab.zacc_workspace` and the rank workspace for `d`
+(`tab.bit_workspace` for `d = 2`, `tab.narrow_workspace` for other `d ≤ 255`,
+else `tab.workspace`), and allocates nothing unless `A` or `B` shares memory
+with `tab.c_workspace`, in which case it is copied first.
 
 # References
 - S. Sang, Y. Li, T. Zhou, X. Chen, T. H. Hsieh and M. P. A. Fisher,
@@ -129,43 +130,67 @@ function _group_sites_by_label!(tab::AbstractTableau, counts::NTuple{4,Int})
 end
 
 # Copy the X and Z rows of the `N` sites listed in `tab.zacc_workspace` from
-# index `first` on into `tab.workspace` after row `offset`: X exponents to rows
-# offset+1:offset+N and Z exponents to offset+N+1:offset+2N, columns 1:m.
-# Returns the last row written, offset + 2N.
-function _copy_site_rows!(tab::AbstractTableau, first::Int, N::Int, offset::Int)
-    n, m = tab.n, tab.m
-    stab = tab.stab
-    ws = tab.workspace
-    sites = tab.zacc_workspace
-    @turbo for j in 1:m, r in 1:N
-        q = sites[first + r - 1]
-        ws[offset + r, j] = stab[q, j]
-        ws[offset + N + r, j] = stab[n + q, j]
+# index `first` on into the rank workspace `ws` after row `offset`: X exponents
+# to rows offset+1:offset+N and Z exponents to offset+N+1:offset+2N, columns
+# 1:m. Returns the last row written, offset + 2N.
+function _copy_site_rows!(tab::AbstractTableau, ws::AbstractMatrix, first::Int, N::Int, offset::Int)
+    sites = view(tab.zacc_workspace, first:(first + N - 1))
+    return _copy_sites!(ws, tab.stab, tab.n, tab.m, sites, N, offset)
+end
+
+# The dot products x_i·z_j and z_i·x_j of columns `ci` and `cj` of `ws`, with
+# X exponents on rows xS+1:xS+len and Z exponents on rows zS+1:zS+len,
+# unreduced. Each has len <= n terms below (d-1)^2, inside the package's
+# arithmetic envelope (see `max_safe_dimension`).
+@inline function _cross_dots(ws::AbstractMatrix{Int}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
+    xz = 0
+    zx = 0
+    @turbo for t in 1:len
+        xz += ws[xS + t, ci] * ws[zS + t, cj]
+        zx += ws[zS + t, ci] * ws[xS + t, cj]
     end
-    return offset + 2N
+    return xz, zx
+end
+
+@inline function _cross_dots(ws::AbstractMatrix{UInt8}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
+    xz = 0
+    zx = 0
+    @inbounds @simd for t in 1:len
+        xz += Int(ws[xS + t, ci]) * Int(ws[zS + t, cj])
+        zx += Int(ws[zS + t, ci]) * Int(ws[xS + t, cj])
+    end
+    return xz, zx
 end
 
 # `c_workspace[q]` labels site `q`: 1 for A, 2 for B and 0 for a traced-out
 # site. `NA` and `NB` are the sizes of A and B.
 function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
+    (NA == 0 || NB == 0 || tab.m == 0) && return 0
+    if tab.d == 2
+        return _negativity_from_mask!(tab, tab.bit_workspace, NA, NB)
+    elseif _uses_narrow_rank(tab.d)
+        return _negativity_from_mask!(tab, tab.narrow_workspace, NA, NB)
+    end
+    return _negativity_from_mask!(tab, tab.workspace, NA, NB)
+end
+
+function _negativity_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::Int, NB::Int)
     n, m, d = tab.n, tab.m, tab.d
-    (NA == 0 || NB == 0 || m == 0) && return 0
-    ws = tab.workspace
 
     # ℰ(A:B) = ℰ(B:A), so the generators are restricted to the smaller side S.
     side = NA <= NB ? 1 : 2
     NS = min(NA, NB)
     NC = n - NA - NB
 
-    # Rows 1:2NC hold the X and Z exponents on the traced-out sites, rows
-    # R0+1:R0+NS and R0+NS+1:R starting at R0 = 2NC those on S.
+    # Rows 1:R0 hold the X and Z exponents on the traced-out sites, rows
+    # R0+1:R those on S (see `_copy_sites!` for the layout).
     first = _group_sites_by_label!(tab, (NC, NA, NB, 0))
-    R0 = _copy_site_rows!(tab, first[1], NC, 0)
-    R = _copy_site_rows!(tab, first[side + 1], NS, R0)
+    R0 = _copy_site_rows!(tab, ws, first[1], NC, 0)
+    R = _copy_site_rows!(tab, ws, first[side + 1], NS, R0)
 
     # Pivoting on the traced-out rows alone leaves columns piv+1:m zero there,
     # and those columns are a basis of the stabilizer group of ρ_AB.
-    piv = rank_fp_cols!(view(ws, 1:R, 1:m), d, tab.inversemod, R0)
+    piv = _block_rank!(ws, 0, R, 1:m, d, tab.inversemod, R0)
     k = m - piv
     k <= 1 && return 0
 
@@ -173,28 +198,35 @@ function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     # alternating, so its rank is even. K occupies rows R+1:R+k and columns
     # 1:k, disjoint from the rows 1:R it is computed from. It fits: ρ_AB has
     # at most NA + NB independent stabilizers, so k <= NA + NB, and
-    # 2NS <= NA + NB, so R + k <= 2NC + 2(NA + NB) = 2n.
+    # 2NS <= NA + NB, so 2NC + 2NS + k <= 2n. On the bit-packed workspace the
+    # three blocks each start on a fresh word, which takes at most two words
+    # more than cld(2n, 64), as `_bit_rank_workspace` provides.
+    _symplectic_gram!(ws, R0, NS, R, piv, k, d)
+    return _block_rank!(ws, R, R + k, 1:k, d, tab.inversemod) ÷ 2
+end
+
+# Write K (see `_negativity_from_mask!`) to rows R+1:R+k and columns 1:k of
+# `ws`, from the basis columns piv+1:piv+k restricted to the `NS` sites whose
+# X exponents are on rows R0+1:R0+NS and Z exponents on R0+NS+1:R0+2NS.
+function _symplectic_gram!(ws::AbstractMatrix, R0::Int, NS::Int, R::Int, piv::Int, k::Int, d::Int)
     xS = R0
     zS = R0 + NS
+    T = eltype(ws)
     @inbounds for j in 1:k
         cj = piv + j
-        ws[R + j, j] = 0
+        ws[R + j, j] = zero(T)
         for i in 1:(j - 1)
-            ci = piv + i
-            xz = 0
-            zx = 0
-            # Each sum has NS <= n terms below (d-1)^2, inside the package's
-            # arithmetic envelope (see `max_safe_dimension`).
-            @turbo for t in 1:NS
-                xz += ws[xS + t, ci] * ws[zS + t, cj]
-                zx += ws[zS + t, ci] * ws[xS + t, cj]
-            end
+            xz, zx = _cross_dots(ws, xS, zS, NS, piv + i, cj)
             v = rem(xz, d) - rem(zx, d)
             v < 0 && (v += d)
-            ws[R + i, j] = v
-            ws[R + j, i] = v == 0 ? 0 : d - v
+            ws[R + i, j] = v % T
+            ws[R + j, i] = (v == 0 ? 0 : d - v) % T
         end
     end
-
-    return rank_fp_cols!(view(ws, (R + 1):(R + k), 1:k), d, tab.inversemod) ÷ 2
+    return ws
 end
+
+# On the bit-packed workspace the sites of S fill the words after bit R0, and
+# K over GF(2) is packed into the words after bit R.
+_symplectic_gram!(ws::AbstractMatrix{UInt64}, R0::Int, NS::Int, R::Int, piv::Int, k::Int, ::Int) =
+    _symplectic_gram_gf2!(ws, R0 >> 6, cld(2NS, 64), piv, k, R >> 6)

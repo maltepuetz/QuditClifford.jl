@@ -59,9 +59,11 @@ lookup table once; a table built for another dimension is rejected.
 nothing, which is what makes the large dimensions above reachable at all.
 
 `PrecomputedInvMod` stores its table as a `Vector{Int}`, and both strategies
-return an `Int`, so the package is `Int` arithmetic throughout. A table given
-in a narrower or unsigned integer type is converted on construction; one whose
-element type is not an `Integer` is rejected there.
+return an `Int`, so the package is `Int` arithmetic throughout, except for the
+rank eliminations behind the entanglement measures, which run on bits or bytes
+(see [Cost and scratch space](@ref)). A table given in a narrower or unsigned
+integer type is converted on construction; one whose element type is not an
+`Integer` is rejected there.
 
 ### Tasks and threads
 

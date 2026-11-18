@@ -18,6 +18,7 @@ using Aqua
     include("destabilizers.jl")
     include("entanglement.jl")
     include("entanglement_profile.jl")
+    include("rank_workspaces.jl")
     include("entanglement_negativity.jl")
     include("mutual_information.jl")
     include("conditional_mutual_information.jl")

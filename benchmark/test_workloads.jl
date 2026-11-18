@@ -45,6 +45,36 @@ const TIER_COUNTS = zeros(Int, 2)
         end
     end
 
+    @testset "Rank fixtures are pure, deterministic and differ in entanglement" begin
+        for d in (2, 3, 31)
+            random = rank_fixture(:random, d, 64)
+            monitored = rank_fixture(:monitored, d, 64)
+            @test random.m == random.n == monitored.m == monitored.n == 64
+            @test rank_fixture(:random, d, 64).stab == random.stab
+            @test rank_fixture(:monitored, d, 64).stab == monitored.stab
+            @test entanglement_entropy(random, 1:32) >= 30
+            @test entanglement_entropy(monitored, 1:32) < entanglement_entropy(random, 1:32)
+        end
+        @test_throws ArgumentError rank_fixture(:mixed, 3, 8)
+
+        empty_suite = BenchmarkGroup()
+        register_rank_group!(empty_suite, (3,), (8,); api = Module(:NoRankAPI))
+        @test isempty(empty_suite)
+
+        suite = BenchmarkGroup()
+        register_rank_group!(suite, (2, 31), (8,))
+        @test Set(keys(suite["rank"])) ==
+              Set(["$k/d=$d/n=8" for k in ("random", "monitored"), d in (2, 31)])
+        for (_, group) in suite["rank"]
+            @test Set(keys(group)) == Set(["entropy/half", "profile!"])
+            for (_, leaf) in group
+                trial = run(leaf; samples = 1, evals = 1, seconds = 0.01)
+                @test !isempty(trial.times)
+                @test trial.allocs == 0
+            end
+        end
+    end
+
     @testset "Purification is deterministic and reaches full rank" begin
         h1, l1 = purification_trajectory(d = 2, n = 8, seed = 42)
         h2, l2 = purification_trajectory(d = 2, n = 8, seed = 42)
@@ -832,18 +862,20 @@ const TIER_COUNTS = zeros(Int, 2)
             # leaves can share one tableau across samples
             A, B, C = quarters(n)
             @test isempty(intersect(A, B)) && isempty(intersect(B, C)) && maximum(C) <= n
-            for m in (n, n ÷ 2)
-                tab = dense_state(T, 3, n; m)
-                before, canon = copy(tab.stab), tab.iscanonical
-                @test mutual_information(tab, A, B) >= 0
-                tripartite_information(tab, A, B, C)
-                @test conditional_mutual_information(tab, A, B, C) >= 0
-                @test entanglement_negativity(tab, A, B) >= 0
-                @test tab.stab == before && tab.iscanonical == canon && tab.m == m
+            for d in (2, 3)
+                for m in (n, n ÷ 2)
+                    tab = dense_state(T, d, n; m)
+                    before, canon = copy(tab.stab), tab.iscanonical
+                    @test mutual_information(tab, A, B) >= 0
+                    tripartite_information(tab, A, B, C)
+                    @test conditional_mutual_information(tab, A, B, C) >= 0
+                    @test entanglement_negativity(tab, A, B) >= 0
+                    @test tab.stab == before && tab.iscanonical == canon && tab.m == m
+                end
+                g = information_group(; d, n, T)
+                @test length(g) == 8
+                run(g; samples = 1, evals = 1, seconds = 0.05)
             end
-            g = information_group(; d = 3, n, T)
-            @test length(g) == 8
-            run(g; samples = 1, evals = 1, seconds = 0.05)
         end
     end
 
@@ -899,6 +931,8 @@ const TIER_COUNTS = zeros(Int, 2)
               Set(["dense", "modulus", "channels", "information", "gates", "tableau"])
         @test length(suite["dense"]) == 4
         @test length(suite["modulus"]) == 2 * length(MODULUS_PRIMES)
+        @test Set(keys(suite["information"])) ==
+              Set(["$(nameof(T))/d=$d/n=8" for T in types, d in (2, 3)])
     end
 
     @testset "Purification leaves purify, except the capped one" begin
@@ -945,6 +979,12 @@ const TIER_COUNTS = zeros(Int, 2)
                 @test barrett == (d == 443)
                 for (key, leaf) in modulus_group(; d, n = 16, T)
                     c = tiers(leaf)
+                    if key == "entropy/half" && d <= 255
+                        # The rank runs in the UInt8 workspace, outside
+                        # src/modular.jl, below 256.
+                        @test c.barrett == c.fallback == 0
+                        continue
+                    end
                     @test (barrett ? c.barrett : c.fallback) > 0
                     @test (barrett ? c.fallback : c.barrett) == 0
                 end

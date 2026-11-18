@@ -243,6 +243,65 @@ function register_entropy_profile_group!(suite, types, ns; api::Module=QuditClif
     return suite
 end
 
+# ------------------------------------------------------------------- rank
+
+"""
+    rank_fixture(kind, d, n; seed = 20261118)
+
+A pure `StabilizerTableau` for the `rank` group. `:random` is a uniformly
+random stabilizer state, whose half-chain entropy is close to `n ÷ 2`.
+`:monitored` is the state after 64 layers of a [`monitored_trajectory`](@ref)
+circuit with `Z` measurements at rate `p = 0.15`, whose generators stay local:
+its half-chain entropy is about 6 at `d = 2`, 25 at `d = 3` and 58 at
+`d = 31` for every `n` from 256 to 2048. At `n = 2048` building the two take
+up to 25 s (`d = 2`, `3`) and 90 s (`d = 31`).
+
+The circuit runs on a `DestabilizerTableau`, which measures faster, and its
+generators are copied into the `StabilizerTableau`.
+"""
+function rank_fixture(kind::Symbol, d::Int, n::Int; seed::Int = 20261118)
+    if kind === :random
+        tab = StabilizerTableau(d, n)
+        random_state!(Random.Xoshiro(seed), tab; m = n)
+        return tab
+    elseif kind === :monitored
+        D, bonds, rng = monitored_setup(; d, n, seed, T = DestabilizerTableau)
+        monitored_layers!(D, bonds, rng, 64; p = 0.15)
+        return StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase,
+                                 check = false)
+    end
+    throw(ArgumentError("unknown rank fixture kind $(repr(kind))"))
+end
+
+"""
+    register_rank_group!(suite, ds, ns; api = QuditClifford)
+
+Half-chain `entanglement_entropy` and `entanglement_profile!` on the two
+[`rank_fixture`](@ref) states, for every `d` in `ds` and `n` in `ns`. Both
+run one rank elimination over the tableau's X and Z rows, whose element type
+depends on `d`: bit-packed words at `d = 2`, one byte per entry up to
+`d = 255`, `Int` above. `d = 31` takes the general-multiplier tier of the
+byte kernel, which `d = 2` and `d = 3` never reach.
+
+The eliminations read only the generator matrix, so a `StabilizerTableau`
+stands for both tableau types; `entropy_profile` already compares the two. A
+baseline without `random_state!` or `entanglement_profile!` skips the group.
+"""
+function register_rank_group!(suite, ds, ns; api::Module = QuditClifford)
+    (isdefined(api, :random_state!) && isdefined(api, :entanglement_profile!)) ||
+        return suite
+    for kind in (:random, :monitored), d in ds, n in ns
+        tab = rank_fixture(kind, d, n)
+        half = collect(1:(n ÷ 2))
+        dest = Vector{Int}(undef, n + 1)
+        g = BenchmarkGroup()
+        g["entropy/half"] = @benchmarkable entanglement_entropy($tab, $half)
+        g["profile!"] = @benchmarkable QuditClifford.entanglement_profile!($dest, $tab)
+        suite["rank"]["$kind/d=$d/n=$n"] = g
+    end
+    return suite
+end
+
 # `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
 # nothing to benchmark in. The verifying form runs the commutation Gram and the
 # rank elimination. One probe leaf only, at a small n. See `micro_group`.
@@ -964,7 +1023,9 @@ end
 The primes behind the `modulus` group, one per arithmetic tier of
 `src/modular.jl` that a general multiplier can take above `d = 5`:
 
-- `131` is rejected by the Barrett guard: the divide-twice fallback.
+- `131` is rejected by the Barrett guard: the divide-twice fallback. Its
+  `entropy/half` leaf runs the UInt8 rank kernel instead, as every `d <= 255`
+  does.
 - `443` is accepted although it is larger: the Barrett tier at a mid-size prime.
 - `1031` is above the guard's table: the fallback through the out-of-table path.
 
@@ -1128,7 +1189,9 @@ end
 
 Register `dense` (every `d` in `dense_ds` at size `n`), `modulus` (every prime
 in [`MODULUS_PRIMES`](@ref) at `modulus_n`), and the `channels`,
-`information`, `gates` and `tableau` groups at size `n`. Everything here
+`information`, `gates` and `tableau` groups at size `n`. `information` runs at
+`d = 2`, where the eliminations work on packed bits, and at `d = 3`, where they
+work on bytes. Everything here
 builds its fixtures with `random_state!`, so a baseline without it keeps its
 column and loses only these groups.
 """
@@ -1144,7 +1207,9 @@ function register_breadth_groups!(suite, types; n::Int, dense_ds, modulus_n::Int
             suite["modulus"]["$tn/d=$d/n=$modulus_n"] = modulus_group(; d, n = modulus_n, T)
         end
         suite["channels"]["$tn/d=3/n=$n"] = channel_group(; d = 3, n, T)
-        suite["information"]["$tn/d=3/n=$n"] = information_group(; d = 3, n, T)
+        for d in (2, 3)
+            suite["information"]["$tn/d=$d/n=$n"] = information_group(; d, n, T)
+        end
         suite["gates"]["$tn/d=5/n=$n"] = gate_group(; d = 5, n, T)
         suite["tableau"]["$tn/d=3/n=$n"] = tableau_group(; d = 3, n, T)
     end
