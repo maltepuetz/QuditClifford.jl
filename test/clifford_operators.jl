@@ -1224,19 +1224,27 @@ end
     isprime_small(p) = p >= 2 && all(q -> p % q != 0, 2:isqrt(p))
     rng = Random.Xoshiro(1)
     for S in (2, 4, 6), d in filter(isprime_small, 2:1024)
-        M, s = QC.clifford_barrett(S, d)
+        @test QC.clifford_barrett(S, d) == QC._clifford_barrett(Int, S, d)
+    end
+    # Both word sizes, whatever the host: the derivation is checked in the
+    # type itself, with the overflow bound and exactness against BigInt. Every
+    # prime up to 1024 takes the tier with 64-bit words and every prime below
+    # 47 with 32-bit words, so a guard that started rejecting everything fails.
+    for (T, accepted) in ((Int64, 1024), (Int32, 46)), S in (2, 4, 6),
+        d in filter(isprime_small, 2:1024)
+        M, s = QC._clifford_barrett(T, S, d)
+        d <= accepted && @test M != 0
+        M == 0 && continue
         X = 2S * d * (d - 1)
-        # Every prime up to 1024 takes the Barrett tier at these supports, so
-        # a guard that started rejecting everything would fail here.
-        @test M != 0
-        @test big(X) * M <= typemax(Int)
+        @test big(X) * M < big(2)^(8 * sizeof(T) - 2)
         xs = X <= 50_000 ? (0:X) : vcat(0:2000, (X - 2000):X, rand(rng, 0:X, 5000))
-        @test all(x -> QC._barrett_reduce(x, d, M, s) == mod(x, d), xs)
+        Mt, dt = T(M), T(d)
+        @test all(x -> T(x) - ((T(x) * Mt) >> s) * dt == mod(x, d), xs)
     end
     # Outside the fast guard, or where no shift is exact, there is no constant,
     # and application still reduces correctly through the `mod` tier.
     @test QC.clifford_barrett(4, 2147483647) == (0, 0)
-    d = 1_000_003
+    d = Sys.WORD_SIZE == 64 ? 1_000_003 : 67
     @test QC.clifford_fast_dots(16, d)
     @test QC.clifford_barrett(4, d) == (0, 0)
     for TT in (StabilizerTableau, DestabilizerTableau)
@@ -1244,6 +1252,7 @@ end
         tab = TT(d, 4; inversemod = QC.JustInTimeInvMod())
         random_state!(rng, tab)
         U = random_clifford(rng, d, [1, 3])
+        @test QC._prepare_tuple(U, true, Val(2)).bm == 0
         ref = deepcopy(tab)
         QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, true))
         apply!(tab, U)
