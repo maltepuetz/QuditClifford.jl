@@ -39,8 +39,52 @@ end
 # element. `S = 2k` is the longest dot in the subsystem; every product is
 # bounded by `B^2`. `B` takes the phase modulus into account as well as `d`,
 # because at d = 2 exponents are bits but phase coefficients reach 3.
-@inline function clifford_fast_dots(S::Int, d::Int)
+# `T` is the accumulator type; `Int` everywhere except `_clifford_barrett`'s
+# word-size-independent derivation.
+@inline function clifford_fast_dots(S::Int, d::Int, ::Type{T} = Int) where {T<:Signed}
     S == 0 && return true
     B = max(d - 1, phase_modulus(d) - 1)
-    return B <= isqrt(typemax(Int) ÷ S)
+    return B <= isqrt(typemax(T) ÷ S)
 end
+
+# Barrett constant `(M, s)` for the tuple kernels, or `(0, 0)` when there is
+# none: `div(x, d) == (x * M) >> s` and `x * M` fits in `Int` for every
+# `0 <= x <= X`, with `X = 2S·d·(d-1)` the largest unreduced value those
+# kernels form for a support of `S = 2k` coordinates (each call site states its
+# own bound). This is the constant of `src/modular.jl`'s Barrett tier with the
+# bound raised from `(d-1)^2` to `X`, and the shift chosen per modulus.
+@inline clifford_barrett(S::Int, d::Int) = _clifford_barrett(Int, S, d)
+
+# The derivation in a `W`-bit signed type `T`, so it holds for `Int` on both
+# 32- and 64-bit hosts and can be checked for either on one machine. `M` is
+# returned as a `T`, and `M == 0` means there is no constant.
+#
+# `clifford_fast_dots(4S, d, T)` bounds `4S(d-1)^2 >= X` by `typemax(T)`, so
+# `X` is formed without overflow. The shift is the largest that keeps
+# `X * M < 2^(W-2)`: with `X < 2^L`, `L <= W-2` and `2^lg <= d`,
+# `M = cld(2^s, d) < 2^(s-lg) + 1` is an integer, so `M <= 2^(s-lg)` and
+# `X * M < 2^(L+s-lg) = 2^(W-2)`. `lg < L` because `d <= X`, so `s <= W-3`,
+# and `s >= 1` because `lg >= 1`. Exactness is the same criterion as
+# `_barrett_ok`, `e * X < 2^s` for `e = M*d - 2^s`, tested by division so the
+# product is never formed. Acceptance is NOT monotonic in `d`: a modulus whose
+# `e` happens to be small passes where a smaller one fails, so never replace
+# the test with a bound on `d`. Two divisions, once per preparation.
+@inline function _clifford_barrett(::Type{T}, S::Int, d::Int) where {T<:Signed}
+    W = 8 * sizeof(T)
+    (S > 0 && 2 <= d <= typemax(T) && clifford_fast_dots(4S, d, T)) ||
+        return (zero(T), 0)
+    dt = T(d)
+    X = T(2S) * dt * (dt - one(T))
+    L = W - leading_zeros(X)
+    L <= W - 2 || return (zero(T), 0)
+    lg = W - 1 - leading_zeros(dt)
+    s = W - 2 - L + lg
+    p2 = one(T) << s
+    M = cld(p2, dt)
+    e = M * dt - p2
+    (e == 0 || X <= (p2 - one(T)) ÷ e) || return (zero(T), 0)
+    return (M, s)
+end
+
+# `x mod d` for `0 <= x <= X` under a constant from `clifford_barrett`.
+@inline _barrett_reduce(x::Int, d::Int, M::Int, s::Int) = x - ((x * M) >> s) * d

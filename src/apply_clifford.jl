@@ -77,13 +77,51 @@ end
     return add_mod(av, mul_mod(inv2, t, d), d)
 end
 
+# The same closed form on the Barrett tier, with three reductions instead of
+# one per dot product. `C = (K+S)(d-1)d` is a multiple of `d` no smaller than
+# `x·z + D·v <= (K+S)(d-1)^2`, so `x_out·z_out + C - x·z - D·v` is
+# nonnegative and congruent to the bracket. Unreduced bounds, each within
+# `X = 2S·d·(d-1)` from `clifford_barrett`:
+#     x·z + D·v                   <= (K+S)(d-1)^2
+#     x_out·z_out + C - x·z - D·v <= K(d-1)^2 + (K+S)(d-1)d <= X
+#     a·v + inv2·t                <= S(d-1)^2 + (d-1)^2     <= X
+# Same precondition as `_phase_odd`, and `a`, `D` and `inv2` reduced too.
+@inline function _phase_odd_barrett(
+    v::NTuple{S,Int},
+    vout::NTuple{S,Int},
+    a::NTuple{S,Int},
+    D::NTuple{S,Int},
+    K::Int,
+    d::Int,
+    inv2::Int,
+    M::Int,
+    sh::Int,
+) where {S}
+    av = 0
+    Dv = 0
+    @inbounds for i in 1:S
+        av += a[i] * v[i]
+        Dv += D[i] * v[i]
+    end
+    xz = 0
+    xzout = 0
+    @inbounds for q in 1:K
+        xz += v[q] * v[K + q]
+        xzout += vout[q] * vout[K + q]
+    end
+    C = (K + S) * (d - 1) * d
+    t = _barrett_reduce(xzout + C - xz - Dv, d, M, sh)
+    return _barrett_reduce(av + inv2 * t, d, M, sh)
+end
+
 # Qubits: multiply the generator images in order, carrying a running Z prefix.
 # Canonical coefficients are bits, so binomial(v_i, 2) vanishes and the whole
 # quadratic part is the cross terms.
 #
 # The prefix is a bitmask rather than a vector: at d = 2 every coordinate is a
 # bit, so no heap scratch is needed and `apply!` stays allocation-free. This is
-# a named-gate specialization (K ≤ 2), with an enforced K ≤ 64 bound.
+# the tuple backing's evaluator (named gates, and stored operators on up to
+# three qudits), with an enforced K ≤ 64 bound.
 # `_phase_qubit_dense` is the vector-prefix evaluator used for arbitrary dense
 # supports; the bitmask bound is therefore internal to this path and is not a
 # public Clifford arity restriction. Note `UInt64(1) << 64 == 0` in Julia, so a
@@ -129,6 +167,46 @@ end
     return phase
 end
 
+# The same phase in closed form, for the Barrett tier:
+#     Δ(v) = a·v + 2 Σ_{i<j} Q_ij v_i v_j   (mod 4),   Q_ij = z(F_i)·x(F_j) mod 2,
+# which is the ordered product above with the running prefix expanded: image
+# `j` meets the Z parts of every active image `i < j`. `Q` depends only on the
+# gate, so `_qubit_cross_bits` builds it once per preparation, and the
+# per-column evaluation has no data-dependent branch. Precondition as for
+# `_phase_qubit`, which stays the evaluator of the other tiers.
+@inline function _qubit_cross_bits(F::NTuple{S,NTuple{S,Int}}, K::Int) where {S}
+    return ntuple(Val(S)) do i
+        @inline
+        ntuple(Val(S)) do j
+            @inline
+            q = 0
+            if j > i
+                @inbounds for r in 1:K
+                    q ⊻= F[i][K + r] & F[j][r]
+                end
+            end
+            q
+        end
+    end
+end
+
+# `lin <= 3S` and `cross` is a bit, so nothing overflows before the `& 3`.
+@inline function _phase_qubit_closed(
+    v::NTuple{S,Int},
+    a::NTuple{S,Int},
+    Q::NTuple{S,NTuple{S,Int}},
+) where {S}
+    lin = 0
+    cross = 0
+    @inbounds for i in 1:S
+        lin += a[i] * v[i]
+        for j in (i + 1):S
+            cross ⊻= Q[i][j] & v[i] & v[j]
+        end
+    end
+    return (lin + 2 * cross) & 3
+end
+
 ########################################
 # Preparation                          #
 ########################################
@@ -139,8 +217,10 @@ end
 abstract type AbstractPreparedClifford end
 
 # Resolved once per `apply!`, never per column: the gate's raw data, the image
-# dot products, the arithmetic tier, and the phase regime. Immutable and
-# built from tuples, so a named-gate application allocates nothing.
+# dot products, the arithmetic tier, and the phase regime. Three tiers, in
+# order of preference: Barrett (`bm != 0`; `x & 1` at d = 2), `fast`
+# (unreduced sums, one `mod` each) and overflow-safe (`add_mod`/`mul_mod` per
+# term). Immutable and built from tuples, so an application allocates nothing.
 struct PreparedClifford{K,S} <: AbstractPreparedClifford
     targets::NTuple{K,Int}
     F::NTuple{S,NTuple{S,Int}}
@@ -151,6 +231,24 @@ struct PreparedClifford{K,S} <: AbstractPreparedClifford
     inv2::Int
     fast::Bool
     storephase::Bool
+    bm::Int
+    bs::Int
+    Q::NTuple{S,NTuple{S,Int}}
+end
+
+# The Barrett constant `(bm, bs)` is derived here, so every construction path
+# gets it; `bm == 0` selects the `mod`-based tiers. It is a sub-tier of `fast`
+# and never enabled without it.
+@inline function PreparedClifford{K,S}(targets::NTuple{K,Int},
+                                       F::NTuple{S,NTuple{S,Int}},
+                                       a::NTuple{S,Int}, D::NTuple{S,Int},
+                                       d::Int, p::Int, inv2::Int, fast::Bool,
+                                       storephase::Bool) where {K,S}
+    bm, bs = fast ? clifford_barrett(S, d) : (0, 0)
+    Q = storephase && d == 2 && bm != 0 ? _qubit_cross_bits(F, K) :
+        ntuple(_ -> ntuple(_ -> 0, Val(S)), Val(S))
+    return PreparedClifford{K,S}(targets, F, a, D, d, p, inv2, fast, storephase,
+                                 bm, bs, Q)
 end
 
 # `force_safe` is an internal testing hook; it can only disable the fast tier.
@@ -208,6 +306,7 @@ end
 # Target coordinates in all-X-then-all-Z order, matching the generator order.
 @inline function _gather(A::Matrix{Int}, targets::NTuple{K,Int}, n::Int, j::Int) where {K}
     return ntuple(Val(2K)) do i
+        @inline
         @inbounds i <= K ? A[targets[i], j] : A[n + targets[i - K], j]
     end
 end
@@ -246,9 +345,25 @@ end
                            j::Int, vout::NTuple{S,Int}) where {K,S} =
     _scatter!(A, prep.targets, n, j, vout)
 
-@inline _col_xdotz_prepared(prep::PreparedClifford{K,S},
-                            v::NTuple{S,Int}) where {K,S} =
-    _col_xdotz(v, K, prep.d, prep.fast)
+@inline function _col_xdotz_prepared(prep::PreparedClifford{K,S},
+                                     v::NTuple{S,Int}) where {K,S}
+    prep.bm == 0 && return _col_xdotz(v, K, prep.d, prep.fast)
+    # Barrett tier: the sum is at most K(d-1)^2 <= X.
+    s = 0
+    @inbounds for q in 1:K
+        s += v[q] * v[K + q]
+    end
+    return _reduce_prepared(prep, s)
+end
+
+# `x mod d` on the Barrett tier, for `0 <= x <= X` (see `clifford_barrett`).
+# The `d == 2` test is uniform across a whole `apply!`, so it predicts
+# perfectly; `x & 1` there skips the multiplies.
+@inline function _reduce_prepared(prep::PreparedClifford, x::Int)
+    d = prep.d
+    d == 2 && return x & 1
+    return _barrett_reduce(x, d, prep.bm, prep.bs)
+end
 
 @inline function _gather_vec_prepared!(prep::PreparedClifford{K,S},
                                        xz::Vector{Int}, n::Int) where {K,S}
@@ -270,18 +385,44 @@ end
 end
 
 # (Fv)_i = Σ_j F[i,j] v_j, and F[j] is column j, so F[i,j] is F[j][i].
+# The closures carry `@inline`: without it Julia compiles each output
+# coordinate as a call that copies the whole captured `F` tuple, once per
+# coordinate and column, which costs more than the arithmetic itself.
 @inline function _matvec(prep::PreparedClifford{K,S}, v::NTuple{S,Int}) where {K,S}
     d = prep.d
     F = prep.F
-    fast = prep.fast
-    return ntuple(Val(S)) do i
-        if fast
+    if d == 2 && prep.bm != 0
+        # Bits: the product is `&` and the sum mod 2 is `⊻`.
+        return ntuple(Val(S)) do i
+            @inline
+            s = 0
+            @inbounds for j in 1:S
+                s ⊻= F[j][i] & v[j]
+            end
+            s
+        end
+    elseif prep.bm != 0
+        # Each row sum is at most S(d-1)^2 <= X.
+        return ntuple(Val(S)) do i
+            @inline
+            s = 0
+            @inbounds for j in 1:S
+                s += F[j][i] * v[j]
+            end
+            _reduce_prepared(prep, s)
+        end
+    elseif prep.fast
+        return ntuple(Val(S)) do i
+            @inline
             s = 0
             @inbounds for j in 1:S
                 s += F[j][i] * v[j]
             end
             mod(s, d)
-        else
+        end
+    else
+        return ntuple(Val(S)) do i
+            @inline
             s = 0
             @inbounds for j in 1:S
                 s = add_mod(s, mul_mod(F[j][i], v[j], d), d)
@@ -297,7 +438,11 @@ end
     vout::NTuple{S,Int},
 ) where {K,S}
     if prep.d == 2
+        prep.bm != 0 && return _phase_qubit_closed(v, prep.a, prep.Q)
         return _phase_qubit(v, prep.F, prep.a, K)
+    elseif prep.bm != 0
+        return _phase_odd_barrett(v, vout, prep.a, prep.D, K, prep.d, prep.inv2,
+                                  prep.bm, prep.bs)
     else
         return _phase_odd(v, vout, prep.a, prep.D, K, prep.d, prep.inv2, prep.fast)
     end

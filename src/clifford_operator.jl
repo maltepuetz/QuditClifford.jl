@@ -403,6 +403,55 @@ function _prepare(U::CliffordOperator, d::Int, ::InverseMod, storephase::Bool;
                        force_safe = force_safe)
 end
 
+# The tuple backing over a stored operator's arrays, for a support size `K`
+# the caller has already matched against `length(U.targets)`. Copying the
+# `2K × 2K` matrix into tuples costs O(K^2) once per `apply!`; in exchange the
+# column loop runs on the fully unrolled named-gate kernel instead of the
+# runtime-k dense one. The data is the operator's own, already canonical and
+# validated, so nothing is re-derived except the phase-regime gating
+# `_prepare` applies to named gates.
+@inline function _prepare_tuple(U::CliffordOperator, storephase::Bool,
+                                ::Val{K}) where {K}
+    S = 2K
+    d = U.d
+    targets = ntuple(i -> U.targets[i], Val(K))
+    F = ntuple(j -> ntuple(i -> U.F[i, j], Val(S)), Val(S))
+    a = ntuple(i -> U.a[i], Val(S))
+    storephase && d == 2 && _check_qubit_bitmask_bound(K)
+    D = storephase && d != 2 ? ntuple(i -> U.image_xdotz[i], Val(S)) :
+        ntuple(_ -> 0, Val(S))
+    return PreparedClifford{K,S}(targets, F, a, D, d, phase_modulus(d), U.inv2,
+                                 U.fast, storephase)
+end
+
+# Supports of up to three qudits take the tuple backing; every larger support
+# uses the dense backing over `U`'s own scratch. Building the tuples costs
+# about 0.1 µs at k = 3 but about 0.6 µs at k = 4, where the faster columns
+# repay it only after several dozen generators, while the dense backing has no
+# such fixed cost. Each branch passes a literal `Val`, so every call below is
+# statically dispatched. Validation order and messages match the generic
+# `apply!`: target bounds first, then the dimension check `_prepare` makes.
+# With no active generator the column loops would not run, so the tuple path
+# skips the preparation and keeps only the effect `_apply_prepared!` has
+# there, clearing `iscanonical`.
+function apply!(tab::AbstractTableau, U::CliffordOperator)
+    _validate_clifford_targets(U, tab.n)
+    k = length(U.targets)
+    if 1 <= k <= 3
+        U.d == tab.d || throw(ArgumentError(
+            "CliffordOperator was built for d=$(U.d), but the tableau has d=$(tab.d)."))
+        if tab.m == 0
+            tab.iscanonical = false
+            return tab
+        end
+        sp = tab.storephase
+        k == 1 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(1)))
+        k == 2 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(2)))
+        return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(3)))
+    end
+    return _apply_prepared!(tab, _prepare(U, tab.d, tab.inversemod, tab.storephase))
+end
+
 # Same second-argument type as the `AbstractClifford` method, for the dispatch
 # reason documented on `_prepare` above. A stored operator's `d` was already
 # proven prime at construction, so this does not retest primality.

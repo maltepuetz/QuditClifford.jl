@@ -625,3 +625,17 @@ end
         end
     end
 end
+
+@testset "Stored one- to three-qudit operators keep duality and the cache" begin
+    rng = Xoshiro(20261118)
+    for d in (2, 3, 5), n in (4, 7), m in unique((1, n ÷ 2, n)), k in 1:3
+        tab = DestabilizerTableau(d, n)
+        random_state!(rng, tab; m)
+        for _ in 1:4
+            apply!(tab, random_clifford(rng, d, randperm(rng, n)[1:k]))
+            _assert_duality(tab)
+            _assert_active_cache(tab)
+            @test all(iszero, tab.xdotz_cache[(tab.m + 1):end])
+        end
+    end
+end
