@@ -17,6 +17,7 @@ tce_snapshot(tab) = Tuple(f === :inversemod ? objectid(tab.inversemod) :
 function tce_no_shared_arrays(a, b)
     for f in fieldnames(typeof(a))
         x, y = getfield(a, f), getfield(b, f)
+        x isa SubArray && (x = parent(x); y = y isa SubArray ? parent(y) : y)
         x isa Array && x === y && return false
     end
     return true
@@ -99,7 +100,7 @@ end
                             dst = TT(d, n, :ghz; storephase = storephase)
                             before = tce_snapshot(src)
                             arrays = [f => getfield(dst, f) for f in fieldnames(typeof(dst))
-                                      if getfield(dst, f) isa Array]
+                                      if getfield(dst, f) isa Union{Array, SubArray}]
                             storage = TT === DestabilizerTableau ?
                                 (:stab_x, :stab_z, :phase, :destab_x, :destab_z) :
                                 (:stab_x, :stab_z, :phase)
@@ -107,6 +108,8 @@ end
                             @test all(f in first.(arrays) for f in storage)
                             @test copy!(dst, src) === dst
                             @test all(getfield(dst, f) === arr for (f, arr) in arrays)
+                            @test all(parent(getfield(dst, f)) === parent(arr) for (f, arr) in arrays
+                                      if arr isa SubArray)
                             @test tce_snapshot(src) == before
                             @test dst == src
                             @test (dst.m, dst.iscanonical) == (src.m, src.iscanonical)

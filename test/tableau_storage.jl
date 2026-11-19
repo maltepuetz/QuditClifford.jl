@@ -260,6 +260,47 @@ end
     end
 end
 
+# Byte offset of block entry (1, 1) from its parent's first element.
+ts_base(A) = (first(parentindices(A)[2]) - 1) * size(parent(A), 1) * sizeof(Int)
+
+@testset "padded block layout" begin
+    for (label, TT) in ts_TYPES, n in (1, 31, 32, 33, 64, 511, 512, 513, 1024)
+        tab = TT(2, n; state = :ghz)
+        blocks = TT === DestabilizerTableau ?
+            ((tab.stab_x, tab.stab_z), (tab.destab_x, tab.destab_z)) : ((tab.stab_x, tab.stab_z),)
+        L = size(parent(tab.stab_x), 1)
+        for (bx, bz) in blocks
+            @test parent(bx) === parent(bz)
+            @test size(bx) == size(bz) == (n, n)
+            @test size(parent(bx), 1) == L
+            @test isempty(intersect(parentindices(bx)[2], parentindices(bz)[2]))
+        end
+        if n >= ts_QC._PAD_MIN_N
+            # Column stride an odd multiple of 128 bytes, at most 2·128 bytes of padding.
+            @test isodd(L * sizeof(Int) ÷ 128) && mod(L * sizeof(Int), 128) == 0
+            @test n <= L < n + 256 ÷ sizeof(Int)
+            @test mod.(ts_base.((tab.stab_x, tab.stab_z)), 4096) == (0, 2048)
+            TT === DestabilizerTableau &&
+                @test mod.(ts_base.((tab.destab_x, tab.destab_z)), 4096) == (1024, 3072)
+        else
+            @test L == n
+        end
+        # A copy has the same layout in a parent of its own.
+        c = copy(tab)
+        @test parentindices(c.stab_x) == parentindices(tab.stab_x)
+        @test parentindices(c.stab_z) == parentindices(tab.stab_z)
+        @test parent(c.stab_x) !== parent(tab.stab_x)
+        @test c == tab
+        # Zeroing one block leaves the other blocks of its parent alone.
+        if n > 1
+            apply!(tab, Fourier(1))
+            before = copy(tab.stab_x)
+            ts_QC._zero!(tab.stab_z)
+            @test iszero(tab.stab_z) && tab.stab_x == before
+        end
+    end
+end
+
 @testset "copy shares no storage" begin
     for (label, TT) in ts_TYPES, d in (2, 3), sp in (true, false)
         n = 4

@@ -1,7 +1,8 @@
 # Access to the tableau storage. A tableau holds its stabilizers in the fields
 # `stab_x`, `stab_z` (`n × n`, generator `j` in column `j`) and `phase` (length
 # `n`, or 0 without `storephase`), and a `DestabilizerTableau` its destabilizers
-# in `destab_x` and `destab_z`. Only this file and the two constructor files
+# in `destab_x` and `destab_z`. The four blocks are views into padded parent
+# matrices laid out by `_padded_blocks` (src/xz_block.jl). Only this file and the two constructor files
 # touch those fields; algorithms go through `_stab`, `_destab` and `_phase`.
 
 # The stabilizer and destabilizer blocks and the phase vector of a tableau. They

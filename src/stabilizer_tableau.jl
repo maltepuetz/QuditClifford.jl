@@ -78,8 +78,8 @@ mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::Matrix{Int}                # n×n X exponents, generator j in column j
-    stab_z::Matrix{Int}                # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix               # n×n X exponents, generator j in column j (see _padded_blocks)
+    stab_z::_BlockMatrix               # n×n Z exponents, generator j in column j
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
@@ -199,8 +199,7 @@ function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, d::Int, n::In
     S = tableau_in isa Matrix{Int} ? tableau_in : Matrix{Int}(tableau_in)
     src, src_phase = _stacked_views(S, n, storephase)
     sx, sz = src.x, src.z
-    x = zeros(Int, n, n)
-    z = zeros(Int, n, n)
+    x, z = _stab_blocks(n)
     phase = zeros(Int, storephase ? n : 0)
 
     # The `m > 0` guard (so also n > 0) is load-bearing: `@turbo` does not
@@ -335,8 +334,7 @@ function Base.copy(tab::StabilizerTableau{T}) where {T}
         tab.d,
         tab.n,
         tab.m,
-        copy(tab.stab_x),
-        copy(tab.stab_z),
+        _copy_blocks((tab.stab_x, tab.stab_z))...,
         copy(tab.phase),
         tab.storephase,
         tab.iscanonical,
@@ -386,8 +384,7 @@ true
 function Base.copy!(dst::StabilizerTableau, src::StabilizerTableau)
     _check_copy_compatible(dst, src)
     dst === src && return dst
-    copyto!(dst.stab_x, src.stab_x)
-    copyto!(dst.stab_z, src.stab_z)
+    _copy_parent!(dst.stab_x, src.stab_x)    # stab_x and stab_z share a parent
     copyto!(dst.phase, src.phase)
     copyto!(dst.pivcol_of_row, src.pivcol_of_row)
     copyto!(dst.xdotz_cache, src.xdotz_cache)
@@ -448,8 +445,7 @@ end
 end
 
 function _preset_tableau(d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
-    # zeroed by _preset_tableau!
-    b = XZBlock{GeneratorMajor}(Matrix{Int}(undef, n, n), Matrix{Int}(undef, n, n))
+    b = XZBlock{GeneratorMajor}(_stab_blocks(n)...)
     phase = Vector{Int}(undef, storephase ? n : 0)
 
     m = _preset_tableau!(b, phase, d, n, state, basis_spec, storephase)
