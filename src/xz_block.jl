@@ -22,78 +22,91 @@ XZBlock{L}(x::M, z::M) where {L, M} = XZBlock{L, M}(x, z)
 
 ##### padded generator storage #####
 #
-# A tableau's generator blocks are `n × n` views into one parent matrix with
-# `_padded_rows(n)` rows, each block a range of the parent's columns. Sweeps that
-# read the same qudit of every generator (`apply!`'s gather and scatter, the row
-# scans in `measure!` and `expect!`) step through memory by the column stride,
-# and two placements decide whether those accesses spread over the cache sets:
+# Each generator block (`stab_x`, `stab_z`, `destab_x`, `destab_z`) is an
+# `n × n` view into a parent matrix of its own. Sweeps that read the same qudit
+# of every generator (`apply!`'s gather and scatter, the row scans in
+# `measure!` and `expect!`) step through memory by the column stride, and two
+# placements, both stated in bytes so that they hold for any element type,
+# decide whether those accesses spread over the cache sets:
 #
-# - the column stride is an odd multiple of 128 bytes, so consecutive columns
-#   land on distinct cache lines modulo every power-of-two set period. A stride
-#   of `n · 8` bytes is a multiple of 4 KiB at n = 512, 1024, … and puts every
-#   column of a sweep into a handful of sets; strides within a few elements of
-#   such a multiple (n = 511, 513, 1023, …) are nearly as bad.
-# - block `i` starts at a byte offset ≡ `slots[i]` (mod 4096) from the parent's
-#   base, so the X and Z entries of one generator (and the destabilizer blocks)
-#   do not share a set. Separately allocated page-aligned arrays would put
-#   `x[q, j]` and `z[q, j]` in the same set for every `j`.
+# - the parent has `_padded_rows(n, sizeof(T))` rows, which makes the column
+#   stride an odd multiple of `_LINE_BYTES` (128). Consecutive columns then land
+#   on distinct cache lines modulo every power-of-two set period. An unpadded
+#   stride is a multiple of 4 KiB at n = 512, 1024, … (8-byte entries) and puts
+#   every column of a sweep into a handful of sets; strides within a few
+#   elements of such a multiple (n = 511, 513, 1023, …) are nearly as bad.
+# - the view starts `c` columns into its parent, `0 ≤ c < 32`, chosen so that
+#   its first entry sits in the 128-byte line `slot ÷ 128` modulo 4096 bytes.
+#   The four blocks use different slots, so `x[q, j]` and `z[q, j]` of one
+#   generator (and the destabilizer entries) never share a set. Large arrays
+#   are page-aligned, so unshifted blocks would put them in the same set for
+#   every `j`.
 #
-# Below `_PAD_MIN_N` qudits a tableau fits in L1 and the blocks are unpadded
-# and adjacent.
+# Columns shorter than `_PAD_MIN_COL_BYTES` are neither padded nor shifted:
+# such a tableau fits in L1.
 
-const _BlockMatrix = SubArray{Int, 2, Matrix{Int}, Tuple{Base.OneTo{Int}, UnitRange{Int}}, false}
+const _BlockMatrix{T} = SubArray{T, 2, Matrix{T}, Tuple{Base.OneTo{Int}, UnitRange{Int}}, false}
 
-const _PAD_MIN_N = 32
-const _PAD_UNIT = 128 ÷ sizeof(Int)    # elements per 128 bytes
+const _LINE_BYTES = 128
+const _SET_SPAN_BYTES = 4096
+const _PAD_MIN_COL_BYTES = 256
 
-_padded_rows(n::Int) = n < _PAD_MIN_N ? n : n + mod(_PAD_UNIT - n, 2 * _PAD_UNIT)
-
-# `length(slots)` zeroed `n × n` blocks of one fresh parent matrix.
-function _padded_blocks(n::Int, slots::NTuple{N,Int}) where {N}
-    L = _padded_rows(n)
-    starts = zeros(Int, N)
-    c = 0
-    for i in 1:N
-        # `L · sizeof(Int)` is an odd multiple of 128, so every slot is reached
-        # within 32 columns.
-        if n >= _PAD_MIN_N
-            while mod(c * L * sizeof(Int), 4096) != slots[i]
-                c += 1
-            end
-        end
-        starts[i] = c
-        c += n
-    end
-    P = zeros(Int, L, c)
-    return ntuple(i -> view(P, Base.OneTo(n), starts[i]+1:starts[i]+n), Val(N))::NTuple{N,_BlockMatrix}
+# Rows of a parent for `n`-entry columns of `sz`-byte elements: the smallest
+# count `≥ n` whose stride `rows · sz` is an odd multiple of `_LINE_BYTES`, or
+# `n` for short columns. `sz` must divide `_LINE_BYTES`.
+function _padded_rows(n::Int, sz::Int)
+    n * sz < _PAD_MIN_COL_BYTES && return n
+    u = _LINE_BYTES ÷ sz
+    return n + mod(u - n, 2u)
 end
+
+# A zeroed `n × n` block of element type `T` in a parent of its own, starting in
+# line `slot ÷ _LINE_BYTES` modulo `_SET_SPAN_BYTES` (see above).
+function _padded_block(::Type{T}, n::Int, slot::Int) where {T}
+    sz = sizeof(T)
+    L = _padded_rows(n, sz)
+    L == n && return view(zeros(T, n, n), Base.OneTo(n), 1:n)
+    nshift = _SET_SPAN_BYTES ÷ _LINE_BYTES    # 32: the stride steps through every line
+    P = zeros(T, L, n + nshift - 1)
+    base = UInt(pointer(P))
+    want = mod(slot, _SET_SPAN_BYTES) ÷ _LINE_BYTES
+    c = 0
+    while (base + c * L * sz) % _SET_SPAN_BYTES ÷ _LINE_BYTES != want
+        c += 1
+    end
+    return view(P, Base.OneTo(n), c+1:c+n)
+end
+
+# The line slot a block's first entry sits in, as `_padded_block` takes it.
+_block_slot(A::_BlockMatrix) =
+    Int(UInt(pointer(A)) % _SET_SPAN_BYTES ÷ _LINE_BYTES * _LINE_BYTES)
 
 # The stabilizer X and Z blocks, and the destabilizer blocks of a
-# `DestabilizerTableau`, which go to the slots between them.
-_stab_blocks(n::Int) = _padded_blocks(n, (0, 2048))
-_destab_blocks(n::Int) = _padded_blocks(n, (1024, 3072))
+# `DestabilizerTableau`, in the line slots between them.
+_stab_blocks(n::Int) = (_padded_block(Int, n, 0), _padded_block(Int, n, 2048))
+_destab_blocks(n::Int) = (_padded_block(Int, n, 1024), _padded_block(Int, n, 3072))
 
-# Copies of blocks that share one parent, sharing one new parent in the same places.
-function _copy_blocks(blocks::NTuple{N,_BlockMatrix}) where {N}
-    P = copy(parent(blocks[1]))
-    return ntuple(i -> view(P, parentindices(blocks[i])...), Val(N))
-end
-
-# Overwrite the parent of `dst` with that of `src`; both come from `_padded_blocks`
-# with the same `n` and slots, so every block sits in the same place.
-function _copy_parent!(dst::_BlockMatrix, src::_BlockMatrix)
-    copyto!(parent(dst), parent(src))
+# Copy the entries of block `src` into block `dst` of the same size, one
+# contiguous column at a time.
+function _copy_block!(dst::_BlockMatrix{T}, src::_BlockMatrix{T}) where {T}
+    @inbounds for j in axes(src, 2)
+        copyto!(view(dst, :, j), view(src, :, j))
+    end
     return dst
 end
+
+# A copy of a block in a fresh parent, in the same line slot.
+_copy_block(A::_BlockMatrix{T}) where {T} =
+    _copy_block!(_padded_block(T, size(A, 1), _block_slot(A)), A)
 
 # Zero an `Int` array of any layout; the `Array{Int}` method in helper.jl is one `memset`.
 _zero!(A::AbstractArray{Int}) = fill!(A, 0)
 
 # One `memset` per column of a block.
-function _zero!(A::_BlockMatrix)
+function _zero!(A::_BlockMatrix{T}) where {T}
     P = parent(A)
     L = size(P, 1)
-    nb = size(A, 1) * sizeof(Int)
+    nb = size(A, 1) * sizeof(T)
     GC.@preserve P for c in parentindices(A)[2]
         ccall(:memset, Ptr{Cvoid}, (Ptr{Cvoid}, Cint, Csize_t),
               pointer(P, (c - 1) * L + 1), 0, nb)

@@ -101,11 +101,11 @@ mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix               # n×n X exponents, generator j in column j (see _padded_blocks)
-    stab_z::_BlockMatrix               # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{Int}              # n×n X exponents, generator j in column j (see _padded_block)
+    stab_z::_BlockMatrix{Int}              # n×n Z exponents, generator j in column j
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
-    destab_x::_BlockMatrix             # n×n X exponents of the destabilizers (no phases)
-    destab_z::_BlockMatrix             # n×n Z exponents of the destabilizers
+    destab_x::_BlockMatrix{Int}            # n×n X exponents of the destabilizers (no phases)
+    destab_z::_BlockMatrix{Int}            # n×n Z exponents of the destabilizers
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
     inversemod::T                      # inverse mod function for dimension d
@@ -562,9 +562,11 @@ function Base.copy(tab::DestabilizerTableau{T}) where {T}
         tab.d,
         tab.n,
         tab.m,
-        _copy_blocks((tab.stab_x, tab.stab_z))...,
+        _copy_block(tab.stab_x),
+        _copy_block(tab.stab_z),
         copy(tab.phase),
-        _copy_blocks((tab.destab_x, tab.destab_z))...,
+        _copy_block(tab.destab_x),
+        _copy_block(tab.destab_z),
         tab.storephase,
         tab.iscanonical,
         tab.inversemod,
@@ -584,9 +586,11 @@ end
 function Base.copy!(dst::DestabilizerTableau, src::DestabilizerTableau)
     _check_copy_compatible(dst, src)
     dst === src && return dst
-    _copy_parent!(dst.stab_x, src.stab_x)        # stab_x and stab_z share a parent
+    _copy_block!(dst.stab_x, src.stab_x)
+    _copy_block!(dst.stab_z, src.stab_z)
     copyto!(dst.phase, src.phase)
-    _copy_parent!(dst.destab_x, src.destab_x)    # so do destab_x and destab_z
+    _copy_block!(dst.destab_x, src.destab_x)
+    _copy_block!(dst.destab_z, src.destab_z)
     copyto!(dst.pivcol_of_row, src.pivcol_of_row)
     copyto!(dst.xdotz_cache, src.xdotz_cache)
     dst.m = src.m

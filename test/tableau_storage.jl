@@ -260,43 +260,59 @@ end
     end
 end
 
-# Byte offset of block entry (1, 1) from its parent's first element.
-ts_base(A) = (first(parentindices(A)[2]) - 1) * size(parent(A), 1) * sizeof(Int)
+# Line slot (byte offset mod 4096, rounded down to 128) of a block's first entry.
+ts_slot(A) = Int(UInt(pointer(A)) % 4096 ÷ 128 * 128)
+
+@testset "padding rule in bytes" begin
+    for T in (Int, Int64, Int32, UInt16, UInt8)
+        sz = sizeof(T)
+        for n in (1, 7, 31, 32, 33, 64, 100, 255, 256, 257, 511, 512, 513, 1023, 1024)
+            L = ts_QC._padded_rows(n, sz)
+            if n * sz < ts_QC._PAD_MIN_COL_BYTES
+                @test L == n
+            else
+                # Stride an odd multiple of 128 bytes, at most 2·128 bytes of padding.
+                @test mod(L * sz, 128) == 0 && isodd(L * sz ÷ 128)
+                @test n <= L < n + 256 ÷ sz
+            end
+            n in (1, 33, 512, 1024) || continue
+            blocks = [ts_QC._padded_block(T, n, s) for s in (0, 1024, 2048, 3072)]
+            @test all(b -> size(b) == (n, n) && eltype(b) === T && iszero(b), blocks)
+            @test allunique(map(b -> objectid(parent(b)), blocks))
+            @test all(b -> size(parent(b), 1) == L, blocks)
+            if L != n
+                @test map(ts_slot, blocks) == [0, 1024, 2048, 3072]
+            else
+                @test all(b -> parent(b) == b, blocks)       # no shift, no spare columns
+            end
+        end
+    end
+    @test Int === Int32 || ts_QC._padded_rows(512, sizeof(Int)) == 528
+end
 
 @testset "padded block layout" begin
     for (label, TT) in ts_TYPES, n in (1, 31, 32, 33, 64, 511, 512, 513, 1024)
         tab = TT(2, n; state = :ghz)
-        blocks = TT === DestabilizerTableau ?
-            ((tab.stab_x, tab.stab_z), (tab.destab_x, tab.destab_z)) : ((tab.stab_x, tab.stab_z),)
-        L = size(parent(tab.stab_x), 1)
-        for (bx, bz) in blocks
-            @test parent(bx) === parent(bz)
-            @test size(bx) == size(bz) == (n, n)
-            @test size(parent(bx), 1) == L
-            @test isempty(intersect(parentindices(bx)[2], parentindices(bz)[2]))
-        end
-        if n >= ts_QC._PAD_MIN_N
-            # Column stride an odd multiple of 128 bytes, at most 2·128 bytes of padding.
-            @test isodd(L * sizeof(Int) ÷ 128) && mod(L * sizeof(Int), 128) == 0
-            @test n <= L < n + 256 ÷ sizeof(Int)
-            @test mod.(ts_base.((tab.stab_x, tab.stab_z)), 4096) == (0, 2048)
-            TT === DestabilizerTableau &&
-                @test mod.(ts_base.((tab.destab_x, tab.destab_z)), 4096) == (1024, 3072)
-        else
-            @test L == n
-        end
-        # A copy has the same layout in a parent of its own.
+        fields = TT === DestabilizerTableau ?
+            (tab.stab_x, tab.stab_z, tab.destab_x, tab.destab_z) : (tab.stab_x, tab.stab_z)
+        L = ts_QC._padded_rows(n, sizeof(Int))
+        @test allunique(map(b -> objectid(parent(b)), fields))
+        @test all(b -> size(b) == (n, n) && size(parent(b), 1) == L, fields)
+        L != n && @test map(ts_slot, fields) == (0, 2048, 1024, 3072)[1:length(fields)]
+        # A copy has the same slots in parents of its own.
         c = copy(tab)
-        @test parentindices(c.stab_x) == parentindices(tab.stab_x)
-        @test parentindices(c.stab_z) == parentindices(tab.stab_z)
-        @test parent(c.stab_x) !== parent(tab.stab_x)
+        cf = TT === DestabilizerTableau ?
+            (c.stab_x, c.stab_z, c.destab_x, c.destab_z) : (c.stab_x, c.stab_z)
+        L != n && @test map(ts_slot, cf) == map(ts_slot, fields)
+        @test all(i -> parent(cf[i]) !== parent(fields[i]), eachindex(cf))
         @test c == tab
-        # Zeroing one block leaves the other blocks of its parent alone.
+        # Zeroing one block leaves the others and the spare columns alone.
         if n > 1
             apply!(tab, Fourier(1))
             before = copy(tab.stab_x)
             ts_QC._zero!(tab.stab_z)
             @test iszero(tab.stab_z) && tab.stab_x == before
+            @test iszero(parent(tab.stab_z))
         end
     end
 end
