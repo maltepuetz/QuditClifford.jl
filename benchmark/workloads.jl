@@ -302,6 +302,62 @@ function register_rank_group!(suite, ds, ns; api::Module = QuditClifford)
     return suite
 end
 
+"""
+    monitored_measure_group(; d, n, T, seed = 20261119)
+
+`measure!` on the state left by 64 layers of the monitored brickwork circuit
+at `p = 0.15` (see [`rank_fixture`](@ref)), whose generators stay local: a
+random-outcome measurement replaces one generator and folds a power of it into
+the dozens of others that anticommute, while the pivot itself spans a handful
+of sites. Single-site `Z` and `X` and nearest-neighbour `ZZ` and `XX`, each at
+the first site from the middle of the chain where the outcome is random, so
+every leaf takes the noncommuting branch. `layer` times one further brickwork
+layer -- every bond's gate and the `Z` measurements of that layer, whose
+deterministic outcomes canonicalize a `StabilizerTableau` -- from the same
+state and the same RNG state in every sample.
+
+The circuit runs on a `DestabilizerTableau` and its generators are copied for
+a `StabilizerTableau`, so both types measure the identical state.
+"""
+function monitored_measure_group(; d::Int, n::Int, T, seed::Int = 20261119)
+    D, bonds, rng = monitored_setup(; d, n, seed, T = DestabilizerTableau)
+    monitored_layers!(D, bonds, rng, 64; p = 0.15)
+    tab = T === DestabilizerTableau ? D :
+          StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase, check = false)
+    sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
+    two(q, x, z) = DoublePauli(q, x, z, mod1(q + 1, n), x, z)
+    ops = (("Z", [SinglePauli(q, 0, 1) for q in sites]),
+           ("X", [SinglePauli(q, 1, 0) for q in sites]),
+           ("ZZ", [two(q, 0, 1) for q in sites]),
+           ("XX", [two(q, 1, 0) for q in sites]))
+    g = BenchmarkGroup()
+    snap = snapshot(tab)
+    for (name, candidates) in ops
+        g["measure!/$name"] = @benchmarkable(
+            measure!($tab, $(first_anticommuting(tab, candidates)); outcome = 0, phase_policy = 1),
+            setup = (restore!($snap)), evals = 1)
+    end
+    r0 = copy(rng)
+    g["layer"] = @benchmarkable(monitored_layers!($tab, $bonds, $rng, 1; p = 0.15),
+                                setup = (restore!($snap); copy!($rng, $r0)), evals = 1)
+    return g
+end
+
+"""
+    register_monitored_measure_group!(suite, types, ds, ns; api = QuditClifford)
+
+One [`monitored_measure_group`](@ref) per tableau type, `d` and `n`. A baseline
+without `random_clifford!`, which the circuit refills its gates with, skips
+the group.
+"""
+function register_monitored_measure_group!(suite, types, ds, ns; api::Module = QuditClifford)
+    isdefined(api, :random_clifford!) || return suite
+    for T in types, d in ds, n in ns
+        suite["monitored"]["$(nameof(T))/d=$d/n=$n"] = monitored_measure_group(; d, n, T)
+    end
+    return suite
+end
+
 # `verify=true` deliberately: the default `is_pure` is `m == n`, which there is
 # nothing to benchmark in. The verifying form runs the commutation Gram and the
 # rank elimination. One probe leaf only, at a small n. See `micro_group`.

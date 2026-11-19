@@ -541,6 +541,10 @@ end
 `_symplectic_col_col` restricted to the qudit indices in `supp[1:nsupp]`.
 Equal to the full pairing whenever `supp` covers the support of column `colB`
 of `B` (see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
+
+Callers sweep `colA` over many columns with a fixed `colB`, so each `A` entry
+is a cache miss while `B[:, colB]` stays cached: an `A` entry is loaded only
+when the `B` entry it pairs with is nonzero.
 """
 @inline function _symplectic_col_col_support(
     A::AbstractMatrix{<:Integer}, colA::Int,
@@ -548,9 +552,12 @@ of `B` (see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
     n::Int, supp::Vector{Int}, nsupp::Int,
 )
     s = 0
-    @inbounds @simd for k in 1:nsupp
+    @inbounds for k in 1:nsupp
         q = supp[k]
-        s += A[q, colA] * B[n+q, colB] - A[n+q, colA] * B[q, colB]
+        bz = B[n+q, colB]
+        bx = B[q, colB]
+        bz == 0 || (s += A[q, colA] * bz)
+        bx == 0 || (s -= A[n+q, colA] * bx)
     end
     return s
 end

@@ -639,3 +639,38 @@ end
         end
     end
 end
+
+# The noncommuting update folds the pivot into each anticommuting generator on
+# the pivot's sites only when that support is small (a local state), and over
+# all rows otherwise; it patches `xdotz_cache` instead of recomputing it, and
+# restricts the dual re-orthogonalization to the same sites. Monitored-circuit
+# states reach the first path and random states the second, so both run here
+# for every Pauli type, with duality and the cache checked after each step.
+@testset "Monitored-circuit measurements keep duality and the cache" begin
+    for d in (2, 3, 5), n in (12, 33), flavor in (:local, :random)
+        rng = Xoshiro(20261119 + d + n)
+        tab = DestabilizerTableau(d, n; state = :Z, storephase = isodd(n) || d != 5)
+        if flavor === :random
+            random_state!(rng, tab)
+        end
+        for layer in 1:6
+            for q in (isodd(layer) ? 1 : 2):2:(n - 1)
+                apply!(tab, random_clifford(rng, d, [q, q + 1]))
+            end
+            for q in 1:n
+                rand(rng) < 0.3 || continue
+                r = q + 1 <= n ? q + 1 : 1
+                op = rand(rng, (SinglePauli(q, 0, 1), SinglePauli(q, 1, 0),
+                                DoublePauli(q, 0, 1, r, 0, 1), DoublePauli(q, 1, 0, r, 1, 0),
+                                TriplePauli(q, 1, 1, r, 0, 1, mod1(q + 2, n), 1, 0),
+                                NPauli((q, r, mod1(q + 2, n), mod1(q + 3, n)),
+                                       (1, 0, 1, 2), (0, 1, 1, 1)),
+                                _hermitian_pauli([i in (q, n + r) ? 1 : 0 for i in 1:(2n)], d)))
+                measure!(rng, tab, op; phase_policy = 1)
+                @test tab.m == n
+                _assert_duality(tab)
+                _assert_active_cache(tab)
+            end
+        end
+    end
+end
