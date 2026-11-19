@@ -240,6 +240,63 @@ end
     return addmul_mod_sites!(dst, src, sites, nsites, n, d - a, d)
 end
 
+# Split form for a generator whose X and Z parts are separate vectors of length
+# `n`: the same tiers as the stacked form, touching `dstx[q]`/`dstz[q]` for each
+# site `q` in `sites[1:nsites]`. `dstx` and `dstz` must not alias `srcx` or
+# `srcz`, and the sites are distinct and lie in `1:n` (unchecked, `@inbounds`).
+@inline function addmul_mod_sites!(dstx::AbstractVector{Int}, dstz::AbstractVector{Int},
+                                   srcx::AbstractVector{Int}, srcz::AbstractVector{Int},
+                                   sites::AbstractVector{Int}, nsites::Int,
+                                   a::Int, d::Int)
+    a == 0 && return nothing
+    if a == 1
+        @inbounds for k in 1:nsites
+            q = sites[k]
+            r = dstx[q] + srcx[q]
+            dstx[q] = r - ifelse(r >= d, d, 0)
+            r = dstz[q] + srcz[q]
+            dstz[q] = r - ifelse(r >= d, d, 0)
+        end
+    elseif a == d - 1
+        @inbounds for k in 1:nsites
+            q = sites[k]
+            r = dstx[q] - srcx[q]
+            dstx[q] = r + ifelse(r < 0, d, 0)
+            r = dstz[q] - srcz[q]
+            dstz[q] = r + ifelse(r < 0, d, 0)
+        end
+    elseif _barrett_valid(d)
+        M = _barrett_mul(d)
+        @inbounds for k in 1:nsites
+            q = sites[k]
+            t = a * srcx[q]
+            t = t - ((t * M) >> _BARRETT_K) * d
+            r = dstx[q] + t
+            dstx[q] = r - ifelse(r >= d, d, 0)
+            t = a * srcz[q]
+            t = t - ((t * M) >> _BARRETT_K) * d
+            r = dstz[q] + t
+            dstz[q] = r - ifelse(r >= d, d, 0)
+        end
+    else
+        @inbounds for k in 1:nsites
+            q = sites[k]
+            dstx[q] = mod(dstx[q] + mod(a * srcx[q], d), d)
+            dstz[q] = mod(dstz[q] + mod(a * srcz[q], d), d)
+        end
+    end
+    return nothing
+end
+
+@inline function submul_mod_sites!(dstx::AbstractVector{Int}, dstz::AbstractVector{Int},
+                                   srcx::AbstractVector{Int}, srcz::AbstractVector{Int},
+                                   sites::AbstractVector{Int}, nsites::Int,
+                                   a::Int, d::Int)
+    a == 0 && return nothing
+    # dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d.
+    return addmul_mod_sites!(dstx, dstz, srcx, srcz, sites, nsites, d - a, d)
+end
+
 ##############################################
 # dst .= mod.(a .* src, d)   (overwrites)    #
 ##############################################

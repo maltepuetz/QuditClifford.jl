@@ -75,3 +75,8 @@ function _load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{
     _load_generator_matrix!(tab.destab, D)
     return tab
 end
+
+# Block and phase views of a tableau's storage.
+_stab(tab::AbstractTableau) = _stacked_views(tab.stab, tab.n, tab.storephase)[1]
+_destab(tab::DestabilizerTableau) = _stacked_views(tab.destab, tab.n, false)[1]
+_phase(tab::AbstractTableau) = _stacked_views(tab.stab, tab.n, tab.storephase)[2]

@@ -34,6 +34,7 @@ import PrecompileTools
 # include the sub files
 include("modular.jl")
 include("helper.jl")
+include("xz_block.jl")
 include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("rank_workspaces.jl")
