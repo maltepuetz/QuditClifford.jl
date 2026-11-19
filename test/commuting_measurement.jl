@@ -22,25 +22,28 @@ function cmref_after_append!(tab::DestabilizerTableau, newcol::Int, res::Abstrac
     n = tab.n
     d = tab.d
     m = newcol - 1
-    pair(v, col) = sum(v[q] * tab.stab[n+q, col] - v[n+q] * tab.stab[q, col] for q in 1:n)
+    S = stabilizer_matrix(tab)
+    pair(v, col) = sum(v[q] * S[n+q, col] - v[n+q] * S[q, col] for q in 1:n)
     q = findfirst(i -> res[i] != 0 || res[n+i] != 0, 1:n)
     q === nothing && throw(ArgumentError("Failed to construct destabilizer: residual is zero."))
+    D = destabilizer_matrix(tab)
     v = zeros(Int, 2n)
     res[q] != 0 ? (v[n+q] = 1) : (v[q] = 1)
     for j in 1:m
         t = mod(pair(v, j), d)
         t == 0 && continue
-        v .= mod.(v .- t .* tab.destab[1:(2n), j], d)
+        v .= mod.(v .- t .* D[1:(2n), j], d)
     end
     β = mod(pair(v, newcol), d)
     β == 0 && throw(ArgumentError("Failed to construct destabilizer: β = 0."))
-    tab.destab[1:(2n), newcol] .= mod.(invmod(β, d) .* v, d)
+    D[1:(2n), newcol] .= mod.(invmod(β, d) .* v, d)
     for j in 1:m
-        t = mod(pair(view(tab.destab, :, j), newcol), d)
+        t = mod(pair(view(D, :, j), newcol), d)
         t == 0 && continue
-        tab.destab[1:(2n), j] .= mod.(tab.destab[1:(2n), j] .- t .* tab.destab[1:(2n), newcol], d)
+        D[1:(2n), j] .= mod.(D[1:(2n), j] .- t .* D[1:(2n), newcol], d)
     end
-    tab.xdotz_cache[newcol] = CM.dot_xz_col(tab.stab, n, newcol, d)
+    QuditClifford._load_destabilizer_matrix!(tab, D)
+    tab.xdotz_cache[newcol] = CM.dot_xz_col(CM._stab(tab), newcol, d)
     return nothing
 end
 
@@ -75,7 +78,11 @@ function cmref_commuting!(rng, tab, op; outcome = nothing, phase_policy = 0)
     newcol = m + 1
     tab.m = newcol
     CM.set_operator!(tab, newcol, op)
-    tab.storephase && (tab.stab[2n+1, newcol] = CM._measured_generator_phase(t, kop, d))
+    if tab.storephase
+        S = stabilizer_matrix(tab)
+        S[2n+1, newcol] = CM._measured_generator_phase(t, kop, d)
+        QuditClifford._load_stabilizer_matrix!(tab, S)
+    end
     cmref_after_append!(tab, newcol, res)
     tab.iscanonical = false
     return t
@@ -121,7 +128,7 @@ function cmref_span_op(rng, tab)
     d = tab.d
     xz = zeros(Int, 2n)
     for j in randperm(rng, tab.m)[1:min(tab.m, rand(rng, 1:4))]
-        xz .= mod.(xz .+ rand(rng, 1:(d - 1)) .* tab.stab[1:(2n), j], d)
+        xz .= mod.(xz .+ rand(rng, 1:(d - 1)) .* stabilizer_matrix(tab)[1:(2n), j], d)
     end
     return GeneralPauli(xz, rand(rng, -5:5))
 end
@@ -154,9 +161,9 @@ function cmref_state(rng, TT, d, n, flavor, storephase)
 end
 
 function cmref_same(a, b)
-    a.m == b.m && a.stab == b.stab && a.iscanonical == b.iscanonical &&
+    a.m == b.m && stabilizer_matrix(a) == stabilizer_matrix(b) && a.iscanonical == b.iscanonical &&
         a.xdotz_cache[1:a.m] == b.xdotz_cache[1:b.m] &&
-        (!(a isa DestabilizerTableau) || a.destab == b.destab)
+        (!(a isa DestabilizerTableau) || destabilizer_matrix(a) == destabilizer_matrix(b))
 end
 
 cmref_try(f) = Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
@@ -175,10 +182,12 @@ end
 function cmref_hermitian!(tab)
     (tab.d == 2 && tab.storephase) || return tab
     n = tab.n
+    S = stabilizer_matrix(tab)
     for j in 1:tab.m
-        isodd(tab.stab[2n+1, j] - CM.dot_xz_col(tab.stab, n, j, 2)) || continue
-        tab.stab[2n+1, j] = mod(tab.stab[2n+1, j] + 1, 4)
+        isodd(S[2n+1, j] - CM.dot_xz_col(CM._stacked_views(S, n, false)[1], j, 2)) || continue
+        S[2n+1, j] = mod(S[2n+1, j] + 1, 4)
     end
+    QuditClifford._load_stabilizer_matrix!(tab, S)
     return tab
 end
 
@@ -211,11 +220,11 @@ function cmref_fuzz(TT, d, n, flavor, storephase, nsteps, seed)
             ok &= tab == ref && tab.m == ref.m
             if tab.m == m0
                 # fixed outcome or error: the generators are untouched
-                ok &= tab.stab == pre.stab && tab.iscanonical == pre.iscanonical
+                ok &= stabilizer_matrix(tab) == stabilizer_matrix(pre) && tab.iscanonical == pre.iscanonical
             else
-                ok &= tab.stab[:, 1:m0] == pre.stab[:, 1:m0] &&
-                      tab.stab[:, m0 + 1] == ref.stab[:, m0 + 1] &&
-                      all(iszero, tab.stab[:, (m0 + 2):n]) && !tab.iscanonical
+                ok &= stabilizer_matrix(tab)[:, 1:m0] == stabilizer_matrix(pre)[:, 1:m0] &&
+                      stabilizer_matrix(tab)[:, m0 + 1] == stabilizer_matrix(ref)[:, m0 + 1] &&
+                      all(iszero, stabilizer_matrix(tab)[:, (m0 + 2):n]) && !tab.iscanonical
             end
         end
         if !ok
@@ -274,20 +283,20 @@ end
         random_state!(rng, D)
         # Drop generators from the end, as in a mixed state.
         m = seed == 1 ? n : rand(rng, 0:n)
-        S = StabilizerTableau(d, D.stab[:, 1:m]; m = m, check = false)
+        S = StabilizerTableau(d, stabilizer_matrix(D)[:, 1:m]; m = m, check = false)
         @test !S.iscanonical
         for _ in 1:3
             xz = zeros(Int, 2n)
             for j in 1:m
-                xz .= mod.(xz .+ rand(rng, 0:(d - 1)) .* D.stab[1:(2n), j], d)
+                xz .= mod.(xz .+ rand(rng, 0:(d - 1)) .* stabilizer_matrix(D)[1:(2n), j], d)
             end
             op = GeneralPauli(xz, 0)
             CM.coeffs_from_generators!(D, op)
-            stab_before = copy(S.stab)
+            stab_before = copy(stabilizer_matrix(S))
             CM._span_coeffs_keep_basis!(S, op)
             @test S.c_workspace[1:m] == D.c_workspace[1:m]
             @test CM._in_span_from_coeffs!(S, op)
-            @test S.stab == stab_before
+            @test stabilizer_matrix(S) == stab_before
             @test !S.iscanonical
         end
     end
@@ -300,11 +309,11 @@ end
         rng = Xoshiro(n)
         D = DestabilizerTableau(2, n; state = :Z)
         random_state!(rng, D)
-        S = StabilizerTableau(2, copy(D.stab); m = n, check = false)
-        xz = mod.(D.stab[1:(2n), :] * rand(rng, 0:1, n), 2)
+        S = StabilizerTableau(2, copy(stabilizer_matrix(D)); m = n, check = false)
+        xz = mod.(stabilizer_matrix(D)[1:(2n), :] * rand(rng, 0:1, n), 2)
         CM.coeffs_from_generators!(D, GeneralPauli(xz, 0))
         for T in (Int32, Int64)
-            CM._copy_generator_rows!(S.bit_workspace, S.stab, n, n)
+            CM._copy_generator_rows!(S.bit_workspace, CM._stab(S), n)
             c = zeros(Int, n)
             rank = CM._solve_generator_rows!(S.bit_workspace, copy(xz), zeros(Int, n), c,
                                              zeros(T, 2n), n, n)
@@ -326,7 +335,7 @@ end
     # no pivot takes lead 2, and the solve still finds op = g1.
     for d in (2, 3, 257)
         n = 6
-        raw = copy(StabilizerTableau(d, n; state = :Z).stab)
+        raw = copy(stabilizer_matrix(StabilizerTableau(d, n; state = :Z)))
         raw[:, 2] = raw[:, 1]
         S = StabilizerTableau(d, raw; m = n, check = false)
         S.iscanonical = false
@@ -347,17 +356,17 @@ end
             m < 0 && continue
             S.m = m
             ws = ws_of(S)
-            CM._copy_generator_rows!(ws, S.stab, n, m)
+            CM._copy_generator_rows!(ws, CM._stab(S), m)
             h = size(ws, 1) >> 1
             for q in 1:n, j in 1:m
                 if d == 2
                     w = (j - 1) >> 6 + 1
                     b = (j - 1) & 63
-                    @test (ws[w, q] >> b) & 1 == S.stab[q, j]
-                    @test (ws[h + w, q] >> b) & 1 == S.stab[n + q, j]
+                    @test (ws[w, q] >> b) & 1 == stabilizer_matrix(S)[q, j]
+                    @test (ws[h + w, q] >> b) & 1 == stabilizer_matrix(S)[n + q, j]
                 else
-                    @test ws[j, q] == S.stab[q, j]
-                    @test ws[h + j, q] == S.stab[n + q, j]
+                    @test ws[j, q] == stabilizer_matrix(S)[q, j]
+                    @test ws[h + j, q] == stabilizer_matrix(S)[n + q, j]
                 end
             end
             if d == 2 && m % 64 != 0
@@ -375,33 +384,33 @@ end
         n = 12
         S = StabilizerTableau(d, n; state = :Z)
         random_state!(rng, S)
-        before = copy(S.stab)
+        before = copy(stabilizer_matrix(S))
         @test !S.iscanonical
         # Fixed outcome: columns, order and flag unchanged.
-        xz = mod.(S.stab[1:(2n), 3] .+ S.stab[1:(2n), 7], d)
+        xz = mod.(stabilizer_matrix(S)[1:(2n), 3] .+ stabilizer_matrix(S)[1:(2n), 7], d)
         # Hermitian at d = 2: phase exponent ≡ x·z (mod 2).
-        op = GeneralPauli(xz, d == 2 ? CM.dot_xz_col(reshape(xz, :, 1), n, 1, 2) : 0)
+        op = GeneralPauli(xz, d == 2 ? mod(sum(xz[1:n] .* xz[n+1:2n]), 2) : 0)
         expected = expect_int!(copy(S), op)
         t = measure!(S, op)
-        @test S.stab == before
+        @test stabilizer_matrix(S) == before
         @test !S.iscanonical
         @test (d == 2 ? 2t : t) == expected
         # A canonical tableau stays canonical.
         canonicalize!(S)
-        canon = copy(S.stab)
+        canon = copy(stabilizer_matrix(S))
         measure!(S, op)
         @test S.iscanonical
-        @test S.stab == canon
+        @test stabilizer_matrix(S) == canon
         # Appending: the old columns stay as they were.
-        M = StabilizerTableau(d, S.stab[:, 1:5]; m = 5, check = false)
+        M = StabilizerTableau(d, stabilizer_matrix(S)[:, 1:5]; m = 5, check = false)
         M.iscanonical = false
-        old = copy(M.stab)
+        old = copy(stabilizer_matrix(M))
         target = findfirst(q -> CM._commutes_with_generators(M, SinglePauli(q, 0, 1)) &&
                                 !CM.in_span_and_coeffs!(copy(M), SinglePauli(q, 0, 1)), 1:n)
         @test target !== nothing
         measure!(M, SinglePauli(target, 0, 1); outcome = 0)
         @test M.m == 6
-        @test M.stab[:, 1:5] == old[:, 1:5]
+        @test stabilizer_matrix(M)[:, 1:5] == old[:, 1:5]
         @test !M.iscanonical
     end
 end
@@ -423,7 +432,7 @@ end
         for q in 1:2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
         end
-        inspan = GeneralPauli(mod.(tab.stab[1:(2n), 2] .+ tab.stab[1:(2n), 9], d), 0)
+        inspan = GeneralPauli(mod.(stabilizer_matrix(tab)[1:(2n), 2] .+ stabilizer_matrix(tab)[1:(2n), 9], d), 0)
         @test cmref_allocs(rng, tab, inspan) == 0
         # Mixed: an operator outside the span is appended.
         mixed = TT(d, n; state = :mixed)

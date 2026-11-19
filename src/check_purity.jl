@@ -60,7 +60,7 @@ end
 # has to be computed, not both orientations of it.
 #
 # `P` is written over its whole `m x m` block and needs no initialization. It
-# must not alias `stab`.
+# must not alias the block.
 #
 # Only the scan early-exits; the product always runs in full. The one caller
 # that sees non-commuting input is construction validation, which raises as
@@ -69,17 +69,19 @@ end
 # `s` accumulates `n` terms of size up to `(d-1)^2`, so this sits inside the
 # package-wide arithmetic envelope documented on `max_safe_dimension`.
 @inline function _first_noncommuting_pair(
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
     d::Int,
     P::AbstractMatrix{Int},
 )
     m <= 1 && return (0, 0)
+    n = _nq(b)
+    x = b.x
+    z = b.z
     @turbo for j in 1:m, i in 1:m
         s = 0
         for q in 1:n
-            s += stab[q, j] * stab[n+q, i]
+            s += x[q, j] * z[q, i]
         end
         P[j, i] = s
     end
@@ -98,7 +100,7 @@ function is_commuting(tab::AbstractTableau)
     # eliminates in the same buffer for d > 255, and no other consumer holds it
     # across this call.
     return _first_noncommuting_pair(
-        tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m)) == (0, 0)
+        _stab(tab), m, tab.d, view(tab.workspace, 1:m, 1:m)) == (0, 0)
 end
 
 # Rank of the active generator columns over GF(d). Consumes the rank
@@ -126,22 +128,22 @@ is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
 function _validate_generators!(tab::AbstractTableau)
     m = tab.m
     # A qubit generator must also be Hermitian, a ≡ x·z (mod 2): otherwise it
-    # squares to -I and stabilizes nothing. Without a phase row there is no `a`
+    # squares to -I and stabilizes nothing. Without stored phases there is no `a`
     # to check.
     if tab.d == 2 && tab.storephase
-        n, stab = tab.n, tab.stab
+        b, phase = _stab(tab), _phase(tab)
         for j in 1:m
-            xz = dot_xz_col(stab, n, j, 2)
-            mod(stab[2n+1, j], 2) == xz && continue
+            xz = dot_xz_col(b, j, 2)
+            mod(phase[j], 2) == xz && continue
             throw(ArgumentError(
                 "Qubit stabilizer generators must be Hermitian, but generator $j " *
-                "has phase exponent $(stab[2n+1, j]) while x·z = $xz (mod 2), so " *
+                "has phase exponent $(phase[j]) while x·z = $xz (mod 2), so " *
                 "it squares to -I. Pass check=false to skip this check."))
         end
     end
     if m > 1
         pair = _first_noncommuting_pair(
-            tab.stab, tab.n, m, tab.d, view(tab.workspace, 1:m, 1:m))
+            _stab(tab), m, tab.d, view(tab.workspace, 1:m, 1:m))
         if pair != (0, 0)
             throw(ArgumentError(
                 "Stabilizer generators must commute, but generators $(pair[1]) and " *

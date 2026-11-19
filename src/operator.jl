@@ -365,7 +365,7 @@ end
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::NPauli{D}) where D
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::GeneralPauli)
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::AbstractVector{<:Integer})
-Set the i-th generator in the tab.stab to the given operator `op`, or set
+Set the i-th stabilizer generator of the tableau to the given operator `op`, or set
 the vector dst to the given operator `op`.
 """
 function set_operator! end
@@ -377,8 +377,8 @@ function set_operator! end
 # Throw an `ArgumentError` unless `op` is a Pauli on a register of `n` qudits:
 # every qudit index in `1:n` and none repeated, or a dense vector of length `2n`.
 # Callers run it before touching any state, since the kernels index under
-# `@turbo`/`@inbounds` and a sparse index of `n + 1` lands in the Z block or
-# phase row without tripping a bounds check. O(k²) for a k-qudit sparse Pauli,
+# `@turbo`/`@inbounds` and a sparse index of `n + 1` lands in a padding row or
+# a neighbouring column of the same block without tripping a bounds check. O(k²) for a k-qudit sparse Pauli,
 # O(1) for a dense one, and allocation-free.
 function _check_pauli_support(op::FewQuditPauli, n::Int)
     qudits = _few_qudit_pauli_data(op)[1]
@@ -527,67 +527,59 @@ end
 end
 
 #######################################
-# copy into StabilizerTableau.stab #
+# copy into the stabilizer generators #
 #######################################
 @inline function set_operator!(tab::AbstractTableau, i::Int, op::SinglePauli)
-    n = tab.n
     d = tab.d
-    @turbo for j in axes(tab.stab, 1)
-        tab.stab[j, i] = 0
-    end
-    tab.stab[op.qudit, i] = mod(op.x, d)
-    tab.stab[op.qudit+n, i] = mod(op.z, d)
+    stab = _stab(tab)
+    _zero_gen!(stab, i)
+    _xset!(stab, mod(op.x, d), op.qudit, i)
+    _zset!(stab, mod(op.z, d), op.qudit, i)
     if tab.storephase
-        tab.stab[2n+1, i] = mod(op.phase, phase_modulus(d))
+        _phase(tab)[i] = mod(op.phase, phase_modulus(d))
     end
     nothing
 end
 @inline function set_operator!(tab::AbstractTableau, i::Int, op::DoublePauli)
-    n = tab.n
     d = tab.d
-    @turbo for j in axes(tab.stab, 1)
-        tab.stab[j, i] = 0
-    end
-    tab.stab[op.qudit1, i] = mod(op.x1, d)
-    tab.stab[op.qudit2, i] = mod(op.x2, d)
-    tab.stab[op.qudit1+n, i] = mod(op.z1, d)
-    tab.stab[op.qudit2+n, i] = mod(op.z2, d)
+    stab = _stab(tab)
+    _zero_gen!(stab, i)
+    _xset!(stab, mod(op.x1, d), op.qudit1, i)
+    _xset!(stab, mod(op.x2, d), op.qudit2, i)
+    _zset!(stab, mod(op.z1, d), op.qudit1, i)
+    _zset!(stab, mod(op.z2, d), op.qudit2, i)
     if tab.storephase
-        tab.stab[2n+1, i] = mod(op.phase, phase_modulus(d))
+        _phase(tab)[i] = mod(op.phase, phase_modulus(d))
     end
     nothing
 end
 @inline function set_operator!(tab::AbstractTableau, i::Int, op::TriplePauli)
-    n = tab.n
     d = tab.d
-    @turbo for j in axes(tab.stab, 1)
-        tab.stab[j, i] = 0
-    end
-    tab.stab[op.qudit1, i] = mod(op.x1, d)
-    tab.stab[op.qudit2, i] = mod(op.x2, d)
-    tab.stab[op.qudit3, i] = mod(op.x3, d)
-    tab.stab[op.qudit1+n, i] = mod(op.z1, d)
-    tab.stab[op.qudit2+n, i] = mod(op.z2, d)
-    tab.stab[op.qudit3+n, i] = mod(op.z3, d)
+    stab = _stab(tab)
+    _zero_gen!(stab, i)
+    _xset!(stab, mod(op.x1, d), op.qudit1, i)
+    _xset!(stab, mod(op.x2, d), op.qudit2, i)
+    _xset!(stab, mod(op.x3, d), op.qudit3, i)
+    _zset!(stab, mod(op.z1, d), op.qudit1, i)
+    _zset!(stab, mod(op.z2, d), op.qudit2, i)
+    _zset!(stab, mod(op.z3, d), op.qudit3, i)
     if tab.storephase
-        tab.stab[2n+1, i] = mod(op.phase, phase_modulus(d))
+        _phase(tab)[i] = mod(op.phase, phase_modulus(d))
     end
     nothing
 end
 @inline function set_operator!(tab::AbstractTableau, i::Int, op::NPauli{D}) where D
-    n = tab.n
     d = tab.d
-    @turbo for j in axes(tab.stab, 1)
-        tab.stab[j, i] = 0
+    stab = _stab(tab)
+    _zero_gen!(stab, i)
+    @inbounds for k in 1:D
+        _xset!(stab, mod(op.xs[k], d), op.qudits[k], i)
     end
-    @turbo for k in 1:D
-        tab.stab[op.qudits[k], i] = mod(op.xs[k], d)
-    end
-    @turbo for k in 1:D
-        tab.stab[op.qudits[k]+n, i] = mod(op.zs[k], d)
+    @inbounds for k in 1:D
+        _zset!(stab, mod(op.zs[k], d), op.qudits[k], i)
     end
     if tab.storephase
-        tab.stab[2n+1, i] = mod(op.phase, phase_modulus(d))
+        _phase(tab)[i] = mod(op.phase, phase_modulus(d))
     end
     nothing
 end
@@ -598,14 +590,18 @@ end
     len_op == 2n || len_op == 2n + 1 || throw(ArgumentError(
         "Pauli vector has length $len_op, expected 2n = $(2n) or 2n + 1 = $(2n + 1)."))
 
-    stab = tab.stab
-    @turbo for j in 1:2n
-        stab[j, i] = mod(op[j], d)
+    xg = _xgen(_stab(tab), i)
+    zg = _zgen(_stab(tab), i)
+    @turbo for q in 1:n
+        xg[q] = mod(op[q], d)
+    end
+    @turbo for q in 1:n
+        zg[q] = mod(op[n+q], d)
     end
     if tab.storephase && (len_op == 2n + 1)
-        stab[2n+1, i] = mod(op[2n+1], phase_modulus(d))
+        _phase(tab)[i] = mod(op[2n+1], phase_modulus(d))
     elseif tab.storephase
-        stab[2n+1, i] = 0
+        _phase(tab)[i] = 0
     end
     nothing
 end
@@ -613,14 +609,18 @@ end
 @inline function set_operator!(tab::AbstractTableau, i::Int, op::GeneralPauli)
     n = tab.n
     d = tab.d
-    stab = tab.stab
+    xg = _xgen(_stab(tab), i)
+    zg = _zgen(_stab(tab), i)
     _check_pauli_support(op, n)
 
-    @turbo for j in 1:2n
-        stab[j, i] = mod(op.xz[j], d)
+    @turbo for q in 1:n
+        xg[q] = mod(op.xz[q], d)
+    end
+    @turbo for q in 1:n
+        zg[q] = mod(op.xz[n+q], d)
     end
     if tab.storephase
-        stab[2n+1, i] = mod(op.phase, phase_modulus(d))
+        _phase(tab)[i] = mod(op.phase, phase_modulus(d))
     end
     nothing
 end

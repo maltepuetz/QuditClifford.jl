@@ -35,9 +35,9 @@ end
                     out = measure!(tab, Int[1, 0]) # measure X
                     @test out in 0:1
                     @test tab.m == 1
-                    @test tab.stab[1, 1] == 1  # X
-                    @test tab.stab[2, 1] == 0
-                    @test tab.stab[3, 1] == mod(2 * out, 4)
+                    @test stabilizer_matrix(tab)[1, 1] == 1  # X
+                    @test stabilizer_matrix(tab)[2, 1] == 0
+                    @test stabilizer_matrix(tab)[3, 1] == mod(2 * out, 4)
                     push!(outcomes, out)
                 end
                 @test sort!(unique(outcomes)) == [0, 1]  # ensure we got both outcomes at least once
@@ -47,9 +47,9 @@ end
                 tab_det = TT(2, tab_det; m=1, storephase=true)
                 out_det = measure!(tab_det, Int[0, 1]) # measure Z
                 @test out_det == 0
-                @test tab_det.stab[1, 1] == 0
-                @test tab_det.stab[2, 1] == 1
-                @test tab_det.stab[3, 1] == 0
+                @test stabilizer_matrix(tab_det)[1, 1] == 0
+                @test stabilizer_matrix(tab_det)[2, 1] == 1
+                @test stabilizer_matrix(tab_det)[3, 1] == 0
 
                 # Maximally mixed qubit (m=0): commuting but not in span should append a generator.
                 outcomes2 = Int[]
@@ -60,9 +60,9 @@ end
                     out2 = measure!(tab2, Int[0, 1]) # measure Z
                     @test out2 in 0:1
                     @test tab2.m == 1
-                    @test tab2.stab[1, 1] == 0
-                    @test tab2.stab[2, 1] == 1
-                    @test tab2.stab[3, 1] == mod(2 * out2, 4)
+                    @test stabilizer_matrix(tab2)[1, 1] == 0
+                    @test stabilizer_matrix(tab2)[2, 1] == 1
+                    @test stabilizer_matrix(tab2)[3, 1] == mod(2 * out2, 4)
                     push!(outcomes2, out2)
                 end
                 @test sort!(unique(outcomes2)) == [0, 1]  # ensure we got both outcomes at least once
@@ -75,9 +75,9 @@ end
                     out_imm = measure!(tab_imm, op_imm; outcome=1, phase_policy=1)
                     @test out_imm == 1
                     @test op_imm.phase == 0
-                    @test tab_imm.stab[1, 1] == 1
-                    @test tab_imm.stab[2, 1] == 1
-                    @test tab_imm.stab[3, 1] == 3  # kgen = 2*outcome + fixed_phase = 2 + 1
+                    @test stabilizer_matrix(tab_imm)[1, 1] == 1
+                    @test stabilizer_matrix(tab_imm)[2, 1] == 1
+                    @test stabilizer_matrix(tab_imm)[3, 1] == 3  # kgen = 2*outcome + fixed_phase = 2 + 1
 
                     # Mutable operator: phase is also left unchanged.
                     tab_mut = reshape(Int[0, 1, 0], 3, 1)
@@ -87,9 +87,9 @@ end
                     @test out_mut == 1
                     @test op_mut.phase == 0
                     @test op_mut.xz == Int[1, 1]
-                    @test tab_mut.stab[1, 1] == 1
-                    @test tab_mut.stab[2, 1] == 1
-                    @test tab_mut.stab[3, 1] == 3
+                    @test stabilizer_matrix(tab_mut)[1, 1] == 1
+                    @test stabilizer_matrix(tab_mut)[2, 1] == 1
+                    @test stabilizer_matrix(tab_mut)[3, 1] == 3
                 end
 
                 @testset "Phase policy 0 warns without mutating input" begin
@@ -102,9 +102,9 @@ end
                     end
                     @test op_warn.phase == 0
                     @test op_warn.xz == Int[1, 1]
-                    @test tab_warn.stab[1, 1] == 1
-                    @test tab_warn.stab[2, 1] == 1
-                    @test tab_warn.stab[3, 1] == 2  # kgen = 2*outcome + original_phase
+                    @test stabilizer_matrix(tab_warn)[1, 1] == 1
+                    @test stabilizer_matrix(tab_warn)[2, 1] == 1
+                    @test stabilizer_matrix(tab_warn)[3, 1] == 2  # kgen = 2*outcome + original_phase
                 end
 
                 @testset "Phase policy validation and silent opt-out" begin
@@ -118,7 +118,7 @@ end
                         phase_policy=2,
                     )
                     @test out_silent == 1
-                    @test tab_silent.stab[:, 1] == Int[1, 1, 2]
+                    @test stabilizer_matrix(tab_silent)[:, 1] == Int[1, 1, 2]
                     @test invalid_op.phase == 0
 
                     tab_invalid = TT(2, 1; state=:product, basis=:Z)
@@ -143,15 +143,15 @@ end
                             outcome=0,
                             phase_policy=1,
                         ) == 0
-                        @test tab_sparse.stab[:, 1] == Int[1, 0, 0, 1, 0, 0, 1]
+                        @test stabilizer_matrix(tab_sparse)[:, 1] == Int[1, 0, 0, 1, 0, 0, 1]
                     end
                 end
 
                 @testset "Phase-free deterministic measurements" begin
                     tab_nophase = TT(2, 1; state=:product, basis=:Z, storephase=false)
-                    before = copy(tab_nophase.stab)
+                    before = copy(stabilizer_matrix(tab_nophase))
                     @test measure!(tab_nophase, SinglePauli(1, 0, 1); outcome=1) == 0
-                    @test tab_nophase.stab == before
+                    @test stabilizer_matrix(tab_nophase) == before
                 end
             end
 
@@ -170,9 +170,9 @@ end
                     out = measure!(tab, Int[1, 0]) # measure X
                     @test out in 0:2
                     @test tab.m == 1
-                    @test tab.stab[1, 1] == 1  # X
-                    @test tab.stab[2, 1] == 0
-                    @test tab.stab[3, 1] == mod(-out, 3)
+                    @test stabilizer_matrix(tab)[1, 1] == 1  # X
+                    @test stabilizer_matrix(tab)[2, 1] == 0
+                    @test stabilizer_matrix(tab)[3, 1] == mod(-out, 3)
                     push!(outcomes, out)
                 end
                 @test sort!(unique(outcomes)) == [0, 1, 2]  # ensure we got all outcomes at least once
@@ -182,9 +182,9 @@ end
                 tab_det = TT(3, tab_det; m=1, storephase=true)
                 out_det = measure!(tab_det, Int[0, 1]) # measure Z
                 @test out_det == 0
-                @test tab_det.stab[1, 1] == 0
-                @test tab_det.stab[2, 1] == 1
-                @test tab_det.stab[3, 1] == 0
+                @test stabilizer_matrix(tab_det)[1, 1] == 0
+                @test stabilizer_matrix(tab_det)[2, 1] == 1
+                @test stabilizer_matrix(tab_det)[3, 1] == 0
 
                 # Maximally mixed qutrit (m=0): commuting but not in span should append a generator.
                 outcomes2 = Int[]
@@ -195,9 +195,9 @@ end
                     out2 = measure!(tab2, Int[0, 1]) # measure Z
                     @test out2 in 0:2
                     @test tab2.m == 1
-                    @test tab2.stab[1, 1] == 0
-                    @test tab2.stab[2, 1] == 1
-                    @test tab2.stab[3, 1] == mod(-out2, 3)
+                    @test stabilizer_matrix(tab2)[1, 1] == 0
+                    @test stabilizer_matrix(tab2)[2, 1] == 1
+                    @test stabilizer_matrix(tab2)[3, 1] == mod(-out2, 3)
                     push!(outcomes2, out2)
                 end
                 @test sort!(unique(outcomes2)) == [0, 1, 2]  # ensure we got all outcomes at least once
@@ -210,7 +210,7 @@ end
     v = Int[1, 2, 0, 2, 1, 1]
     xz = Int[2, 0, 1, 1, 2, 2]
     expected = QuditClifford.commutation(v, xz)
-    matrix = hcat(v, reverse(v))
+    block = QuditClifford._stacked_views(hcat(v, reverse(v)), 3, false)[1]
 
     operators = (
         xz,
@@ -222,7 +222,7 @@ end
     # Sparse specializations must preserve the dense symplectic convention.
     for op in operators
         @test QuditClifford.commutation_vec_op(v, op) == expected
-        @test QuditClifford.commutation_col(matrix, 1, op) == expected
+        @test QuditClifford.commutation_col(block, 1, op) == expected
     end
 end
 
@@ -244,9 +244,9 @@ end
 
                 @test measure!(tab, op; outcome=2) == 2
                 @test tab.m == 2
-                @test tab.stab[:, 1] == Int[0, 0, 0, 1, 0, 0, 0]
-                @test tab.stab[:, 2] == Int[0, 0, 0, 0, 1, 1, 1]
-                push!(results, copy(tab.stab))
+                @test stabilizer_matrix(tab)[:, 1] == Int[0, 0, 0, 1, 0, 0, 0]
+                @test stabilizer_matrix(tab)[:, 2] == Int[0, 0, 0, 0, 1, 1, 1]
+                push!(results, copy(stabilizer_matrix(tab)))
             end
             @test all(==(first(results)), results)
         end
@@ -283,13 +283,13 @@ end
         end
 
         for i in 1:destab.m, j in 1:destab.m
-            value = mod(_measurement_symp(destab.destab, i, destab.stab, j, destab.n), d)
+            value = mod(_measurement_symp(destabilizer_matrix(destab), i, stabilizer_matrix(destab), j, destab.n), d)
             @test value == (i == j ? 1 : 0)
         end
 
         canonicalize!(stab)
         canonicalize!(destab)
-        @test stab.stab == destab.stab
+        @test stabilizer_matrix(stab) == stabilizer_matrix(destab)
     end
 end
 
@@ -403,9 +403,9 @@ end
 
                 @test measure!(tab, op; outcome=outcome, phase_policy=2) == expected
                 @test tab.m == ref.m
-                @test tab.stab == ref.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
                 if TT === DestabilizerTableau
-                    @test tab.destab == ref.destab
+                    @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
                     @test tab.xdotz_cache == ref.xdotz_cache
                 end
             end
@@ -436,7 +436,7 @@ end
             @test measure!(tab, SinglePauli(1, x, z); outcome=1) == 0
             canonicalize!(tab)
             canonicalize!(ref)
-            @test tab.stab == ref.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
         end
     end
 end
@@ -451,30 +451,30 @@ end
         d in (2, 3, 5)
         @testset "$label d=$d" begin
             tab = random_state!(rng, TT(d, n; storephase=false))
-            before = copy(tab.stab)
+            before = copy(stabilizer_matrix(tab))
 
             # products of generators with random, mostly nontrivial exponents
             for _ in 1:5
-                xz = mod.(tab.stab * rand(rng, 0:(d - 1), n), d)
+                xz = mod.(stabilizer_matrix(tab) * rand(rng, 0:(d - 1), n), d)
                 @test measure!(tab, GeneralPauli(xz, 0); outcome=d - 1) == 0
                 @test expect_int!(tab, GeneralPauli(xz, 0)) == 0
             end
 
             xz = rand(rng, 0:(d - 1), 2n)
-            while all(i -> mod(QuditClifford.commutation_col(tab.stab, i, xz), d) == 0, 1:n)
+            while all(i -> mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, xz), d) == 0, 1:n)
                 xz = rand(rng, 0:(d - 1), 2n)
             end
             @test expect_int!(tab, GeneralPauli(xz, 0)) == -1
 
             @test tab.m == n
-            @test tab.stab == before
+            @test stabilizer_matrix(tab) == before
             @test !tab.iscanonical
 
             canonicalize!(tab)
-            canonical = copy(tab.stab)
+            canonical = copy(stabilizer_matrix(tab))
             @test measure!(tab, SinglePauli(1, 0, 0)) == 0
             @test tab.iscanonical
-            @test tab.stab == canonical
+            @test stabilizer_matrix(tab) == canonical
         end
     end
 end
@@ -535,9 +535,9 @@ end
                 tab2, out2 = _meas_rng_trajectory(Xoshiro(2026 + d), TT, d)
                 @test out1 == out2
                 @test tab1.m == tab2.m
-                @test tab1.stab == tab2.stab
+                @test stabilizer_matrix(tab1) == stabilizer_matrix(tab2)
                 if TT === DestabilizerTableau
-                    @test tab1.destab == tab2.destab
+                    @test destabilizer_matrix(tab1) == destabilizer_matrix(tab2)
                 end
                 @test length(unique(out1)) > 1
             end
@@ -551,7 +551,7 @@ end
                     @test measure!(a, SinglePauli(q, 1, 0)) ==
                           measure!(rng, b, SinglePauli(q, 1, 0))
                 end
-                @test a.stab == b.stab
+                @test stabilizer_matrix(a) == stabilizer_matrix(b)
                 @test rng == Random.default_rng()
             end
 
@@ -563,7 +563,7 @@ end
                 t = measure!(rng, tab, SinglePauli(1, 1, 0))
                 @test t == rand(ref, 0:(d - 1))
                 @test rng == ref
-                @test tab.stab[2tab.n+1, 1] == (d == 2 ? 2t : mod(-t, d))
+                @test stabilizer_matrix(tab)[2tab.n+1, 1] == (d == 2 ? 2t : mod(-t, d))
 
                 # Commuting but outside the span: Z₃ on the mixed Z₁, Z₂ state.
                 raw = zeros(Int, 7, 3)
@@ -615,9 +615,9 @@ end
 
             @testset "A failing draw leaves the state unchanged" begin
                 tab = TT(d, 3; state=:product)
-                ref = copy(tab.stab)
+                ref = copy(stabilizer_matrix(tab))
                 @test_throws MeasDrawAttempted measure!(MeasNoDrawRNG(), tab, SinglePauli(1, 1, 0))
-                @test tab.stab == ref
+                @test stabilizer_matrix(tab) == ref
 
                 raw = zeros(Int, 7, 3)
                 raw[4, 1] = raw[5, 2] = 1
@@ -665,10 +665,10 @@ measval_invalid_ops() = (
             for op in measval_invalid_ops()
                 @test_throws ArgumentError measure!(tab, op; outcome=0)
                 @test_throws ArgumentError measure!(Xoshiro(1), tab, op)
-                @test tab.stab == before.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.m == before.m
                 if tab isa DestabilizerTableau
-                    @test tab.destab == before.destab
+                    @test destabilizer_matrix(tab) == destabilizer_matrix(before)
                 end
             end
         end
@@ -771,9 +771,9 @@ end
                 outcome in (-1, d, d + 1, typemax(Int), typemin(Int))
                 @test_throws ArgumentError measure!(tab, op; outcome=outcome)
                 @test_throws "outcome" measure!(Xoshiro(1), tab, [0, 0, 1, 0]; outcome=outcome)
-                @test tab.stab == before.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.m == before.m
-                tab isa DestabilizerTableau && @test tab.destab == before.destab
+                tab isa DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
         end
     end

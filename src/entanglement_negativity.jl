@@ -135,7 +135,7 @@ end
 # 1:m. Returns the last row written, offset + 2N.
 function _copy_site_rows!(tab::AbstractTableau, ws::AbstractMatrix, first::Int, N::Int, offset::Int)
     sites = view(tab.zacc_workspace, first:(first + N - 1))
-    return _copy_sites!(ws, tab.stab, tab.n, tab.m, sites, N, offset)
+    return _copy_sites!(ws, _stab(tab), tab.m, sites, N, offset)
 end
 
 # The dot products x_i·z_j and z_i·x_j of columns `ci` and `cj` of `ws`, with

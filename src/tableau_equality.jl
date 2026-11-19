@@ -12,23 +12,37 @@
 # function modifies its arguments: a tableau not already canonical is
 # canonicalized in a fresh copy.
 
-# Generator columns `1:m` of `A` and `B` agree entry for entry over `rows`.
-function _active_columns_equal(A::Matrix{Int}, B::Matrix{Int}, rows::Int, m::Int)
-    @inbounds for j in 1:m, i in 1:rows
-        A[i, j] == B[i, j] || return false
+# Generator columns `1:m` of `a` and `b`, with phases `pa` and `pb` when
+# `storephase`, agree entry for entry.
+function _active_columns_equal(a::_GMBlock, pa::AbstractVector{Int},
+                               b::_GMBlock, pb::AbstractVector{Int},
+                               m::Int, storephase::Bool)
+    n = _nq(a)
+    @inbounds for j in 1:m
+        for q in 1:n
+            _xget(a, q, j) == _xget(b, q, j) || return false
+        end
+        for q in 1:n
+            _zget(a, q, j) == _zget(b, q, j) || return false
+        end
+        if storephase
+            pa[j] == pb[j] || return false
+        end
     end
     return true
 end
 
-# The tableau's own matrix when it is already canonical, otherwise a canonical
-# copy. The scratch passed to `_canonicalize_tableau!` is fresh, so the
-# tableau's pivot table and x·z cache are left alone.
+# The tableau's own block and phase when it is already canonical, otherwise
+# canonical copies. The scratch passed to `_canonicalize_tableau!` is fresh, so
+# the tableau's pivot table and x·z cache are left alone.
 function _canonical_stab(tab::AbstractTableau)
-    tab.iscanonical && return tab.stab
-    S = copy(tab.stab)
-    _canonicalize_tableau!(S, tab.n, tab.m, tab.d, tab.storephase, tab.inversemod,
+    b, phase = _stab(tab), _phase(tab)
+    tab.iscanonical && return b, phase
+    S = XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
+    Sphase = copy(phase)
+    _canonicalize_tableau!(S, Sphase, tab.m, tab.d, tab.storephase, tab.inversemod,
                            zeros(Int, 2 * tab.n), zeros(Int, tab.n))
-    return S
+    return S, Sphase
 end
 
 """
@@ -79,18 +93,38 @@ function Base.:(==)(a::AbstractTableau, b::AbstractTableau)
     a === b && return true
     (a.d == b.d && a.n == b.n && a.m == b.m && a.storephase == b.storephase) ||
         return false
-    rows = size(a.stab, 1)
-    m = a.m
-    _active_columns_equal(a.stab, b.stab, rows, m) && return true
+    m, storephase = a.m, a.storephase
+    _active_columns_equal(_stab(a), _phase(a), _stab(b), _phase(b), m, storephase) &&
+        return true
     a.iscanonical && b.iscanonical && return false
-    return _active_columns_equal(_canonical_stab(a), _canonical_stab(b), rows, m)
+    ca, pa = _canonical_stab(a)
+    cb, pb = _canonical_stab(b)
+    return _active_columns_equal(ca, pa, cb, pb, m, storephase)
+end
+
+# Mix the active generators `1:m` of `S` into `h`: per generator the X entries,
+# then the Z entries, then the phase when `storephase`.
+function _hash_active(h::UInt, S::_GMBlock, phase::AbstractVector{Int},
+                      m::Int, storephase::Bool)
+    n = _nq(S)
+    @inbounds for j in 1:m
+        for q in 1:n
+            h = hash(_xget(S, q, j), h)
+        end
+        for q in 1:n
+            h = hash(_zget(S, q, j), h)
+        end
+        storephase && (h = hash(phase[j], h))
+    end
+    return h
 end
 
 function Base.hash(tab::AbstractTableau, h::UInt)
     h = hash(tab.storephase, hash(tab.m, hash(tab.n, hash(tab.d, hash(:AbstractTableau, h)))))
-    S = _canonical_stab(tab)
-    @inbounds for j in 1:tab.m, i in axes(S, 1)
-        h = hash(S[i, j], h)
-    end
-    return h
+    # A canonical tableau is hashed in place. Any other is hashed through a
+    # canonical copy, which `_canonical_stab` returns with a different block
+    # type, so returning here keeps this path free of allocation.
+    tab.iscanonical && return _hash_active(h, _stab(tab), _phase(tab), tab.m, tab.storephase)
+    S, phase = _canonical_stab(tab)
+    return _hash_active(h, S, phase, tab.m, tab.storephase)
 end

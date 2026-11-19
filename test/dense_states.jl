@@ -53,7 +53,7 @@ function ref_projector(tab)
     d, n = tab.d, tab.n
     Π = Matrix{ComplexF64}(I, d^n, d^n)
     for j in 1:tab.m
-        g = ref_pauli(d, tab.stab[1:n, j], tab.stab[(n+1):(2n), j], tab.stab[2n+1, j])
+        g = ref_pauli(d, stabilizer_matrix(tab)[1:n, j], stabilizer_matrix(tab)[(n+1):(2n), j], stabilizer_matrix(tab)[2n+1, j])
         Π = Π * sum(g^t for t in 0:d-1) / d
     end
     return Π
@@ -147,10 +147,11 @@ end
     for (label, TT) in DENSE_TABLEAU_TYPES, d in (2, 3)
         tab = dense_random_tableau(TT, d, 3, Xoshiro(10 + d))
         n, m = tab.n, tab.m
-        G = tab.stab
+        G = stabilizer_matrix(tab)
         gens = [ref_pauli(d, G[1:n, j], G[(n+1):(2n), j], G[2n+1, j]) for j in 1:m]
         seen = Matrix{ComplexF64}[]
-        QC._walk_group(G, n, m, d, zeros(Int, 2n), zeros(Int, m)) do xz, a
+        Gb, Gp = QC._stacked_views(G, n, true)
+        QC._walk_group(Gb, Gp, m, d, zeros(Int, 2n), zeros(Int, m)) do xz, a
             push!(seen, ref_pauli(d, xz[1:n], xz[(n+1):(2n)], a))
         end
         # exponent vectors in lexicographic order, last one fastest; d = 3,
@@ -162,7 +163,8 @@ end
     end
     # no generators: the identity, once
     visits = Ref(0)
-    QC._walk_group(zeros(Int, 5, 2), 2, 0, 3, zeros(Int, 4), Int[]) do xz, a
+    Gb, Gp = QC._stacked_views(zeros(Int, 5, 2), 2, true)
+    QC._walk_group(Gb, Gp, 0, 3, zeros(Int, 4), Int[]) do xz, a
         visits[] += 1
         @test all(iszero, xz) && a == 0
     end
@@ -173,12 +175,14 @@ end
     for trial in 1:6
         tab = dense_random_tableau(TT, d, 3, Xoshiro(100d + trial))
         before = dense_snapshot(tab)
-        G, k, cstar = QC._prepare_support(tab)
+        G, Gphase, k, cstar = QC._prepare_support(tab)
         n = tab.n
         @test dense_unchanged(tab, before)
-        @test G !== tab.stab
-        @test all(any(!iszero, G[1:n, j]) for j in 1:k)
-        @test all(all(iszero, G[1:n, j]) for j in (k+1):n)
+        G.x .+= d; G.z .+= d; Gphase .+= d
+        @test dense_unchanged(tab, before)       # G is not the tableau's storage
+        G.x .-= d; G.z .-= d; Gphase .-= d
+        @test all(any(!iszero, G.x[:, j]) for j in 1:k)
+        @test all(all(iszero, G.x[:, j]) for j in (k+1):n)
         # the support is exactly d^k labels, and cstar is the smallest
         Π = ref_projector(tab)
         support = [ref_digits(i, d, n) for i in 1:d^n if real(Π[i, i]) > 1e-9]
@@ -264,7 +268,7 @@ end
         before = ket(tab)
         again = ket(deepcopy(tab))
         @test again == before && isequal(again, before) && hash(again) == hash(before)
-        permuted = TT(d, tab.stab[:, randperm(rng, 3)]; m=3)
+        permuted = TT(d, stabilizer_matrix(tab)[:, randperm(rng, 3)]; m=3)
         @test ket(permuted) == before && hash(ket(permuted)) == hash(before)
         # canonicalize! returns nothing, so compare after the fact
         canonicalize!(tab)
@@ -659,14 +663,14 @@ end
     # a basis state and a 100-qutrit GHZ: polynomial, nothing proportional to d^n
     basis = StabilizerTableau(2, 64; state=:product, basis=:Z)
     ghz = StabilizerTableau(3, 100; state=:ghz)
-    @test dense_net_allocated(() -> ket(basis), () -> copy(basis.stab)) < small(64, 65)
-    @test dense_net_allocated(() -> ket(ghz), () -> copy(ghz.stab)) < small(100, 3 * 101)
+    @test dense_net_allocated(() -> ket(basis), () -> stabilizer_matrix(basis)) < small(64, 65)
+    @test dense_net_allocated(() -> ket(ghz), () -> stabilizer_matrix(ghz)) < small(100, 3 * 101)
 
     # full support: the dense vector alone. Routing through an exact ket would
     # add I8 (n + 1) 2^n bytes -- 90 KB here, far past the slack.
     plus = StabilizerTableau(2, 10; state=:product, basis=:X)
     @test dense_net_allocated(() -> state_vector(plus),
-                        () -> copy(plus.stab), () -> zeros(ComplexF64, 2^10)) < small(10)
+                        () -> stabilizer_matrix(plus), () -> zeros(ComplexF64, 2^10)) < small(10)
 
     # maximally mixed: the output and O(n + m) scratch
     mm = StabilizerTableau(2, 6; state=:mixed)

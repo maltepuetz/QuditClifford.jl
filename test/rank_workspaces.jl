@@ -39,7 +39,7 @@ end
 rw_rank(A, d) = rw_colreduce(A, d)[1]
 
 # Rows of the X and Z exponents of `sites` in the active generator columns.
-rw_restrict(tab, sites) = tab.stab[vcat(collect(sites), tab.n .+ collect(sites)), 1:tab.m]
+rw_restrict(tab, sites) = stabilizer_matrix(tab)[vcat(collect(sites), tab.n .+ collect(sites)), 1:tab.m]
 
 # S(A) = |A| - m + rank of the generators restricted to the complement of A.
 function rw_entropy(tab, A)
@@ -54,7 +54,7 @@ function rw_negativity(tab, A, B)
     (isempty(A) || isempty(B) || tab.m == 0) && return 0
     n, m, d = tab.n, tab.m, tab.d
     C = setdiff(1:n, A, B)
-    G = tab.stab[1:(2n), 1:m]
+    G = stabilizer_matrix(tab)[1:(2n), 1:m]
     rows_C = vcat(C, n .+ C)
     piv, R = rw_colreduce(vcat(G[rows_C, :], G), d, length(rows_C))
     H = R[(length(rows_C) + 1):end, (piv + 1):m]
@@ -185,12 +185,12 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                 N = length(sites)
                 W = zeros(UInt64, cld(2n, 64), max(m, 1))
                 fill!(W, typemax(UInt64))
-                nw = RW._pack_sites_gf2!(W, tab.stab, n, m, sites, N)
+                nw = RW._pack_sites_gf2!(W, QuditClifford._stab(tab), m, sites, N)
                 @test nw == cld(2N, 64)
                 for j in 1:m, k in 1:N
                     q = sites[k]
-                    @test (W[(2k - 2) >> 6 + 1, j] >> ((2k - 2) & 63)) & 1 == tab.stab[q, j]
-                    @test (W[(2k - 1) >> 6 + 1, j] >> ((2k - 1) & 63)) & 1 == tab.stab[n + q, j]
+                    @test (W[(2k - 2) >> 6 + 1, j] >> ((2k - 2) & 63)) & 1 == stabilizer_matrix(tab)[q, j]
+                    @test (W[(2k - 1) >> 6 + 1, j] >> ((2k - 1) & 63)) & 1 == stabilizer_matrix(tab)[n + q, j]
                 end
                 # bits past the last row are cleared
                 m > 0 && 2N % 64 != 0 && @test W[nw, 1] >> (2N % 64) == 0
@@ -227,20 +227,20 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
         W = fill(typemax(UInt64), cld(2n, 64) + 2, n)
         sites1 = sort(randperm(rng, n)[1:33])
         sites2 = sort(randperm(rng, n)[1:1])
-        o1 = RW._copy_sites!(W, tab.stab, n, m, sites1, 33, 0)
+        o1 = RW._copy_sites!(W, QuditClifford._stab(tab), m, sites1, 33, 0)
         @test o1 == 128 == RW._block_end(W, 0, 33)
-        o2 = RW._copy_sites!(W, tab.stab, n, m, sites2, 1, o1)
+        o2 = RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 1, o1)
         @test o2 == 192 == RW._block_end(W, o1, 1)
-        @test RW._copy_sites!(W, tab.stab, n, m, sites2, 0, o2) == o2
+        @test RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 0, o2) == o2
         U = rw_unpack_rows(W, o2)
         for j in 1:m
-            @test U[1:2:66, j] == tab.stab[sites1, j]
-            @test U[2:2:66, j] == tab.stab[n .+ sites1, j]
+            @test U[1:2:66, j] == stabilizer_matrix(tab)[sites1, j]
+            @test U[2:2:66, j] == stabilizer_matrix(tab)[n .+ sites1, j]
             @test all(iszero, U[67:128, j])
-            @test U[129:130, j] == [tab.stab[sites2[1], j], tab.stab[n + sites2[1], j]]
+            @test U[129:130, j] == [stabilizer_matrix(tab)[sites2[1], j], stabilizer_matrix(tab)[n + sites2[1], j]]
             @test all(iszero, U[131:192, j])
         end
-        @test_throws ArgumentError RW._copy_sites!(W, tab.stab, n, m, sites2, 1, 2)
+        @test_throws ArgumentError RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 1, 2)
         inv = RW.PrecomputedInvMod(2)
         @test RW._block_rank!(W, 128, 192, 1:m, 2, inv) ==
               rw_rank(rw_restrict(tab, sites2), 2)
@@ -297,9 +297,9 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                   (perm[1:1], perm[2:2], perm[3:min(n, 3)]),
                   (perm[1:(n - 2)], perm[(n - 1):(n - 1)], perm[n:n]))
             for tab in states, (A, B, C) in partitions
-                before = copy(tab.stab)
+                before = copy(stabilizer_matrix(tab))
                 @test rw_measured(tab, A, B, C) == rw_information(tab, A, B, C)
-                @test tab.stab == before
+                @test stabilizer_matrix(tab) == before
             end
         end
     end
@@ -323,7 +323,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
 
             for tab in states
                 n, m = tab.n, tab.m
-                before = copy(tab.stab)
+                before = copy(stabilizer_matrix(tab))
 
                 # entanglement_entropy on assorted subsystems, with and without
                 # the validity check, and the empty and full subsystems.
@@ -363,7 +363,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
 
                 @test RW._generator_rank(tab) == m
                 @test is_pure(tab; verify=true) == (m == n)
-                @test tab.stab == before
+                @test stabilizer_matrix(tab) == before
             end
         end
     end

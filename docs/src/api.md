@@ -18,6 +18,8 @@ StabilizerTableau
 reset!
 canonicalize!
 is_pure
+stabilizer_matrix
+destabilizer_matrix
 Base.copy(::StabilizerTableau)
 Base.copy!(::StabilizerTableau, ::StabilizerTableau)
 Base.:(==)(::AbstractTableau, ::AbstractTableau)

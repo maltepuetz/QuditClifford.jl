@@ -42,26 +42,26 @@ end
 function chan_assert_invariants(tab)
     n, d, m = tab.n, tab.d, tab.m
     @test 0 <= m <= n
-    rows = size(tab.stab, 1)
-    @test all(==(0), view(tab.stab, :, m+1:n))
-    @test all(x -> 0 <= x < d, view(tab.stab, 1:2n, 1:m))
+    rows = size(stabilizer_matrix(tab), 1)
+    @test all(==(0), view(stabilizer_matrix(tab), :, m+1:n))
+    @test all(x -> 0 <= x < d, view(stabilizer_matrix(tab), 1:2n, 1:m))
     if tab.storephase
-        @test all(x -> 0 <= x < (d == 2 ? 4 : d), view(tab.stab, rows, 1:m))
+        @test all(x -> 0 <= x < (d == 2 ? 4 : d), view(stabilizer_matrix(tab), rows, 1:m))
     end
     if tab isa DestabilizerTableau
-        @test all(==(0), view(tab.destab, :, m+1:n))
-        @test all(x -> 0 <= x < d, view(tab.destab, :, 1:m))
+        @test all(==(0), view(destabilizer_matrix(tab), :, m+1:n))
+        @test all(x -> 0 <= x < d, view(destabilizer_matrix(tab), :, 1:m))
         for i in 1:m, j in 1:m
             s = 0
             for q in 1:n
-                s += tab.destab[q, i] * tab.stab[n+q, j] - tab.destab[n+q, i] * tab.stab[q, j]
+                s += destabilizer_matrix(tab)[q, i] * stabilizer_matrix(tab)[n+q, j] - destabilizer_matrix(tab)[n+q, i] * stabilizer_matrix(tab)[q, j]
             end
             @test mod(s, d) == (i == j ? 1 : 0)
         end
         for j in 1:m
             xz = 0
             for q in 1:n
-                xz += tab.stab[q, j] * tab.stab[n+q, j]
+                xz += stabilizer_matrix(tab)[q, j] * stabilizer_matrix(tab)[n+q, j]
             end
             @test tab.xdotz_cache[j] == mod(xz, d)
         end
@@ -72,7 +72,7 @@ end
 # Phase-free StabilizerTableau holding the active XZ columns of `tab`.
 function chan_strip(tab::AbstractTableau)
     tab.m == 0 && return StabilizerTableau(tab.d, tab.n; state=:mixed, storephase=false)
-    return StabilizerTableau(tab.d, tab.stab[1:2tab.n, 1:tab.m]; m=tab.m, storephase=false)
+    return StabilizerTableau(tab.d, stabilizer_matrix(tab)[1:2tab.n, 1:tab.m]; m=tab.m, storephase=false)
 end
 
 # A random nonzero-phase operator in each representation, with the exponents
@@ -176,7 +176,7 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
                 before = copy(tab)
                 for op in (DoublePauli(1, 0, 1, 2, 0, d - 1), SinglePauli(1, 0, 0))
                     dephase!(tab, op)
-                    @test tab.stab == before.stab
+                    @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                     @test tab.m == before.m
                     @test tab.iscanonical
                 end
@@ -231,7 +231,7 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
                            DoublePauli(1, 1, 0, 3, 0, 1), DoublePauli(1, 1, 0, 1, 0, 1),
                            GeneralPauli([1, 0, 0], 0), Int[1, 0, 0])
                     @test_throws ArgumentError dephase!(tab, op)
-                    @test tab.stab == before.stab && tab.m == before.m
+                    @test stabilizer_matrix(tab) == stabilizer_matrix(before) && tab.m == before.m
                 end
             end
 
@@ -332,7 +332,7 @@ chan_allocs_traceout(t, sites) = @allocated traceout!(t, sites)
                 @test traceout!(copy(t0), 2:3) == traceout!(copy(t0), [2, 3])
                 before = copy(t0)
                 traceout!(t0, Int[])
-                @test t0.stab == before.stab
+                @test stabilizer_matrix(t0) == stabilizer_matrix(before)
                 @test t0.m == before.m
                 @test t0.iscanonical == before.iscanonical
             end
@@ -342,7 +342,7 @@ chan_allocs_traceout(t, sites) = @allocated traceout!(t, sites)
                 before = copy(tab)
                 for sites in ([0], [4], [1, 1], [1, 4], 0, 4, [1.5], [1, 2, 1])
                     @test_throws ArgumentError traceout!(tab, sites)
-                    @test tab.stab == before.stab
+                    @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                     @test tab.m == before.m
                 end
             end
@@ -470,7 +470,7 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                 @test t.iscanonical
                 for basis in (:Z, Symbol[])
                     reset!(t, Int[]; basis)
-                    @test t.stab == before.stab
+                    @test stabilizer_matrix(t) == stabilizer_matrix(before)
                     @test t.m == before.m
                     @test t.iscanonical == true
                 end
@@ -483,7 +483,7 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                                        (4, :Z), ([1, 2], :W), ([1, 2], [:X]),
                                        ([1, 2], [:X, :W]), (1, [:X, :Z]), ([1, 4], :X))
                     @test_throws ArgumentError reset!(tab, sites; basis)
-                    @test tab.stab == before.stab
+                    @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                     @test tab.m == before.m
                 end
             end
@@ -498,7 +498,7 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                 before = copy(t)
                 @test_throws ArgumentError reset!(t, [1, 2]; basis=(:X,))
                 @test_throws ArgumentError reset!(t, [1, 2]; basis=(:X, :Z, :Y))
-                @test t.stab == before.stab && t.m == before.m
+                @test stabilizer_matrix(t) == stabilizer_matrix(before) && t.m == before.m
             end
 
             @testset "reset! offset-axis basis" for d in (2, 3)
@@ -506,7 +506,7 @@ chan_allocs_reset(t, sites, basis) = @allocated reset!(t, sites; basis=basis)
                 before = copy(t)
                 @test_throws ArgumentError reset!(t, [1, 2];
                     basis=chan_ZeroBased([:X, :Z]))
-                @test t.stab == before.stab && t.m == before.m
+                @test stabilizer_matrix(t) == stabilizer_matrix(before) && t.m == before.m
             end
 
             @testset "reset! allocates nothing" for d in (2, 3)

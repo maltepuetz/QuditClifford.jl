@@ -10,10 +10,10 @@ const TIER_COUNTS = zeros(Int, 2)
         for T in types, m in (4, 8)
             tab = entropy_profile_fixture(T, 3, 8; m)
             same = entropy_profile_fixture(T, 3, 8; m)
-            @test tab.stab == same.stab
+            @test _wl_stab(tab) == _wl_stab(same)
             @test tab.m == m
             @test entropy_profile_loop(tab) == entanglement_profile(tab)
-            @test tab.stab == same.stab
+            @test _wl_stab(tab) == _wl_stab(same)
         end
 
         no_api = Module(:NoEntropyAPI)
@@ -50,8 +50,8 @@ const TIER_COUNTS = zeros(Int, 2)
             random = rank_fixture(:random, d, 64)
             monitored = rank_fixture(:monitored, d, 64)
             @test random.m == random.n == monitored.m == monitored.n == 64
-            @test rank_fixture(:random, d, 64).stab == random.stab
-            @test rank_fixture(:monitored, d, 64).stab == monitored.stab
+            @test _wl_stab(rank_fixture(:random, d, 64)) == _wl_stab(random)
+            @test _wl_stab(rank_fixture(:monitored, d, 64)) == _wl_stab(monitored)
             @test entanglement_entropy(random, 1:32) >= 30
             @test entanglement_entropy(monitored, 1:32) < entanglement_entropy(random, 1:32)
         end
@@ -99,16 +99,16 @@ const TIER_COUNTS = zeros(Int, 2)
         # and both tableau types measure the same state.
         D, bonds, rng = monitored_setup(; d = 3, n = 16, seed = 20261119)
         monitored_layers!(D, bonds, rng, 64; p = 0.15)
-        S = StabilizerTableau(3, copy(D.stab); m = D.m, check = false)
+        S = StabilizerTableau(3, copy(_wl_stab(D)); m = D.m, check = false)
         @test D.m == 16
         op = first_anticommuting(D, [SinglePauli(q, 0, 1) for q in 1:16])
         @test !QuditClifford._commutes_with_generators(S, op)
         # The fixed-Z leaf commutes and leaves both tableau types as they were.
         fixed = first_in_branch(D, [SinglePauli(q, 0, 1) for q in 1:16], :fixed)
         for tab in (copy(D), copy(S))
-            before = copy(tab.stab)
+            before = copy(_wl_stab(tab))
             measure!(tab, fixed)
-            @test tab.m == 16 && tab.stab == before
+            @test tab.m == 16 && _wl_stab(tab) == before
         end
         @test_throws ErrorException first_in_branch(D, [op], :fixed)
         @test_throws ArgumentError first_in_branch(D, [fixed], :other)
@@ -140,7 +140,7 @@ const TIER_COUNTS = zeros(Int, 2)
         _, bonds, rng = monitored_setup(; d = 3, n = 16, seed = 20261119)
         D = DestabilizerTableau(3, 16; state = :mixed)
         monitored_layers!(D, bonds, rng, 4; p = 0.15)
-        S = StabilizerTableau(3, copy(D.stab); m = D.m, check = false)
+        S = StabilizerTableau(3, copy(_wl_stab(D)); m = D.m, check = false)
         @test 0 < D.m < 16
         for candidates in ([SinglePauli(q, 0, 1) for q in 1:16],
                            [DoublePauli(q, 0, 1, mod1(q + r, 16), 0, 1) for r in 1:8 for q in 1:16])
@@ -168,20 +168,20 @@ const TIER_COUNTS = zeros(Int, 2)
     @testset "Ising is deterministic and stays pure" begin
         s1 = ising_trajectory!(L = 8, depth = 16, seed = 7)
         s2 = ising_trajectory!(L = 8, depth = 16, seed = 7)
-        @test s1.stab == s2.stab
+        @test _wl_stab(s1) == _wl_stab(s2)
         @test s1.m == s2.m
         # Started from a pure product state; projective measurement keeps it pure.
         @test is_pure(s1; verify=true)
 
         s3 = ising_trajectory!(L = 8, depth = 16, seed = 8)
-        @test s1.stab != s3.stab         # the seed actually matters
+        @test _wl_stab(s1) != _wl_stab(s3)         # the seed actually matters
 
         # Exercise the default `depth = 8L` keyword path (every call above sets
         # depth explicitly) and pin its value: omitting depth must match passing
         # depth = 8*8 explicitly, for the same seed.
         s4 = ising_trajectory!(L = 8, seed = 7)
         s5 = ising_trajectory!(L = 8, depth = 8 * 8, seed = 7)
-        @test s4.stab == s5.stab
+        @test _wl_stab(s4) == _wl_stab(s5)
         @test is_pure(s4; verify=true)
     end
 
@@ -196,17 +196,17 @@ const TIER_COUNTS = zeros(Int, 2)
         for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
             tab = T(d, 16; state = :ghz)
             snap = snapshot(tab)
-            stab0, m0 = copy(tab.stab), tab.m
+            stab0, m0 = copy(_wl_stab(tab)), tab.m
 
             # A mutating op, then restore: the tableau must be bit-identical.
             measure!(tab, SinglePauli(1, 1, 0); outcome = 0, phase_policy = 1)
             canonicalize!(tab)
-            @test tab.stab != stab0          # the ops really did change it
+            @test _wl_stab(tab) != stab0          # the ops really did change it
             restore!(snap)
-            @test tab.stab == stab0
+            @test _wl_stab(tab) == stab0
             @test tab.m == m0
             @test tab.iscanonical == false
-            T === DestabilizerTableau && @test snap.destab !== nothing
+            T === DestabilizerTableau && @test snap.destabmat !== nothing
         end
     end
 
@@ -217,28 +217,28 @@ const TIER_COUNTS = zeros(Int, 2)
         for T in (StabilizerTableau, DestabilizerTableau)
             tab = T(3, 16; state = :ghz)
             snap = snapshot(tab)
-            before = copy(tab.stab)
+            before = copy(_wl_stab(tab))
 
             canonicalize!(tab)
-            @test tab.stab != before         # :ghz is genuinely non-canonical
+            @test _wl_stab(tab) != before         # :ghz is genuinely non-canonical
             @test tab.iscanonical
 
             restore!(snap)
-            @test tab.stab == before         # back to the non-canonical data
+            @test _wl_stab(tab) == before         # back to the non-canonical data
             @test !tab.iscanonical
 
             # ...so a second canonicalize! does the full job again, which is
             # the property the benchmark depends on sample after sample.
             canonicalize!(tab)
-            @test tab.stab != before
+            @test _wl_stab(tab) != before
         end
 
         # A :product tableau is already in RCEF -- the state the benchmark
         # must NOT use. Pinned so a future "simplification" to :product fails.
         tab = DestabilizerTableau(3, 16; state = :product)
-        before = copy(tab.stab)
+        before = copy(_wl_stab(tab))
         canonicalize!(tab)
-        @test tab.stab == before
+        @test _wl_stab(tab) == before
     end
 
     @testset "Phase-free deterministic measurement starts noncanonical" begin
@@ -248,20 +248,20 @@ const TIER_COUNTS = zeros(Int, 2)
             tab = mk(:ghz)
             i, j = spread_sites(n)
             op = DoublePauli(i, 0, 1, j, 0, d - 1)
-            before = copy(tab.stab)
+            before = copy(_wl_stab(tab))
             snap = snapshot(tab)
 
             @test tab.m == n
             @test !tab.storephase
             @test !tab.iscanonical
             @test measure!(tab, op; outcome=d - 1) == 0
-            @test tab.stab == before
+            @test _wl_stab(tab) == before
             @test !tab.iscanonical
 
             canonicalize!(tab)
-            @test tab.stab != before  # The data, not only the flag, is noncanonical.
+            @test _wl_stab(tab) != before  # The data, not only the flag, is noncanonical.
             restore!(snap)
-            @test tab.stab == before
+            @test _wl_stab(tab) == before
             @test !tab.iscanonical
 
             trial = run(bench_measure(mk, :ghz, op); samples=2, evals=1, seconds=0.01)
@@ -289,7 +289,7 @@ const TIER_COUNTS = zeros(Int, 2)
             tab = DestabilizerTableau(d, n; state = :product)
 
             # noncommuting: X on a Z-basis site anticommutes with its stabilizer
-            @test any(mod(QuditClifford.commutation_col(tab.stab, k, spread_x(n)), d) != 0
+            @test any(mod(_wl_comm(tab, k, spread_x(n)), d) != 0
                       for k in 1:tab.m)
             # deterministic: Z*Z is a product of two generators, so in span
             @test expect_int!(tab, spread_z(n)) != -1
@@ -308,11 +308,11 @@ const TIER_COUNTS = zeros(Int, 2)
         for T in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)
             a = scrambled_state(T, d, 16; seed = 11)
             b = scrambled_state(T, d, 16; seed = 11)
-            @test a.stab == b.stab                     # deterministic
-            @test a.stab != T(d, 16; state = :product).stab   # actually scrambled
+            @test _wl_stab(a) == _wl_stab(b)                     # deterministic
+            @test _wl_stab(a) != _wl_stab(T(d, 16; state = :product))   # actually scrambled
             @test a.m == 16                            # stayed pure, so measure! cannot
             @test is_pure(a; verify=true)              # hit the m == n append error
-            @test scrambled_state(T, d, 16; seed = 12).stab != a.stab
+            @test _wl_stab(scrambled_state(T, d, 16; seed = 12)) != _wl_stab(a)
         end
     end
 
@@ -327,7 +327,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # first_anticommuting must genuinely anticommute, or measure! takes
             # the commuting branch and throws once m == n.
             anti = first_anticommuting(tab, [SinglePauli(i, 1, 0) for i in 1:16])
-            @test any(mod(QuditClifford.commutation_col(tab.stab, j, anti), d) != 0
+            @test any(mod(_wl_comm(tab, j, anti), d) != 0
                       for j in 1:tab.m)
             @test_throws ErrorException first_anticommuting(tab, SinglePauli[])
         end
@@ -347,9 +347,9 @@ const TIER_COUNTS = zeros(Int, 2)
             S = entanglement_entropy(tab, sub)
             @test !tab.iscanonical           # ...and every later sample sees the same state
 
-            before = copy(tab.stab)
+            before = copy(_wl_stab(tab))
             canonicalize!(tab)
-            @test tab.stab != before         # the data really was non-canonical
+            @test _wl_stab(tab) != before         # the data really was non-canonical
             @test entanglement_entropy(tab, sub) == S   # same answer either way
         end
     end
@@ -370,7 +370,7 @@ const TIER_COUNTS = zeros(Int, 2)
         # then checked against the real canonicalize! below, so it cannot drift
         # away from the implementation without this test failing.
         function elimination_multipliers(tab)
-            A = copy(tab.stab)[1:(2 * tab.n), :]
+            A = copy(_wl_stab(tab))[1:(2 * tab.n), :]
             d, n, m = tab.d, tab.n, tab.m
             mults = Int[]
             r, c = 1, 1
@@ -410,7 +410,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # the replay is faithful: same XZ block as the real thing
             ref = deepcopy(tab)
             canonicalize!(ref)
-            @test A[:, 1:ref.m] == ref.stab[1:(2 * ref.n), 1:ref.m]
+            @test A[:, 1:ref.m] == _wl_stab(ref)[1:(2 * ref.n), 1:ref.m]
 
             # and it reaches the general tier -- not just 0, 1, d-1
             general = count(β -> β ∉ (0, 1, d - 1), mults)
@@ -477,9 +477,9 @@ const TIER_COUNTS = zeros(Int, 2)
         # Duality and live caches are checked explicitly in test/destabilizers.jl.
         for T in (StabilizerTableau, DestabilizerTableau)
             tab = T(3, 16; state = :ghz)
-            before = copy(tab.stab)
+            before = copy(_wl_stab(tab))
             apply!(tab, Fourier(4))
-            @test tab.stab != before
+            @test _wl_stab(tab) != before
             apply!(tab, SUM(4, 12, 1))
             @test is_pure(tab; verify = true)
         end
@@ -498,16 +498,16 @@ const TIER_COUNTS = zeros(Int, 2)
                 fixture = stored_clifford_fixture(d, k)
                 stored = T(d, n; state = :product, basis = :Z)
                 named = deepcopy(stored)
-                before = copy(stored.stab)
+                before = copy(_wl_stab(stored))
                 apply!(stored, fixture.U)
                 for g in fixture.gates
                     apply!(named, g)
                 end
-                @test stored.stab != before
-                @test stored.stab == named.stab
+                @test _wl_stab(stored) != before
+                @test _wl_stab(stored) == _wl_stab(named)
                 @test is_pure(stored; verify = true)
                 if T === DestabilizerTableau
-                    @test stored.destab == named.destab
+                    @test _wl_destab(stored) == _wl_destab(named)
                     @test stored.xdotz_cache == named.xdotz_cache
                 end
             end
@@ -564,12 +564,12 @@ const TIER_COUNTS = zeros(Int, 2)
             a = scrambled_tableau(mk, d, n; seed = 11)
             b = scrambled_tableau(mk, d, n; seed = 11)
             c = scrambled_tableau(mk, d, n; seed = 12)
-            @test a.stab == b.stab                            # deterministic
-            @test a.stab != c.stab                            # the seed actually matters
-            T === DestabilizerTableau && @test a.destab == b.destab
+            @test _wl_stab(a) == _wl_stab(b)                            # deterministic
+            @test _wl_stab(a) != _wl_stab(c)                            # the seed actually matters
+            T === DestabilizerTableau && @test _wl_destab(a) == _wl_destab(b)
 
             @test is_pure(a; verify = true)
-            @test a.stab != T(d, n; state = :product).stab    # actually scrambled
+            @test _wl_stab(a) != _wl_stab(T(d, n; state = :product))    # actually scrambled
 
             # Dense local coordinates: > 25% of the k = 8 target rows are
             # nonzero across all n = 16 active columns -- the property
@@ -578,7 +578,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # scrambled_tableau's docstring).
             k = 8
             rows = vcat(1:k, n .+ (1:k))
-            density = count(!iszero, a.stab[rows, 1:a.m]) / (length(rows) * a.m)
+            density = count(!iszero, _wl_stab(a)[rows, 1:a.m]) / (length(rows) * a.m)
             @test density > 0.25
         end
     end
@@ -662,8 +662,8 @@ const TIER_COUNTS = zeros(Int, 2)
             tab2 = DestabilizerTableau(d, n; state = :product)
             apply!(tab2, U)
             apply!(tab2, U)
-            @test tab1.stab == tab2.stab
-            @test tab1.destab == tab2.destab
+            @test _wl_stab(tab1) == _wl_stab(tab2)
+            @test _wl_destab(tab1) == _wl_destab(tab2)
 
             # Stored apply! on the scrambled state equals applying
             # fixture.gates in order -- what stored_clifford_group's
@@ -676,8 +676,8 @@ const TIER_COUNTS = zeros(Int, 2)
             for g in fixture.gates
                 apply!(named, g)
             end
-            @test stored.stab == named.stab
-            @test stored.destab == named.destab
+            @test _wl_stab(stored) == _wl_stab(named)
+            @test _wl_destab(stored) == _wl_destab(named)
         end
     end
 
@@ -703,8 +703,8 @@ const TIER_COUNTS = zeros(Int, 2)
             for g in fixture.gates
                 apply!(named, g)
             end
-            @test stored.stab == named.stab
-            T === DestabilizerTableau && @test stored.destab == named.destab
+            @test _wl_stab(stored) == _wl_stab(named)
+            T === DestabilizerTableau && @test _wl_destab(stored) == _wl_destab(named)
         end
     end
 
@@ -774,11 +774,11 @@ const TIER_COUNTS = zeros(Int, 2)
         for T in (StabilizerTableau, DestabilizerTableau)
             a = monitored_trajectory(d = 2, n = 8, layers = 16, seed = 5, T = T)
             b = monitored_trajectory(d = 2, n = 8, layers = 16, seed = 5, T = T)
-            @test a.stab == b.stab
+            @test _wl_stab(a) == _wl_stab(b)
             @test is_pure(a; verify = true)
             # layers defaults to 4n.
-            @test monitored_trajectory(d = 2, n = 4, seed = 5, T = T).stab ==
-                  monitored_trajectory(d = 2, n = 4, layers = 16, seed = 5, T = T).stab
+            @test _wl_stab(monitored_trajectory(d = 2, n = 4, seed = 5, T = T)) ==
+                  _wl_stab(monitored_trajectory(d = 2, n = 4, layers = 16, seed = 5, T = T))
             tab, bonds, rng = monitored_setup(d = 2, n = 8, seed = 5, T = T)
             @test warm_allocations(tab, bonds, rng) == 0
         end
@@ -833,11 +833,11 @@ const TIER_COUNTS = zeros(Int, 2)
         # makes evals > 1 measure the same call every time.
         tab = mk(:product)
         canonicalize!(tab)
-        before = copy(tab.stab)
+        before = copy(_wl_stab(tab))
         for _ in 1:5
             expect!(tab, spread_z(64))
         end
-        @test tab.stab == before
+        @test _wl_stab(tab) == before
     end
 
     @testset "Random leaves reseed their RNG in setup" begin
@@ -857,15 +857,15 @@ const TIER_COUNTS = zeros(Int, 2)
             @test D.m == S.m == n
             @test S == D
             @test is_pure(D; verify = true)
-            @test dense_state(DestabilizerTableau, d, n).stab == D.stab   # seeded
+            @test _wl_stab(dense_state(DestabilizerTableau, d, n)) == _wl_stab(D)   # seeded
             # most entries nonzero, unlike a constructor state's one-hot rows
-            @test count(!iszero, D.stab[1:(2n), :]) > 0.4 * 2n * n
+            @test count(!iszero, _wl_stab(D)[1:(2n), :]) > 0.4 * 2n * n
             for tab in (S, D)
                 @test !tab.iscanonical
-                before = copy(tab.stab)
+                before = copy(_wl_stab(tab))
                 c = copy(tab)
                 canonicalize!(c)
-                @test c.stab != before        # canonicalize! has real work to do
+                @test _wl_stab(c) != before        # canonicalize! has real work to do
             end
             mixed = dense_state(StabilizerTableau, d, n; m = n ÷ 2)
             @test mixed.m == n ÷ 2
@@ -882,7 +882,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # update rewrites a large share of the columns
             op = first_anticommuting(pure, [spread_x(n)])
             @test op == spread_x(n)
-            anti = count(j -> mod(QuditClifford.commutation_col(pure.stab, j, op), d) != 0,
+            anti = count(j -> mod(_wl_comm(pure, j, op), d) != 0,
                          1:pure.m)
             @test anti >= n ÷ 4
             t = copy(pure)
@@ -893,7 +893,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # generators, read off the dual basis
             inspan = span_product(pure)
             @test inspan.xz == span_product(D).xz
-            coeffs = count(j -> mod(QuditClifford.commutation_col(D.destab, j, inspan), d) != 0,
+            coeffs = count(j -> mod(_wl_comm_destab(D, j, inspan), d) != 0,
                            1:n)
             @test coeffs == cld(n, 2)
             @test expect_int!(copy(pure), inspan) != -1
@@ -906,7 +906,7 @@ const TIER_COUNTS = zeros(Int, 2)
             mixed = dense_state(T, d, n; m = n ÷ 2)
             w = commuting_out_of_span(dense_state(DestabilizerTableau, d, n; m = n ÷ 2))
             @test any(!iszero, w.xz)
-            @test all(j -> mod(QuditClifford.commutation_col(mixed.stab, j, w), d) == 0,
+            @test all(j -> mod(_wl_comm(mixed, j, w), d) == 0,
                       1:mixed.m)
             @test expect_int!(copy(mixed), w) == -1
             t = copy(mixed)
@@ -942,12 +942,12 @@ const TIER_COUNTS = zeros(Int, 2)
             for d in (2, 3)
                 for m in (n, n ÷ 2)
                     tab = dense_state(T, d, n; m)
-                    before, canon = copy(tab.stab), tab.iscanonical
+                    before, canon = copy(_wl_stab(tab)), tab.iscanonical
                     @test mutual_information(tab, A, B) >= 0
                     tripartite_information(tab, A, B, C)
                     @test conditional_mutual_information(tab, A, B, C) >= 0
                     @test entanglement_negativity(tab, A, B) >= 0
-                    @test tab.stab == before && tab.iscanonical == canon && tab.m == m
+                    @test _wl_stab(tab) == before && tab.iscanonical == canon && tab.m == m
                 end
                 g = information_group(; d, n, T)
                 @test length(g) == 8
@@ -974,14 +974,14 @@ const TIER_COUNTS = zeros(Int, 2)
             tab = scrambled_tableau(tableau_maker(T, 3, n), 3, n; seed = DENSE_SEED)
             other = copy(tab)
             canonicalize!(other)
-            @test !tab.iscanonical && other.stab != tab.stab   # the slow == path
+            @test !tab.iscanonical && _wl_stab(other) != _wl_stab(tab)   # the slow == path
             @test tab == other && hash(tab) == hash(other)
             nraw = max(2, n ÷ 4)
             raw = scrambled_tableau(tableau_maker(T, 3, nraw), 3, nraw; seed = DENSE_SEED)
-            M = copy(raw.stab)
+            M = copy(_wl_stab(raw))
             @test T(3, M; m = nraw) == raw
             @test T(3, M; m = nraw, check = false) == raw
-            @test M == raw.stab                                # input not modified
+            @test M == _wl_stab(raw)                                # input not modified
 
             # measure!/rng: restoring the snapshot and reseeding gives the same
             # drawn outcome every sample
@@ -990,7 +990,7 @@ const TIER_COUNTS = zeros(Int, 2)
                 t = copy(tab)
                 rng = Random.Xoshiro(DENSE_SEED)
                 measure!(rng, t, op; phase_policy = 1)
-                t.stab[end, :]
+                _wl_stab(t)[end, :]
             end
             @test outcomes[1] == outcomes[2]
         end

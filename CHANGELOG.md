@@ -24,9 +24,18 @@ dependency bump — carries the `skip-changelog` label instead.
   stored generator; `phase_policy=1` and `expect_int!` are unaffected.
 - `measure!` throws an `ArgumentError` for an `outcome` outside `0:(d-1)`.
   Such a value was used modulo `d` for the state but returned as given.
+- `StabilizerTableau` and `DestabilizerTableau` no longer have the field `stab`,
+  and `DestabilizerTableau` no longer has the field `destab`; accessing them
+  throws an `ArgumentError`. Use `stabilizer_matrix(tab)` and
+  `destabilizer_matrix(tab)`, which return the same generator-major matrices as
+  copies. Code that wrote into `tab.stab` should build the tableau from a matrix
+  with `StabilizerTableau(d, S)` or `DestabilizerTableau(d, S)` instead.
 
 ### Added
 
+- `stabilizer_matrix(tab; layout)` and `destabilizer_matrix(tab; layout)` return a
+  tableau's generators as a fresh `Int` matrix, generator-major (generators in
+  columns) or qudit-major.
 - `measure!(rng, tab, op; outcome, phase_policy)` draws the outcome of a
   random measurement from `rng`, for both a Pauli and a raw exponent vector, so
   one seeded RNG reproduces a monitored-circuit trajectory. It follows the

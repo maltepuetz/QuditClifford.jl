@@ -6,7 +6,7 @@ const TCE_TABLEAU_TYPES = [("StabilizerTableau", StabilizerTableau),
                            ("DestabilizerTableau", DestabilizerTableau)]
 
 # The active generator columns, phase row included when stored.
-tce_active(tab) = tab.stab[:, 1:tab.m]
+tce_active(tab) = stabilizer_matrix(tab)[:, 1:tab.m]
 
 # Every field of a tableau as a tuple of independent copies, for checking that
 # an operation left its argument untouched. The inversion strategy is never
@@ -17,6 +17,7 @@ tce_snapshot(tab) = Tuple(f === :inversemod ? objectid(tab.inversemod) :
 function tce_no_shared_arrays(a, b)
     for f in fieldnames(typeof(a))
         x, y = getfield(a, f), getfield(b, f)
+        x isa SubArray && (x = parent(x); y = y isa SubArray ? parent(y) : y)
         x isa Array && x === y && return false
     end
     return true
@@ -28,12 +29,12 @@ function tce_dual_ok(tab::DestabilizerTableau)
     for j in 1:m, k in 1:m
         s = 0
         for q in 1:n
-            s += tab.destab[q, j] * tab.stab[n + q, k] - tab.destab[n + q, j] * tab.stab[q, k]
+            s += destabilizer_matrix(tab)[q, j] * stabilizer_matrix(tab)[n + q, k] - destabilizer_matrix(tab)[n + q, j] * stabilizer_matrix(tab)[q, k]
         end
         mod(s, d) == (j == k ? 1 : 0) || return false
     end
     for j in 1:m
-        x = sum(tab.stab[q, j] * tab.stab[n + q, j] for q in 1:n; init = 0)
+        x = sum(stabilizer_matrix(tab)[q, j] * stabilizer_matrix(tab)[n + q, j] for q in 1:n; init = 0)
         mod(x, d) == tab.xdotz_cache[j] || return false
     end
     return true
@@ -69,9 +70,9 @@ end
                             @test tce_no_shared_arrays(c, tab)
                             @test (c.d, c.n, c.m, c.storephase, c.iscanonical) ==
                                   (tab.d, tab.n, tab.m, tab.storephase, tab.iscanonical)
-                            @test c.stab == tab.stab
+                            @test stabilizer_matrix(c) == stabilizer_matrix(tab)
                             @test c.xdotz_cache == tab.xdotz_cache
-                            TT === DestabilizerTableau && @test c.destab == tab.destab
+                            TT === DestabilizerTableau && @test destabilizer_matrix(c) == destabilizer_matrix(tab)
                             @test tce_dual_ok(c)
                             @test c == tab
 
@@ -97,10 +98,18 @@ end
                         for storephase in (true, false)
                             src = tce_scrambled(TT, rng, d, n; m = 3, storephase = storephase)
                             dst = TT(d, n, :ghz; storephase = storephase)
-                            dst_stab = dst.stab
                             before = tce_snapshot(src)
+                            arrays = [f => getfield(dst, f) for f in fieldnames(typeof(dst))
+                                      if getfield(dst, f) isa Union{Array, SubArray}]
+                            storage = TT === DestabilizerTableau ?
+                                (:stab_x, :stab_z, :phase, :destab_x, :destab_z) :
+                                (:stab_x, :stab_z, :phase)
+                            @test !isempty(arrays)
+                            @test all(f in first.(arrays) for f in storage)
                             @test copy!(dst, src) === dst
-                            @test dst.stab === dst_stab
+                            @test all(getfield(dst, f) === arr for (f, arr) in arrays)
+                            @test all(parent(getfield(dst, f)) === parent(arr) for (f, arr) in arrays
+                                      if arr isa SubArray)
                             @test tce_snapshot(src) == before
                             @test dst == src
                             @test (dst.m, dst.iscanonical) == (src.m, src.iscanonical)

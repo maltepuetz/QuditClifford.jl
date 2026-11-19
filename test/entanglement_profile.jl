@@ -53,14 +53,14 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
                 dest = fill(-1, len)
                 @test_throws DimensionMismatch entanglement_profile!(dest, tab)
                 @test dest == fill(-1, len)
-                @test tab.stab == before.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.workspace == before.workspace
-                TT === DestabilizerTableau && @test tab.destab == before.destab
+                TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
             offset = _ZeroBasedProfileVector(fill(-1, 5))
             @test_throws ArgumentError entanglement_profile!(offset, tab)
             @test offset.data == fill(-1, 5)
-            @test tab.stab == before.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(before)
             @test tab.workspace == before.workspace
         end
     end
@@ -144,12 +144,12 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             dest = fill(-1, 7)
             @test entanglement_profile!(dest, tab) === dest
             @test dest == expected
-            @test tab.stab == reference.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(reference)
             @test tab.m == reference.m
             @test tab.iscanonical == reference.iscanonical
             @test tab.pivcol_of_row == reference.pivcol_of_row
             @test tab.xdotz_cache == reference.xdotz_cache
-            TT === DestabilizerTableau && @test tab.destab == reference.destab
+            TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(reference)
 
             # Interleave callers of the shared workspaces, then measure on
             # both copies to catch stale scratch or damaged dual/cached data.
@@ -160,9 +160,9 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             @test entanglement_profile(tab) == profile
             measure!(tab, op; outcome=0)
             measure!(reference, op; outcome=0)
-            @test tab.stab == reference.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(reference)
             @test tab.m == reference.m
-            TT === DestabilizerTableau && @test tab.destab == reference.destab
+            TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(reference)
             @test entanglement_profile(tab) ==
                   [entanglement_entropy(reference, 1:l) for l in 0:6]
             @test profile == expected  # returned storage is owned by the caller
@@ -263,10 +263,10 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
                 @test_throws E entanglement_profile!(dest, tab, order)
                 @test_throws E entanglement_profile(tab, order)
                 @test dest == fill(-1, 5)
-                @test tab.stab == before.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.m == before.m
                 @test tab.workspace == before.workspace
-                TT === DestabilizerTableau && @test tab.destab == before.destab
+                TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
             # The destination is still checked first.
             @test_throws DimensionMismatch entanglement_profile!(fill(-1, 4), tab, [1, 2, 2])
@@ -294,8 +294,8 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
                 dest = fill(-1, 5)
                 @test entanglement_profile!(dest, tab, order) === dest
                 @test dest == expected
-                @test tab.stab == reference.stab
-                TT === DestabilizerTableau && @test tab.destab == reference.destab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(reference)
+                TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(reference)
                 # A stored order is still validated.
                 order .= perm
                 order[2] = order[1]
@@ -317,12 +317,12 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             fill!(tab.workspace, d - 1)
             fill!(tab.c_workspace, d - 1)
             @test entanglement_profile(tab, order) == expected
-            @test tab.stab == reference.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(reference)
             @test tab.m == reference.m
             @test tab.iscanonical == reference.iscanonical
             @test tab.pivcol_of_row == reference.pivcol_of_row
             @test tab.xdotz_cache == reference.xdotz_cache
-            TT === DestabilizerTableau && @test tab.destab == reference.destab
+            TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(reference)
             # c_workspace residue from the order check must not leak into the
             # next caller of the shared workspaces.
             @test entanglement_entropy(tab, [2, 4, 6]) ==

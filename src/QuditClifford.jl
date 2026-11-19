@@ -21,7 +21,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     CliffordOperator,
     apply!, conjugate,
     random_clifford, random_clifford!, random_state!,
-    StabilizerKet, ket, state_vector, density_matrix
+    StabilizerKet, ket, state_vector, density_matrix,
+    stabilizer_matrix, destabilizer_matrix
 
 import Random, Primes
 import Random.rand!
@@ -33,12 +34,14 @@ import PrecompileTools
 # include the sub files
 include("modular.jl")
 include("helper.jl")
+include("xz_block.jl")
 include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("rank_workspaces.jl")
 include("abstract_tableau.jl")
 include("stabilizer_tableau.jl")
 include("destabilizer_tableau.jl")
+include("tableau_storage.jl")
 include("canonicalize.jl")
 include("tableau_equality.jl")
 include("operator.jl")

@@ -13,17 +13,12 @@
 # or, after `dephase!`'s sweep, differ from the old ones only by multiples of the
 # removed generator, which is orthogonal to all of them.
 @inline function _on_generator_dropped!(tab::DestabilizerTableau, j::Int, last::Int)
-    dest = tab.destab
+    dest = _destab(tab)
     if j != last
-        # j != last, so these are disjoint columns of destab.
-        @turbo for r in 1:(2 * tab.n)
-            dest[r, j] = dest[r, last]
-        end
+        _move_gen!(dest, j, last)
         tab.xdotz_cache[j] = tab.xdotz_cache[last]
     end
-    @turbo for r in 1:(2 * tab.n)
-        dest[r, last] = 0
-    end
+    _zero_gen!(dest, last)
     tab.xdotz_cache[last] = 0
     return nothing
 end
@@ -31,17 +26,14 @@ end
 # Remove active generator `j`: the last active column takes its place, the last
 # column is zeroed and `m` shrinks by one.
 function _drop_generator!(tab::AbstractTableau, j::Int)
-    stab = tab.stab
+    stab = _stab(tab)
     last = tab.m
-    rows = size(stab, 1)
-    if j != last
-        # j != last, so these are disjoint columns of stab.
-        @turbo for r in 1:rows
-            stab[r, j] = stab[r, last]
-        end
-    end
-    @turbo for r in 1:rows
-        stab[r, last] = 0
+    _move_gen!(stab, j, last)
+    _zero_gen!(stab, last)
+    if tab.storephase
+        phase = _phase(tab)
+        phase[j] = phase[last]
+        phase[last] = 0
     end
     _on_generator_dropped!(tab, j, last)
     tab.m = last - 1
@@ -95,17 +87,17 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
     # A dense operand lives in res_workspace, which nothing below writes.
     opc = _commutation_operand!(tab, op)
 
+    stab = _stab(tab)
     pivot = 0
     comm0 = 0
     for i in 1:m
-        c = mod(commutation_col(tab.stab, i, opc), d)
+        c = mod(commutation_col(stab, i, opc), d)
         c == 0 && continue
         if pivot == 0
             # The pivot is kept in the workspace and removed afterwards; the
             # other noncommuting generators absorb a power of it.
-            @turbo for j in eachindex(tab.generator_workspace)
-                tab.generator_workspace[j] = tab.stab[j, i]
-            end
+            _copy_gen!(tab.generator_workspace, stab, i)
+            tab.storephase && (tab.generator_workspace[2tab.n+1] = _phase(tab)[i])
             pivot = i
             comm0 = c
         else
@@ -190,15 +182,22 @@ _check_reset_basis(::Any, ::Int) = throw(ArgumentError(
 # most n, and the dual built for it needs no projection.
 function _prepare_sites!(tab::AbstractTableau, sites, basis)
     isempty(sites) && return tab
-    n = tab.n
+    stab = _stab(tab)
+    phase = _phase(tab)
+    # The new generator is copied into res_workspace, which `_after_append_measurement!`
+    # reads and never writes. Nothing else keeps data there: `reset!` has finished
+    # its `traceout!`, which dephases with sparse operators that need no operand
+    # vector, and a dense operand of `dephase!` is dead once that call returns.
+    res = tab.res_workspace
     k = 0
     for q in sites
         k += 1
         newcol = tab.m + 1
-        _set_site_column!(tab.stab, tab.d, n, newcol, Int(q),
+        _set_site_column!(stab, phase, tab.d, newcol, Int(q),
                           _reset_basis_at(basis, k), tab.storephase)
         tab.m = newcol
-        _after_append_measurement!(tab, newcol, view(tab.stab, 1:(2n), newcol))
+        _copy_gen!(res, stab, newcol)
+        _after_append_measurement!(tab, newcol, res)
     end
     tab.iscanonical = false
     return tab

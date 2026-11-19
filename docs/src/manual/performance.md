@@ -114,7 +114,7 @@ case may read or write out of bounds.
 
 ### Dropping phases
 
-`storephase=false` removes the phase row. Phase-sensitive results then report
+`storephase=false` removes the generator phases. Phase-sensitive results then report
 phase exponent `0` by convention: a deterministic measurement returns `0`,
 [`expect_int!`](@ref) returns `0` and [`expect!`](@ref) returns `1` for an
 operator in the stabilizer group. Dense conversions are refused. Everything that
