@@ -674,3 +674,35 @@ end
         end
     end
 end
+
+# Channels rebuild generators through the rank-workspace copy, the column
+# writers and the generator drop: duality and the live x·z cache must survive.
+@testset "duality after channels" begin
+    for d in (2, 3)
+        n = 6
+        rng = Xoshiro(20261120 + d)
+        tab = DestabilizerTableau(d, n; state = :Z, storephase = true)
+        for layer in 1:4
+            for q in (isodd(layer) ? 1 : 2):2:(n - 1)
+                apply!(tab, random_clifford(rng, d, [q, q + 1]))
+            end
+            for q in 1:n
+                rand(rng) < 0.4 && measure!(rng, tab, SinglePauli(q, 0, 1); phase_policy = 1)
+            end
+        end
+        _assert_duality(tab)
+        _assert_active_cache(tab)
+
+        reset!(tab, [2, 5])
+        _assert_duality(tab)
+        _assert_active_cache(tab)
+
+        traceout!(tab, 3)
+        _assert_duality(tab)
+        _assert_active_cache(tab)
+
+        dephase!(tab, SinglePauli(4, 0, 1))
+        _assert_duality(tab)
+        _assert_active_cache(tab)
+    end
+end

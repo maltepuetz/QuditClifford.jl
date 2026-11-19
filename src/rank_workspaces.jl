@@ -118,40 +118,40 @@ end
     return A
 end
 
-# Copy the X and Z exponents of `sites[1:N]` from `stab` into `ws` after row
+# Copy the X and Z exponents of `sites[1:N]` from the generators of `b` into `ws` after row
 # `offset`: X to rows offset+1:offset+N, Z to offset+N+1:offset+2N, columns
 # 1:m. Returns offset + 2N.
 function _copy_sites!(
     ws::AbstractMatrix{Int},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
     offset::Int,
 )
+    X, Z = b.x, b.z
     @turbo for j in 1:m, r in 1:N
         q = sites[r]
-        ws[offset + r, j] = stab[q, j]
-        ws[offset + N + r, j] = stab[n + q, j]
+        ws[offset + r, j] = X[q, j]
+        ws[offset + N + r, j] = Z[q, j]
     end
     return offset + 2N
 end
 
 function _copy_sites!(
     ws::AbstractMatrix{UInt8},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
     offset::Int,
 )
+    X, Z = b.x, b.z
     @inbounds for j in 1:m
         @simd for r in 1:N
             q = sites[r]
-            ws[offset + r, j] = stab[q, j] % UInt8
-            ws[offset + N + r, j] = stab[n + q, j] % UInt8
+            ws[offset + r, j] = X[q, j] % UInt8
+            ws[offset + N + r, j] = Z[q, j] % UInt8
         end
     end
     return offset + 2N
@@ -163,8 +163,7 @@ end
 # starts on a fresh word. The bits in between are zero.
 function _copy_sites!(
     ws::AbstractMatrix{UInt64},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
@@ -172,7 +171,7 @@ function _copy_sites!(
 )
     offset & 63 == 0 || throw(ArgumentError(
         "a bit-packed block must start on a word boundary; got bit offset $offset."))
-    nw = _pack_sites_gf2!(view(ws, ((offset >> 6) + 1):size(ws, 1), 1:m), stab, n, m, sites, N)
+    nw = _pack_sites_gf2!(view(ws, ((offset >> 6) + 1):size(ws, 1), 1:m), b, m, sites, N)
     return offset + 64nw
 end
 
@@ -211,21 +210,21 @@ end
 # return the number of words per column, cld(2N, 64). Entries are 0 or 1.
 function _pack_sites_gf2!(
     W::AbstractMatrix{UInt64},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
 )
     nw = cld(2N, 64)
+    X, Z = b.x, b.z
     @inbounds for j in 1:m
         for w in 1:nw
             k0 = 32 * (w - 1)
             acc = zero(UInt64)
             @simd for t in 1:min(32, N - k0)
                 q = sites[k0 + t]
-                acc |= ((stab[q, j] % UInt64) << (2t - 2)) |
-                       ((stab[n + q, j] % UInt64) << (2t - 1))
+                acc |= ((X[q, j] % UInt64) << (2t - 2)) |
+                       ((Z[q, j] % UInt64) << (2t - 1))
             end
             W[w, j] = acc
         end

@@ -311,23 +311,27 @@ end
 # Copy rows interleaved by site: rows 2k-1 and 2k hold the X and Z exponents
 # of `sites[k]`, so that a bottom-up pivot identifies the rightmost support of
 # a generator. Only the active columns are copied, without the phase row.
-function _copy_sites_interleaved!(ws::AbstractMatrix{Int}, stab::AbstractMatrix{Int},
-                                  n::Int, m::Int, sites::AbstractVector)
+function _copy_sites_interleaved!(ws::AbstractMatrix{Int}, b::_GMBlock,
+                                  m::Int, sites::AbstractVector)
+    n = _nq(b)
+    X, Z = b.x, b.z
     @turbo for j in 1:m, k in 1:n
         q = sites[k]
-        ws[2k - 1, j] = stab[q, j]
-        ws[2k, j] = stab[n + q, j]
+        ws[2k - 1, j] = X[q, j]
+        ws[2k, j] = Z[q, j]
     end
     return ws
 end
 
-function _copy_sites_interleaved!(ws::AbstractMatrix{UInt8}, stab::AbstractMatrix{Int},
-                                  n::Int, m::Int, sites::AbstractVector)
+function _copy_sites_interleaved!(ws::AbstractMatrix{UInt8}, b::_GMBlock,
+                                  m::Int, sites::AbstractVector)
+    n = _nq(b)
+    X, Z = b.x, b.z
     @inbounds for j in 1:m
         @simd for k in 1:n
             q = sites[k]
-            ws[2k - 1, j] = stab[q, j] % UInt8
-            ws[2k, j] = stab[n + q, j] % UInt8
+            ws[2k - 1, j] = X[q, j] % UInt8
+            ws[2k, j] = Z[q, j] % UInt8
         end
     end
     return ws
@@ -343,7 +347,7 @@ function _profile_pivots!(
     sites::AbstractVector,
 )
     n, m, d = tab.n, tab.m, tab.d
-    _copy_sites_interleaved!(ws, tab.stab, n, m, sites)
+    _copy_sites_interleaved!(ws, _stab(tab), m, sites)
     fill!(profile, 0)
     c = 1
     @inbounds for r in (2n):-1:1
@@ -384,7 +388,7 @@ function _profile_pivots_gf2!(
 )
     n, m = tab.n, tab.m
     W = tab.bit_workspace
-    _pack_sites_gf2!(W, tab.stab, n, m, sites, n)
+    _pack_sites_gf2!(W, _stab(tab), m, sites, n)
     fill!(profile, 0)
     c = 1
     @inbounds for r in (2n):-1:1
@@ -449,19 +453,19 @@ end
 
 # Rank of the generator columns 1:mcols restricted to `sites[1:N]`.
 function _rank_on_sites!(tab::AbstractTableau, sites::AbstractVector, N::Int, mcols::Int)
-    n, d = tab.n, tab.d
+    d = tab.d
     mcols == 0 && return 0
     if d == 2
         W = tab.bit_workspace
-        nw = _pack_sites_gf2!(W, tab.stab, n, mcols, sites, N)
+        nw = _pack_sites_gf2!(W, _stab(tab), mcols, sites, N)
         return _rank_gf2_cols!(view(W, 1:nw, 1:mcols), 2N)
     elseif _uses_narrow_rank(d)
         ws = tab.narrow_workspace
-        _copy_sites!(ws, tab.stab, n, mcols, sites, N, 0)
+        _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
         return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
     else
         ws = tab.workspace
-        _copy_sites!(ws, tab.stab, n, mcols, sites, N, 0)
+        _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
         return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
     end
 end

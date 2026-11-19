@@ -451,14 +451,15 @@ end
 
 function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     _zero!(tab)
+    b, phase = _stacked_views(tab, n, storephase)
 
     if state === :mixed
         return 0
     elseif state === :product
-        _fill_product_state!(tab, d, n, basis_spec, storephase)
+        _fill_product_state!(b, phase, d, basis_spec, storephase)
         return n
     elseif state === :ghz
-        _fill_ghz_state!(tab, d, n)
+        _fill_ghz_state!(b, d)
         return n
     end
 
@@ -466,76 +467,78 @@ function _preset_tableau!(tab::Matrix{Int}, d::Int, n::Int, state::Symbol, basis
 end
 
 # Write the single-qudit eigenstate generator of `basis` on qudit `site` into
-# column `col`. The column must be zero beforehand.
-@inline function _set_site_column!(stab::Matrix{Int}, d::Int, n::Int, col::Int, site::Int, basis::Symbol, storephase::Bool)
+# generator `col`. The generator must be zero beforehand.
+@inline function _set_site_column!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, col::Int, site::Int, basis::Symbol, storephase::Bool)
     if basis === :X
-        stab[site, col] = 1
+        _xset!(b, 1, site, col)
     elseif basis === :Z
-        stab[n + site, col] = 1
+        _zset!(b, 1, site, col)
     else
         @assert basis === :Y
-        stab[site, col] = 1
-        stab[n + site, col] = 1
+        _xset!(b, 1, site, col)
+        _zset!(b, 1, site, col)
         if storephase && d == 2
-            stab[2n + 1, col] = 1
+            phase[col] = 1
         end
     end
     return nothing
 end
 
-@inline function _set_product_column!(tab::Matrix{Int}, d::Int, n::Int, col::Int, basis::Symbol, storephase::Bool)
-    return _set_site_column!(tab, d, n, col, col, basis, storephase)
+@inline function _set_product_column!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, col::Int, basis::Symbol, storephase::Bool)
+    return _set_site_column!(b, phase, d, col, col, basis, storephase)
 end
 
-function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis::Symbol, storephase::Bool)
-    b = _canonical_basis_symbol(basis)
+function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis::Symbol, storephase::Bool)
+    s = _canonical_basis_symbol(basis)
 
-    @inbounds for j in 1:n
-        _set_product_column!(tab, d, n, j, b, storephase)
+    @inbounds for j in 1:_nq(b)
+        _set_product_column!(b, phase, d, j, s, storephase)
     end
     return nothing
 end
 
-function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_vec::AbstractVector{<:Symbol}, storephase::Bool)
+function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis_vec::AbstractVector{<:Symbol}, storephase::Bool)
+    n = _nq(b)
     length(basis_vec) == n || throw(ArgumentError("basis must have length n=$n."))
 
     @inbounds for j in 1:n
-        b = _canonical_basis_symbol(basis_vec[j])
-        _set_product_column!(tab, d, n, j, b, storephase)
+        s = _canonical_basis_symbol(basis_vec[j])
+        _set_product_column!(b, phase, d, j, s, storephase)
     end
     return nothing
 end
 
-function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis_tuple::Tuple, storephase::Bool)
+function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis_tuple::Tuple, storephase::Bool)
+    n = _nq(b)
     length(basis_tuple) == n || throw(ArgumentError("basis must have length n=$n."))
 
     @inbounds for j in 1:n
-        b = basis_tuple[j]
-        b isa Symbol || throw(ArgumentError("basis tuple entries must be Symbols."))
-        b = _canonical_basis_symbol(b)
-        _set_product_column!(tab, d, n, j, b, storephase)
+        s = basis_tuple[j]
+        s isa Symbol || throw(ArgumentError("basis tuple entries must be Symbols."))
+        s = _canonical_basis_symbol(s)
+        _set_product_column!(b, phase, d, j, s, storephase)
     end
     return nothing
 end
 
-function _fill_product_state!(tab::Matrix{Int}, d::Int, n::Int, basis, storephase::Bool)
+function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis, storephase::Bool)
     throw(ArgumentError("basis must be a Symbol or a vector/tuple of Symbols."))
 end
 
-function _fill_ghz_state!(tab::Matrix{Int}, d::Int, n::Int)
+function _fill_ghz_state!(b::_GMBlock, d::Int)
+    n = _nq(b)
     n == 0 && return nothing
 
     # Generator 1: X1 X2 ... Xn
     @inbounds for q in 1:n
-        tab[q, 1] = 1
+        _xset!(b, 1, q, 1)
     end
 
     # Generators 2..n: Z_{i-1} Z_i^{-1}. The inverse exponent is written
     # already reduced (d-1, not -1) so the preset path needs no mod pass.
     @inbounds for col in 2:n
-        i = col
-        tab[n + (i - 1), col] = 1
-        tab[n + i, col] = d - 1
+        _zset!(b, 1, col - 1, col)
+        _zset!(b, d - 1, col, col)
     end
     return nothing
 end

@@ -185,7 +185,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                 N = length(sites)
                 W = zeros(UInt64, cld(2n, 64), max(m, 1))
                 fill!(W, typemax(UInt64))
-                nw = RW._pack_sites_gf2!(W, stabilizer_matrix(tab), n, m, sites, N)
+                nw = RW._pack_sites_gf2!(W, QuditClifford._stab(tab), m, sites, N)
                 @test nw == cld(2N, 64)
                 for j in 1:m, k in 1:N
                     q = sites[k]
@@ -227,11 +227,11 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
         W = fill(typemax(UInt64), cld(2n, 64) + 2, n)
         sites1 = sort(randperm(rng, n)[1:33])
         sites2 = sort(randperm(rng, n)[1:1])
-        o1 = RW._copy_sites!(W, stabilizer_matrix(tab), n, m, sites1, 33, 0)
+        o1 = RW._copy_sites!(W, QuditClifford._stab(tab), m, sites1, 33, 0)
         @test o1 == 128 == RW._block_end(W, 0, 33)
-        o2 = RW._copy_sites!(W, stabilizer_matrix(tab), n, m, sites2, 1, o1)
+        o2 = RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 1, o1)
         @test o2 == 192 == RW._block_end(W, o1, 1)
-        @test RW._copy_sites!(W, stabilizer_matrix(tab), n, m, sites2, 0, o2) == o2
+        @test RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 0, o2) == o2
         U = rw_unpack_rows(W, o2)
         for j in 1:m
             @test U[1:2:66, j] == stabilizer_matrix(tab)[sites1, j]
@@ -240,7 +240,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             @test U[129:130, j] == [stabilizer_matrix(tab)[sites2[1], j], stabilizer_matrix(tab)[n + sites2[1], j]]
             @test all(iszero, U[131:192, j])
         end
-        @test_throws ArgumentError RW._copy_sites!(W, stabilizer_matrix(tab), n, m, sites2, 1, 2)
+        @test_throws ArgumentError RW._copy_sites!(W, QuditClifford._stab(tab), m, sites2, 1, 2)
         inv = RW.PrecomputedInvMod(2)
         @test RW._block_rank!(W, 128, 192, 1:m, 2, inv) ==
               rw_rank(rw_restrict(tab, sites2), 2)
