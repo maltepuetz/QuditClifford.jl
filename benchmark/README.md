@@ -89,15 +89,15 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 354 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 571 | ~205 s (189 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048}; `monitored` n ∈ {254, 1022} | 2, 3, 5, 7 | 1183 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 378 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 595 | ~205 s (189 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048}; `monitored` and `purifying` n ∈ {254, 1022} | 2, 3, 5, 7 | 1231 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
 The `dense`, `channels`, `information`, `gates` and `tableau` groups use the
 largest `n` of the profile and the `modulus` group `n = 64` (`8` in `smoke`).
 The `rank` group runs `d = 2, 3, 31` in every profile, at `n = 8` in `smoke`
-and `n = 256` in `ci`. The `monitored` group runs the same three `d` at
-`n = 8` in `smoke` and `n = 254` in `ci`.
+and `n = 256` in `ci`. The `monitored` and `purifying` groups run the same
+three `d` at `n = 8` in `smoke` and `n = 254` in `ci`.
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
 that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
@@ -166,14 +166,23 @@ each at the first site from the middle of the chain where the outcome is
 random, so every leaf takes the noncommuting branch. Dozens of generators
 anticommute with such an operator while the replaced generator spans a few
 sites, which is the case the support-restricted update in
-`src/projective_measurement.jl` serves. `layer` times one more brickwork
-layer from the same state and RNG state: every bond's gate plus that layer's
-`Z` measurements, whose deterministic outcomes canonicalize a
-`StabilizerTableau`. The sizes are `n = 254` (`ci`) and `n = 254, 1022`
-(`full`) rather than powers of two, whose column stride adds a cache-aliasing
-penalty of its own. A baseline without `random_clifford!` skips the group;
-`test_workloads.jl` checks the keys, that each operator anticommutes with the
-state and that the measurement leaves allocate nothing.
+`src/projective_measurement.jl` serves. `measure!/fixed-Z` measures `Z` at
+the first site where the outcome is fixed instead, which on a
+`StabilizerTableau` decomposes the operator over generators that are not in
+canonical form (`src/span_decomposition.jl`). `layer` times one more
+brickwork layer from the same state and RNG state: every bond's gate plus that
+layer's `Z` measurements, a few of them fixed. The sizes are `n = 254` (`ci`)
+and `n = 254, 1022` (`full`) rather than powers of two, whose column stride
+adds a cache-aliasing penalty of its own. A baseline without
+`random_clifford!` skips the group; `test_workloads.jl` checks the keys, that
+each operator takes its branch and that the measurement leaves allocate
+nothing.
+
+The `purifying` group times `measure!` on a young mixed state: the maximally
+mixed state after 4 layers of the same circuit, with roughly `0.4n`
+generators, where most measurements append a generator. `measure!/append-Z`
+and `measure!/append-ZZ` take that branch, and `layer` times one more layer.
+Sizes, skip rule and checks are those of `monitored`.
 
 The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
 {d = 2, d = 3, d = 5} × two sizes: `construct`, the three `measure!` branches

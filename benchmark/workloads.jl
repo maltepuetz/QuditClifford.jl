@@ -311,10 +311,13 @@ random-outcome measurement replaces one generator and folds a power of it into
 the dozens of others that anticommute, while the pivot itself spans a handful
 of sites. Single-site `Z` and `X` and nearest-neighbour `ZZ` and `XX`, each at
 the first site from the middle of the chain where the outcome is random, so
-every leaf takes the noncommuting branch. `layer` times one further brickwork
-layer -- every bond's gate and the `Z` measurements of that layer, whose
-deterministic outcomes canonicalize a `StabilizerTableau` -- from the same
-state and the same RNG state in every sample.
+every leaf takes the noncommuting branch. `measure!/fixed-Z` measures `Z` at
+the first such site where the outcome is fixed instead: the state is pure, so
+an operator that commutes with every generator lies in their span, and the
+measurement decomposes it over generators that are not in canonical form.
+`layer` times one further brickwork layer -- every bond's gate and the `Z`
+measurements of that layer, a few of them fixed -- from the same state and the
+same RNG state in every sample.
 
 The circuit runs on a `DestabilizerTableau` and its generators are copied for
 a `StabilizerTableau`, so both types measure the identical state.
@@ -337,10 +340,33 @@ function monitored_measure_group(; d::Int, n::Int, T, seed::Int = 20261119)
             measure!($tab, $(first_anticommuting(tab, candidates)); outcome = 0, phase_policy = 1),
             setup = (restore!($snap)), evals = 1)
     end
+    fixed = first_in_branch(D, [SinglePauli(q, 0, 1) for q in sites], :fixed)
+    g["measure!/fixed-Z"] = @benchmarkable(
+        measure!($tab, $fixed; outcome = 0, phase_policy = 1),
+        setup = (restore!($snap)), evals = 1)
     r0 = copy(rng)
     g["layer"] = @benchmarkable(monitored_layers!($tab, $bonds, $rng, 1; p = 0.15),
                                 setup = (restore!($snap); copy!($rng, $r0)), evals = 1)
     return g
+end
+
+"""
+    first_in_branch(D::DestabilizerTableau, candidates, branch)
+
+The first candidate whose measurement on `D` takes the commuting `branch`:
+`:fixed` (in the span of the generators, so the outcome is fixed) or
+`:append` (outside it, so a generator is appended). Decided by measuring a
+copy, which every revision can do.
+"""
+function first_in_branch(D::DestabilizerTableau, candidates, branch::Symbol)
+    branch in (:fixed, :append) || throw(ArgumentError("unknown branch $(repr(branch))"))
+    for op in candidates
+        QuditClifford._commutes_with_generators(D, op) || continue
+        t = copy(D)
+        measure!(t, op; outcome = 0, phase_policy = 1)
+        (t.m > D.m) == (branch === :append) && return op
+    end
+    error("no candidate takes the $branch branch")
 end
 
 """
@@ -354,6 +380,59 @@ function register_monitored_measure_group!(suite, types, ds, ns; api::Module = Q
     isdefined(api, :random_clifford!) || return suite
     for T in types, d in ds, n in ns
         suite["monitored"]["$(nameof(T))/d=$d/n=$n"] = monitored_measure_group(; d, n, T)
+    end
+    return suite
+end
+
+"""
+    purifying_measure_group(; d, n, T, seed = 20261119)
+
+`measure!` on a young mixed state: the maximally mixed state after 4 layers
+of the monitored brickwork circuit at `p = 0.15`, with roughly `0.4n`
+generators. Most measurements there commute with every generator without
+lying in their span, so they append a generator: `measure!/append-Z` and
+`measure!/append-ZZ` measure `Z` and two-site `ZZ` at the first site from the
+middle of the chain where that happens, `ZZ` on nearest neighbours if any
+pair appends (at `n = 8` and `d = 2` none does, and a longer-range pair is
+taken). `layer` times one further
+layer, gates and measurements, as in [`monitored_measure_group`](@ref).
+
+The circuit runs on a `DestabilizerTableau` and its generators are copied for
+a `StabilizerTableau`, so both types measure the identical state.
+"""
+function purifying_measure_group(; d::Int, n::Int, T, seed::Int = 20261119)
+    _, bonds, rng = monitored_setup(; d, n, seed, T = DestabilizerTableau)
+    D = DestabilizerTableau(d, n; state = :mixed)
+    monitored_layers!(D, bonds, rng, 4; p = 0.15)
+    tab = T === DestabilizerTableau ? D :
+          StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase, check = false)
+    sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
+    pairs = [DoublePauli(q, 0, 1, mod1(q + r, n), 0, 1) for r in 1:(n ÷ 2) for q in sites]
+    g = BenchmarkGroup()
+    snap = snapshot(tab)
+    for (name, candidates) in (("append-Z", [SinglePauli(q, 0, 1) for q in sites]),
+                               ("append-ZZ", pairs))
+        op = first_in_branch(D, candidates, :append)
+        g["measure!/$name"] = @benchmarkable(
+            measure!($tab, $op; outcome = 0, phase_policy = 1),
+            setup = (restore!($snap)), evals = 1)
+    end
+    r0 = copy(rng)
+    g["layer"] = @benchmarkable(monitored_layers!($tab, $bonds, $rng, 1; p = 0.15),
+                                setup = (restore!($snap); copy!($rng, $r0)), evals = 1)
+    return g
+end
+
+"""
+    register_purifying_measure_group!(suite, types, ds, ns; api = QuditClifford)
+
+One [`purifying_measure_group`](@ref) per tableau type, `d` and `n`, under
+`suite["purifying"]`. A baseline without `random_clifford!` skips the group.
+"""
+function register_purifying_measure_group!(suite, types, ds, ns; api::Module = QuditClifford)
+    isdefined(api, :random_clifford!) || return suite
+    for T in types, d in ds, n in ns
+        suite["purifying"]["$(nameof(T))/d=$d/n=$n"] = purifying_measure_group(; d, n, T)
     end
     return suite
 end

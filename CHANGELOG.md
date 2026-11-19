@@ -57,6 +57,34 @@ dependency bump — carries the `skip-changelog` label instead.
   deterministic measurements, which canonicalize and are unchanged. On random
   states, where the replaced generator covers most sites, the gain is up to
   1.5×, and otherwise within noise.
+- A `measure!` whose operator commutes with every generator is faster, with
+  identical outcomes, errors and RNG draws and no allocations. On a
+  `StabilizerTableau` that is not canonical it no longer canonicalizes: it
+  solves for the operator's coefficients over the generators by elimination on
+  a copy, one bit per entry at `d = 2` and one byte up to `d = 255`, and
+  leaves the generator basis and `iscanonical` as they were. A fixed outcome
+  therefore leaves the tableau unchanged, and an appended generator goes after
+  the existing ones instead of after their canonical form. A canonical tableau
+  still reads the coefficients off its pivot rows, and `expect!` and
+  `expect_int!` still canonicalize. On states after 64 monitored layers
+  (`p = 0.05` and `0.15`) a fixed-outcome measurement takes 1.5 ms instead of
+  226 ms at `d = 2` and 9.4 ms instead of 1.27 s at `d = 31` (`n = 1000`,
+  `p = 0.05`), 14–180× faster at `n = 1000`, 18–520× at `n = 2000` (2.7 s
+  to 5.2 ms at `d = 2`, 11 s to 30 ms at `d = 31`) and 16–37× at `n = 250`;
+  on young mixed states, fixed and appending measurements are 1.5–14× faster.
+  Calling `canonicalize!` first is still faster for many commuting
+  measurements in a row on a state whose generators do not change in
+  between. A `DestabilizerTableau` builds the dual of an appended generator
+  from single tableau entries instead of `2n`-term pairings and
+  re-orthogonalizes the other duals on the new generator's sites, so an
+  appending measurement is 6–28× faster at `n = 250`–`1000` and 40–58× at
+  `n = 2000`, and `reset!` gains the same way. One monitored layer from a
+  young mixed state runs up to 9× faster on a `DestabilizerTableau` and up to
+  4.8× on a `StabilizerTableau`, and a pure-state `StabilizerTableau` layer
+  with fixed outcomes up to 45× (`n = 2000`, `d = 3`). Only at `d = 2`, after a non-Hermitian generator was
+  stored under `phase_policy` `0` or `2`, can a fixed outcome on a
+  `StabilizerTableau` differ: the stabilizer group then holds `-I`, and the
+  outcome depends on the basis it is computed in.
 - `measure!` draws its outcome only when the measurement is random: when `op`
   anticommutes with a generator, or commutes with all of them without lying in
   their span. A deterministic measurement no longer advances the RNG, so code
