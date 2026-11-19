@@ -293,6 +293,50 @@ end
     end
 end
 
+@testset "GF(2) back-substitution packs coefficients into Int32 or Int64" begin
+    # generator_workspace holds Int, which is Int32 on 32-bit hosts: the packed
+    # coefficient words must survive being split into two entries.
+    for n in (40, 64, 65, 130)
+        rng = Xoshiro(n)
+        D = DestabilizerTableau(2, n; state = :Z)
+        random_state!(rng, D)
+        S = StabilizerTableau(2, copy(D.stab); m = n, check = false)
+        xz = mod.(D.stab[1:(2n), :] * rand(rng, 0:1, n), 2)
+        CM.coeffs_from_generators!(D, GeneralPauli(xz, 0))
+        for T in (Int32, Int64)
+            CM._copy_generator_rows!(S.bit_workspace, S.stab, n, n)
+            c = zeros(Int, n)
+            rank = CM._solve_generator_rows!(S.bit_workspace, copy(xz), zeros(Int, n), c,
+                                             zeros(T, 2n), n, n)
+            @test rank == n
+            @test c == D.c_workspace[1:n]
+        end
+    end
+    cw = zeros(Int32, 4)
+    CM._set_coeff_bit!(cw, 1)
+    CM._set_coeff_bit!(cw, 33)
+    CM._set_coeff_bit!(cw, 64)
+    CM._set_coeff_bit!(cw, 65)
+    @test CM._coeff_word(cw, 1) == (UInt64(1) | UInt64(1) << 32 | UInt64(1) << 63)
+    @test CM._coeff_word(cw, 2) == 1
+end
+
+@testset "Dependent generators get coefficient zero" begin
+    # Outside the contract (check=false): generator 2 repeats generator 1, so
+    # no pivot takes lead 2, and the solve still finds op = g1.
+    for d in (2, 3, 257)
+        n = 6
+        raw = copy(StabilizerTableau(d, n; state = :Z).stab)
+        raw[:, 2] = raw[:, 1]
+        S = StabilizerTableau(d, raw; m = n, check = false)
+        S.iscanonical = false
+        op = SinglePauli(1, 0, 1)
+        CM._span_coeffs_keep_basis!(S, op)
+        @test S.c_workspace[1:n] == [1, 0, 0, 0, 0, 0]
+        @test CM._in_span_from_coeffs!(S, op)
+    end
+end
+
 @testset "Generator rows are copied site by site" begin
     for (d, ws_of) in ((2, t -> t.bit_workspace), (3, t -> t.narrow_workspace),
                        (257, t -> t.workspace)), n in (1, 9, 64, 65, 130)

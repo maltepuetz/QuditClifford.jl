@@ -177,11 +177,6 @@ end
     return true
 end
 
-# A `DestabilizerTableau` keeps `xdotz_cache` current through every update; a
-# `StabilizerTableau` fills it only when it canonicalizes.
-@inline _xdotz_cache_valid(::DestabilizerTableau) = true
-@inline _xdotz_cache_valid(tab::StabilizerTableau) = tab.iscanonical
-
 """
     phase_exponent_from_coeffs!(tab::AbstractTableau)
 
@@ -226,7 +221,9 @@ where `g_j` are active stabilizer generators.
     else
         inv2 = tab.inversemod(2, d)
         xdotz_cache = tab.xdotz_cache
-        cached = _xdotz_cache_valid(tab)
+        # A DestabilizerTableau keeps `xdotz_cache` current through every
+        # update; a StabilizerTableau fills it only when it canonicalizes.
+        cached = tab isa DestabilizerTableau || tab.iscanonical
 
         @inbounds for j in 1:m
             aj = mod(cvec[j], d)
@@ -448,16 +445,36 @@ function _solve_generator_rows!(
     return rank
 end
 
+# Bit k of a set of coefficients packed into the integers of `cw`, as many
+# bits per entry as its element type has: two entries per 64-bit word where
+# `Int` is `Int32`.
+@inline function _set_coeff_bit!(cw::AbstractVector{T}, k::Int) where T<:Signed
+    b = 8 * sizeof(T)
+    @inbounds cw[(k - 1) ÷ b + 1] |= one(T) << ((k - 1) % b)
+    return cw
+end
+
+# 64-bit word `w` (bits 64w-63:64w) of the set in `cw`.
+@inline function _coeff_word(cw::AbstractVector{T}, w::Int) where T<:Signed
+    per = 8 ÷ sizeof(T)
+    x = zero(UInt64)
+    @inbounds for i in 1:per
+        x |= UInt64(cw[per * (w - 1) + i] % unsigned(T)) << (8 * sizeof(T) * (i - 1))
+    end
+    return x
+end
+
 # The GF(2) version on packed rows. Every nonzero entry is 1, so a reduction
 # is an XOR of the words from the lead's word on, and back-substitution is the
 # parity of a pivot row ANDed with the coefficients found so far, which are
-# packed into `cw[1:cld(m, 64)]` as they appear.
+# packed into `cw` as they appear (`_set_coeff_bit!`). `cw` needs
+# `cld(m, 64) * 8 ÷ sizeof(eltype(cw))` entries.
 function _solve_generator_rows!(
     ws::AbstractMatrix{UInt64},
     opv::AbstractVector{Int},
     lead::AbstractVector{Int},
     c::AbstractVector{Int},
-    cw::AbstractVector{Int},
+    cw::AbstractVector{<:Signed},
     n::Int,
     m::Int,
 )
@@ -495,8 +512,8 @@ function _solve_generator_rows!(
         opv[r] = o
     end
 
-    @inbounds for w in 1:nw
-        cw[w] = 0
+    @inbounds for i in 1:(nw * (8 ÷ sizeof(eltype(cw))))
+        cw[i] = 0
     end
     @inbounds for ℓ in m:-1:1
         p = lead[ℓ]
@@ -508,11 +525,11 @@ function _solve_generator_rows!(
         w0 = (ℓ - 1) >> 6 + 1
         acc = zero(UInt64)
         for w in w0:nw
-            acc = xor(acc, ws[poff + w, pq] & (cw[w] % UInt64))
+            acc = xor(acc, ws[poff + w, pq] & _coeff_word(cw, w))
         end
         bit = (opv[p] + count_ones(acc)) & 1
         c[ℓ] = bit
-        bit == 1 && (cw[w0] |= 1 << ((ℓ - 1) & 63))
+        bit == 1 && _set_coeff_bit!(cw, ℓ)
     end
     return rank
 end
@@ -526,7 +543,8 @@ copy in its rank workspace for `d` (see `src/rank_workspaces.jl`) instead of
 canonicalizing in place. The coefficients of an in-span `op` are unique, so
 they agree with the canonicalizing path's; `tab.stab` and `iscanonical` are
 left as they were. Writes `c_workspace`, `res_workspace`, `zacc_workspace`
-and, at `d = 2`, `generator_workspace`.
+and, at `d = 2`, `generator_workspace`, whose `2n + storephase` entries hold
+the `cld(m, 64) * 8 ÷ sizeof(Int) <= 2n` coefficient bit words.
 """
 @inline _span_coeffs_keep_basis!(tab::DestabilizerTableau, op) = coeffs_from_generators!(tab, op)
 

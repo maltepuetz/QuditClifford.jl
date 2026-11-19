@@ -506,17 +506,6 @@ end
 # Symplectic helpers        #
 #############################
 
-@inline function _symplectic_col_col(A::AbstractMatrix{<:Integer}, colA::Int, B::AbstractMatrix{<:Integer}, colB::Int, n::Int)
-    s = 0
-    @turbo for q in 1:n
-        s += A[q, colA] * B[n+q, colB]
-    end
-    @turbo for q in 1:n
-        s -= A[n+q, colA] * B[q, colB]
-    end
-    return s
-end
-
 """
 Collect into `supp` the qudit indices where column `col` of `A` is nonzero in
 either its X or its Z half, returning how many were found.
@@ -538,9 +527,10 @@ pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 end
 
 """
-`_symplectic_col_col` restricted to the qudit indices in `supp[1:nsupp]`.
-Equal to the full pairing whenever `supp` covers the support of column `colB`
-of `B` (see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
+The symplectic pairing `Σ_q A[q, colA] B[n+q, colB] - A[n+q, colA] B[q, colB]`
+of two columns, summed over the qudit indices in `supp[1:nsupp]`. Equal to
+the full pairing whenever `supp` covers the support of column `colB` of `B`
+(see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
 
 Callers sweep `colA` over many columns with a fixed `colB`, so each `A` entry
 is a cache miss while `B[:, colB]` stays cached: an `A` entry is loaded only
@@ -563,8 +553,9 @@ when the `B` entry it pairs with is nonzero.
 end
 
 """
-`_symplectic_vec_col` restricted to the qudit indices in `supp[1:nsupp]`,
-which must cover the support of column `colB` of `B`.
+The same pairing as `_symplectic_col_col_support` with a vector `vec` in
+place of column `colA`; `supp[1:nsupp]` must cover the support of column
+`colB` of `B`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
@@ -575,17 +566,6 @@ which must cover the support of column `colB` of `B`.
     @inbounds for k in 1:nsupp
         q = supp[k]
         s += vec[q] * B[n+q, colB] - vec[n+q] * B[q, colB]
-    end
-    return s
-end
-
-@inline function _symplectic_vec_col(vec::AbstractVector{<:Integer}, B::AbstractMatrix{<:Integer}, colB::Int, n::Int)
-    s = 0
-    @turbo for q in 1:n
-        s += vec[q] * B[n+q, colB]
-    end
-    @turbo for q in 1:n
-        s -= vec[n+q] * B[q, colB]
     end
     return s
 end
