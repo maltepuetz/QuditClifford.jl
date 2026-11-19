@@ -297,7 +297,7 @@ end
 
                 for j in 1:tab.m
                     @test tab.xdotz_cache[j] ==
-                          QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
+                          QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
                 end
 
                 direct = copy(destabilizer_matrix(tab))
@@ -437,7 +437,7 @@ end
         if TT === DestabilizerTableau
             _assert_duality(tab)
             for j in 1:tab.m
-                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
+                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):end] .== 0)
         end
@@ -495,7 +495,7 @@ end
 
             for j in 1:tab.m
                 @test tab.xdotz_cache[j] ==
-                      QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
+                      QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):n] .== 0)
             @test all(destabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)

@@ -34,8 +34,10 @@ end
 function _stacked_views(S::AbstractMatrix{Int}, n::Int, storephase::Bool)
     nc = size(S, 2)
     b = XZBlock{GeneratorMajor}(view(S, 1:n, :), view(S, n+1:2n, :))
-    # `@inbounds`: the empty view must also exist for a matrix with no rows.
-    phase = storephase ? view(S, 2n+1, 1:nc) : @inbounds(view(S, 1, 1:0))
+    # The empty view must also exist for a matrix with no rows, so it is built
+    # without the bounds check of `view` (which `@inbounds` does not reach on
+    # Julia 1.10). Both branches have the same type.
+    phase = storephase ? view(S, 2n+1, 1:nc) : SubArray(S, (1, 1:0))
     return b, phase
 end
 
@@ -189,7 +191,10 @@ function _gen_submul_sites!(b::_GMBlock, j::Int, src::_GMBlock, k::Int,
     return b
 end
 
-# The `helper.jl` dot products on a block; `n` is the number of qudits of `b`.
+# The x·z dot products behind phase updates, mod `d`: `dot_xz_col` pairs the X
+# part of generator `i` with the Z part of generator `j`, `dot_xz_ws_vs_col` a
+# stacked workspace's X part with the Z part of generator `tgt`, and
+# `dot_xz_col_vs_zacc` the X part of generator `j` with a Z vector of length `n`.
 @inline function dot_xz_col(b::_GMBlock, i::Int, j::Int, d::Int)
     s = 0
     x = b.x

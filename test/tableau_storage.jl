@@ -166,14 +166,16 @@ end
         @test ts_QC.dot_xz_col(b, j, d) == mod(sum(S[1:n, j] .* S[n+1:2n, j]), d)
         @test ts_QC.dot_xz_col_vs_zacc(b, j, zacc, d) == mod(sum(S[1:n, j] .* zacc), d)
         @test ts_QC.dot_xz_ws_vs_col(genws, b, j, d) == mod(sum(genws[1:n] .* S[n+1:2n, j]), d)
-        # agree with the stacked-matrix methods
-        @test ts_QC.dot_xz_col(b, i, j, d) == ts_QC.dot_xz_col(S, n, i, j, d)
 
         ts_QC._zero!(b)
         @test all(iszero, S[1:2n, :]) && S[2n+1, :] == S0[2n+1, :]
         A = view(rand(rng, 0:d-1, 3, 3), 1:2, :)
         ts_QC._zero!(A); @test all(iszero, A)
     end
+    # A matrix with no rows still gives an empty phase view, of the same type.
+    (b0, ph0) = ts_QC._stacked_views(zeros(Int, 0, 0), 0, false)
+    @test ts_QC._nq(b0) == 0 && isempty(ph0)
+    @test typeof(ph0) == typeof(ts_QC._stacked_views(zeros(Int, 1, 0), 0, true)[2])
     @testset "tableau views $label d=$d sp=$sp" for
             (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
             d in (2, 3), sp in (true, false)
@@ -189,5 +191,177 @@ end
             bd = ts_QC._destab(tab)
             @test all(ts_QC._rget(bd, r, j) == Dm[r, j] for r in 1:2n, j in 1:n)
         end
+    end
+end
+
+const ts_TYPES = [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
+
+# The storage arrays of a tableau, workspaces excluded.
+ts_arrays(t::StabilizerTableau) = Any[t.stab_x, t.stab_z, t.phase]
+ts_arrays(t::DestabilizerTableau) = Any[t.stab_x, t.stab_z, t.phase, t.destab_x, t.destab_z]
+
+ts_matrices(t::StabilizerTableau) = (stabilizer_matrix(t),)
+ts_matrices(t::DestabilizerTableau) = (stabilizer_matrix(t), destabilizer_matrix(t))
+
+function ts_random_gate(rng, d, n)
+    q = rand(rng, 1:n)
+    r = mod1(q + rand(rng, 1:(n - 1)), n)
+    k = rand(rng, 1:7)
+    k == 1 && return Fourier(q)
+    k == 2 && return Phase(q)
+    k == 3 && return Multiplier(q, rand(rng, 1:(d - 1)))
+    k == 4 && return PauliGate(q, rand(rng, 0:(d - 1)), rand(rng, 0:(d - 1)))
+    k == 5 && return SUM(q, r, rand(rng, 1:(d - 1)))
+    k == 6 && return CPhase(q, r, rand(rng, 1:(d - 1)))
+    return SWAP(q, r)
+end
+
+# A Hermitian (at d = 2) one- or two-qudit Pauli.
+function ts_random_pauli(rng, d, n)
+    q = rand(rng, 1:n)
+    r = mod1(q + rand(rng, 1:(n - 1)), n)
+    x1, z1, x2, z2 = rand(rng, 0:(d - 1), 4)
+    (x1, z1) == (0, 0) && (z1 = 1)
+    ph = d == 2 ? mod(x1 * z1 + x2 * z2, 2) : 0
+    return rand(rng, Bool) ? SinglePauli(q, x1, z1, d == 2 ? mod(x1 * z1, 2) : 0) :
+                             DoublePauli(q, x1, z1, r, x2, z2, ph)
+end
+
+@testset "removed fields" begin
+    for (label, TT) in ts_TYPES
+        tab = TT(3, 2; state = :ghz)
+        @test_throws ArgumentError tab.stab
+        err = try tab.stab; nothing catch e; e end
+        @test err isa ArgumentError && occursin("stabilizer_matrix", err.msg)
+        if TT === DestabilizerTableau
+            @test_throws ArgumentError tab.destab
+            err = try tab.destab; nothing catch e; e end
+            @test err isa ArgumentError && occursin("destabilizer_matrix", err.msg)
+        end
+        @test tab.m == 2 && tab.n == 2        # other fields read as before
+    end
+end
+
+@testset "split storage" begin
+    for (label, TT) in ts_TYPES, d in (2, 3), sp in (true, false), n in (1, 4)
+        tab = TT(d, n; state = :ghz, storephase = sp)
+        @test size(tab.stab_x) == size(tab.stab_z) == (n, n)
+        @test length(tab.phase) == (sp ? n : 0)
+        @test tab.phase isa Vector{Int}
+        if TT === DestabilizerTableau
+            @test size(tab.destab_x) == size(tab.destab_z) == (n, n)
+        end
+        S = stabilizer_matrix(tab)
+        @test tab.stab_x == S[1:n, :] && tab.stab_z == S[n+1:2n, :]
+        sp && @test tab.phase == S[2n+1, :]
+        raw = TT(d, S; storephase = sp)
+        @test size(raw.stab_x) == (n, n) && length(raw.phase) == (sp ? n : 0)
+        @test stabilizer_matrix(raw) == S
+    end
+end
+
+@testset "copy shares no storage" begin
+    for (label, TT) in ts_TYPES, d in (2, 3), sp in (true, false)
+        n = 4
+        rng = Xoshiro(17d + sp)
+        tab = TT(d, n; state = :ghz, storephase = sp)
+        apply!(tab, Fourier(2))
+        before = ts_matrices(tab)
+
+        c = copy(tab)
+        @test !any(a === b for a in ts_arrays(c), b in ts_arrays(tab))
+        apply!(c, SUM(1, 3))
+        measure!(rng, c, SinglePauli(4, 1, 0))
+        @test ts_matrices(tab) == before
+
+        dst = TT(d, n; storephase = sp)
+        copy!(dst, tab)
+        @test ts_matrices(dst) == before
+        @test !any(a === b for a in ts_arrays(dst), b in ts_arrays(tab))
+        apply!(dst, Phase(1))
+        measure!(rng, dst, SinglePauli(3, 1, 0))
+        @test ts_matrices(tab) == before
+    end
+end
+
+@testset "phase-less tableau tracks the phased one" begin
+    for (label, TT) in ts_TYPES, d in (2, 3)
+        n = 5
+        rng = Xoshiro(4242 + d)
+        tp = TT(d, n; storephase = true)
+        tq = TT(d, n; storephase = false)
+        steps = shuffle(rng, vcat(fill(:gate, 30), fill(:measure, 10)))
+        for s in steps
+            if s === :gate
+                g = ts_random_gate(rng, d, n)
+                apply!(tp, g); apply!(tq, g)
+            else
+                op = ts_random_pauli(rng, d, n)
+                measure!(tp, op; outcome = 0); measure!(tq, op; outcome = 0)
+            end
+            @test stabilizer_matrix(tq) == stabilizer_matrix(tp)[1:2n, :]
+            @test tq.m == tp.m
+            TT === DestabilizerTableau && @test destabilizer_matrix(tq) == destabilizer_matrix(tp)
+        end
+        @test tp.m > 0
+    end
+end
+
+@testset "tiny sizes" begin
+    for (label, TT) in ts_TYPES, d in (2, 3)
+        @testset "$label d=$d n=1" begin
+            for (state, basis) in ((:mixed, :Z), (:product, :X), (:product, :Y), (:product, :Z), (:ghz, :Z))
+                tab = state === :product ? TT(d, 1; state, basis) : TT(d, 1; state)
+                ent = entanglement_entropy(tab, [1])
+                @test ent == 1 - tab.m        # pure on the whole system, else maximally mixed
+                apply!(tab, Fourier(1))
+                c = copy(tab)
+                @test c == tab
+                S = stabilizer_matrix(tab)
+                if tab.m == 1
+                    # The generator itself: a deterministic outcome, state unchanged.
+                    op = SinglePauli(1, S[1, 1], S[2, 1], S[3, 1])
+                    @test measure!(tab, op) == 0
+                    @test stabilizer_matrix(tab) == S
+                    # The conjugate basis: a random outcome.
+                    other = S[1, 1] == 0 ? SinglePauli(1, 1, 0) : SinglePauli(1, 0, 1)
+                    @test measure!(tab, other; outcome = 1) == 1
+                    @test tab.m == 1
+                    @test measure!(tab, other) == 1
+                else
+                    @test measure!(tab, SinglePauli(1, 0, 1); outcome = 1) == 1
+                    @test tab.m == 1 && measure!(tab, SinglePauli(1, 0, 1)) == 1
+                end
+                @test entanglement_entropy(tab, [1]) == 0
+                canonicalize!(tab)
+                @test tab.iscanonical && copy(tab) == tab
+                @test tab != c
+            end
+        end
+        @testset "$label d=$d m=0" begin
+            for n in (1, 3)
+                tab = TT(d, n; state = :mixed)
+                @test tab.m == 0
+                @test stabilizer_matrix(tab) == zeros(Int, 2n + 1, n)
+                @test expect!(tab, SinglePauli(1, 0, 1)) == 0
+                @test !is_pure(tab)
+                @test entanglement_entropy(tab, [1]) == 1
+                @test entanglement_entropy(tab, collect(1:n)) == n
+                @test copy(tab) == tab
+                @test measure!(tab, SinglePauli(1, 1, 0); outcome = 0) == 0
+                @test tab.m == 1 && stabilizer_matrix(tab)[:, 1] == [1; zeros(Int, 2n - 1); 0]
+            end
+        end
+    end
+end
+
+@testset "no raw storage access outside the storage files" begin
+    srcdir = joinpath(pkgdir(QuditClifford), "src")
+    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl")
+    for f in readdir(srcdir)
+        endswith(f, ".jl") || continue
+        text = read(joinpath(srcdir, f), String)
+        f in allowed || @test !occursin(r"\.(stab|destab)_[xz]\b", text)
+        @test !occursin(r"\.(stab|destab)\b", text)
     end
 end

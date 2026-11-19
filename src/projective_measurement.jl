@@ -695,7 +695,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
             set_operator!(tab, i, op)
 
             # IMPORTANT for mixed-state measurement:
-            # we override the phase row so that the new generator stabilizes the post-measurement state,
+            # we override the phase so that the new generator stabilizes the post-measurement state,
             # dependent on the sampled outcome, and the phase of the input operator.
             if tab.storephase
                 _phase(tab)[i] = _measured_generator_phase(t, kop, d)

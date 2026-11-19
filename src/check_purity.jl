@@ -128,7 +128,7 @@ is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
 function _validate_generators!(tab::AbstractTableau)
     m = tab.m
     # A qubit generator must also be Hermitian, a ≡ x·z (mod 2): otherwise it
-    # squares to -I and stabilizes nothing. Without a phase row there is no `a`
+    # squares to -I and stabilizes nothing. Without stored phases there is no `a`
     # to check.
     if tab.d == 2 && tab.storephase
         b, phase = _stab(tab), _phase(tab)

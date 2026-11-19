@@ -310,7 +310,7 @@ end
 
 # Copy rows interleaved by site: rows 2k-1 and 2k hold the X and Z exponents
 # of `sites[k]`, so that a bottom-up pivot identifies the rightmost support of
-# a generator. Only the active columns are copied, without the phase row.
+# a generator. Only the active columns are copied, without the phases.
 function _copy_sites_interleaved!(ws::AbstractMatrix{Int}, b::_GMBlock,
                                   m::Int, sites::AbstractVector)
     n = _nq(b)

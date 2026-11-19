@@ -3,9 +3,9 @@
 # Every routine in this file assumes its inputs are ALREADY REDUCED into
 # [0, d).  Tableau entries, destabilizer entries and the operator workspaces
 # all satisfy that: `_build_stabilizer_tableau` and `_build_destabilizer_tableau`
-# both reduce raw input (the latter covers `destab`, which these primitives also
-# write), the preset fillers write reduced values, and every `set_operator!`
-# method reduces each exponent on write.  That invariant is what turns the outer
+# both reduce raw input (the latter also builds the destabilizers, which these
+# primitives also write), the preset fillers write reduced values, and every
+# `set_operator!` method reduces each exponent on write.  That invariant is what turns the outer
 # reduction into a single conditional add or subtract instead of a division.
 # Handing one of these functions an unreduced value gives a WRONG answer, not a
 # slow one.
@@ -175,75 +175,20 @@ end
     return dst
 end
 
-##############################################################
-# dst[r] = mod(dst[r] ± a*src[r], d) on the rows of a site set #
-##############################################################
-# The site-restricted forms of `addmul_mod!` and `submul_mod!` for a vector of
-# length `2n` in tableau-column layout: they touch only rows `q` and `n + q`
-# for each site `q` in `sites[1:nsites]`, and leave every other entry alone. A
-# caller that knows `src` vanishes outside those rows gets the same result as
-# the full primitive at O(nsites) instead of O(n).
+##################################################################
+# dst[q] = mod(dst[q] ± a*src[q], d) on the qudits of a site set #
+##################################################################
+# The site-restricted forms of `addmul_mod!` and `submul_mod!` for a generator
+# whose X and Z parts are separate vectors of length `n`: they touch only
+# `dstx[q]` and `dstz[q]` for each site `q` in `sites[1:nsites]`, and leave every
+# other entry alone. A caller that knows `src` vanishes outside those sites gets
+# the same result as the full primitive at O(nsites) instead of O(n).
 #
 # Same preconditions as the full primitives (reduced entries and multiplier,
-# `dst` and `src` not aliased); additionally the sites are distinct and lie in
-# `1:n`, which is checked by nobody since the loop runs under `@inbounds`. The
-# gathered indices rule out `@turbo`, so the tier is chosen once and the loop
-# body is scalar.
-@inline function addmul_mod_sites!(dst::AbstractVector{Int}, src::AbstractVector{Int},
-                                   sites::AbstractVector{Int}, nsites::Int, n::Int,
-                                   a::Int, d::Int)
-    a == 0 && return dst
-    if a == 1
-        @inbounds for k in 1:nsites
-            q = sites[k]
-            r = dst[q] + src[q]
-            dst[q] = r - ifelse(r >= d, d, 0)
-            r = dst[n+q] + src[n+q]
-            dst[n+q] = r - ifelse(r >= d, d, 0)
-        end
-    elseif a == d - 1
-        @inbounds for k in 1:nsites
-            q = sites[k]
-            r = dst[q] - src[q]
-            dst[q] = r + ifelse(r < 0, d, 0)
-            r = dst[n+q] - src[n+q]
-            dst[n+q] = r + ifelse(r < 0, d, 0)
-        end
-    elseif _barrett_valid(d)
-        M = _barrett_mul(d)
-        @inbounds for k in 1:nsites
-            q = sites[k]
-            t = a * src[q]
-            t = t - ((t * M) >> _BARRETT_K) * d
-            r = dst[q] + t
-            dst[q] = r - ifelse(r >= d, d, 0)
-            t = a * src[n+q]
-            t = t - ((t * M) >> _BARRETT_K) * d
-            r = dst[n+q] + t
-            dst[n+q] = r - ifelse(r >= d, d, 0)
-        end
-    else
-        @inbounds for k in 1:nsites
-            q = sites[k]
-            dst[q] = mod(dst[q] + mod(a * src[q], d), d)
-            dst[n+q] = mod(dst[n+q] + mod(a * src[n+q], d), d)
-        end
-    end
-    return dst
-end
-
-@inline function submul_mod_sites!(dst::AbstractVector{Int}, src::AbstractVector{Int},
-                                   sites::AbstractVector{Int}, nsites::Int, n::Int,
-                                   a::Int, d::Int)
-    a == 0 && return dst
-    # dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d.
-    return addmul_mod_sites!(dst, src, sites, nsites, n, d - a, d)
-end
-
-# Split form for a generator whose X and Z parts are separate vectors of length
-# `n`: the same tiers as the stacked form, touching `dstx[q]`/`dstz[q]` for each
-# site `q` in `sites[1:nsites]`. `dstx` and `dstz` must not alias `srcx` or
-# `srcz`, and the sites are distinct and lie in `1:n` (unchecked, `@inbounds`).
+# `dstx` and `dstz` not aliased with `srcx` or `srcz`); additionally the sites
+# are distinct and lie in `1:n`, which is checked by nobody since the loop runs
+# under `@inbounds`. The gathered indices rule out `@turbo`, so the tier is
+# chosen once and the loop body is scalar.
 @inline function addmul_mod_sites!(dstx::AbstractVector{Int}, dstz::AbstractVector{Int},
                                    srcx::AbstractVector{Int}, srcz::AbstractVector{Int},
                                    sites::AbstractVector{Int}, nsites::Int,
@@ -337,7 +282,8 @@ end
 # the identity. At d = 2 that is EVERY call from `canonicalize!`, since the
 # pivot is nonzero (so 1) and inv(1, 2) = 1 -- so the early return skips 2n^2
 # identity divisions per `_canonicalize_tableau!`, and 4n^2 per
-# `_canonicalize_tableau_with_destab!`, which scales `tab` and `destab` in turn.
+# `_canonicalize_tableau_with_destab!`, which scales the stabilizer and
+# destabilizer generators in turn.
 @inline function scale_mod!(dst::AbstractVector{Int}, a::Int, d::Int)
     a == 1 && return dst
     if a == 0

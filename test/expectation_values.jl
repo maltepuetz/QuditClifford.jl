@@ -220,8 +220,8 @@ end
         # they commute, so this is a legal stabilizer group ...
         @test mod(QuditClifford.commutation_col(QuditClifford._stab(st), 1, stabilizer_matrix(st)[:, 2]), d) == 0
         # ... and the ordered cross terms are genuinely nonzero
-        @test QuditClifford.dot_xz_col(stabilizer_matrix(st), n, 1, 2, d) == 1
-        @test QuditClifford.dot_xz_col(stabilizer_matrix(st), n, 2, 1, d) == 1
+        @test QuditClifford.dot_xz_col(QuditClifford._stab(st), 1, 2, d) == 1
+        @test QuditClifford.dot_xz_col(QuditClifford._stab(st), 2, 1, d) == 1
 
         for a in 1:(d - 1), b in 1:(d - 1)
             (a == 1 && b == 1) && continue          # want coefficients > 1

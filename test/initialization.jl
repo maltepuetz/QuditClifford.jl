@@ -178,9 +178,10 @@ end
 
     # The preset builder has its own defensive contract in addition to the
     # public normalization layer.
-    raw = zeros(Int, 3, 1)
+    block = QuditClifford.XZBlock{QuditClifford.GeneratorMajor}(zeros(Int, 1, 1), zeros(Int, 1, 1))
     @test_throws ArgumentError QuditClifford._preset_tableau!(
-        raw,
+        block,
+        zeros(Int, 1),
         2,
         1,
         :unknown,
@@ -241,7 +242,7 @@ end
                     @test v == (i == j ? 1 : 0)
                 end
                 for j in 1:tab.m
-                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(stabilizer_matrix(tab), tab.n, j, tab.d)
+                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, tab.d)
                 end
             end
         end

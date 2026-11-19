@@ -285,10 +285,10 @@ true
 
 # Notes
 - Operates on columns `1:m` (active generators). Columns `m+1:n` are unused capacity.
-- If `storephase=true`, the phase row is updated so the represented stabilizer subgroup is unchanged.
+- If `storephase=true`, the phases are updated so the represented stabilizer subgroup is unchanged.
 - Updates `tab.pivcol_of_row`, `tab.xdotz_cache`, and sets `tab.iscanonical = true`.
-- For `DestabilizerTableau`, canonicalization also updates `tab.destab` to preserve
-  the stabilizer/destabilizer duality.
+- For `DestabilizerTableau`, canonicalization also updates the destabilizers to
+  preserve the stabilizer/destabilizer duality.
 """
 function canonicalize!(tab::StabilizerTableau)
     _canonicalize_tableau!(

@@ -100,6 +100,11 @@ end
                             before = tce_snapshot(src)
                             arrays = [f => getfield(dst, f) for f in fieldnames(typeof(dst))
                                       if getfield(dst, f) isa Array]
+                            storage = TT === DestabilizerTableau ?
+                                (:stab_x, :stab_z, :phase, :destab_x, :destab_z) :
+                                (:stab_x, :stab_z, :phase)
+                            @test !isempty(arrays)
+                            @test all(f in first.(arrays) for f in storage)
                             @test copy!(dst, src) === dst
                             @test all(getfield(dst, f) === arr for (f, arr) in arrays)
                             @test tce_snapshot(src) == before

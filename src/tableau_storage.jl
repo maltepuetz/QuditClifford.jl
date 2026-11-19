@@ -1,5 +1,34 @@
-# Access to the tableau storage: the generators of a tableau as plain `Int`
-# matrices, in generator-major or qudit-major layout.
+# Access to the tableau storage. A tableau holds its stabilizers in the fields
+# `stab_x`, `stab_z` (`n × n`, generator `j` in column `j`) and `phase` (length
+# `n`, or 0 without `storephase`), and a `DestabilizerTableau` its destabilizers
+# in `destab_x` and `destab_z`. Only this file and the two constructor files
+# touch those fields; algorithms go through `_stab`, `_destab` and `_phase`.
+
+# The stabilizer and destabilizer blocks and the phase vector of a tableau. They
+# share the tableau's arrays, so writing through them changes the tableau.
+_stab(tab::AbstractTableau) = XZBlock{GeneratorMajor}(tab.stab_x, tab.stab_z)
+_destab(tab::DestabilizerTableau) = XZBlock{GeneratorMajor}(tab.destab_x, tab.destab_z)
+_phase(tab::AbstractTableau) = tab.phase
+
+@noinline _throw_removed_field(s::Symbol, accessor::Symbol) =
+    throw(ArgumentError("tab.$s was removed; use $accessor(tab)."))
+
+@inline function Base.getproperty(tab::StabilizerTableau, s::Symbol)
+    s === :stab && _throw_removed_field(s, :stabilizer_matrix)
+    return getfield(tab, s)
+end
+
+@inline function Base.getproperty(tab::DestabilizerTableau, s::Symbol)
+    s === :stab && _throw_removed_field(s, :stabilizer_matrix)
+    s === :destab && _throw_removed_field(s, :destabilizer_matrix)
+    return getfield(tab, s)
+end
+
+# The generator matrix of `tab` in generator-major layout.
+function _stabilizer_generator_matrix(tab::AbstractTableau)
+    b, phase = _stab(tab), _phase(tab)
+    return tab.storephase ? vcat(b.x, b.z, permutedims(phase)) : vcat(b.x, b.z)
+end
 
 function _check_layout(layout::Symbol)
     layout === :generator || layout === :qudit ||
@@ -30,7 +59,8 @@ throws an `ArgumentError`.
 """
 function stabilizer_matrix(tab::AbstractTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    return layout === :generator ? copy(tab.stab) : permutedims(tab.stab)
+    S = _stabilizer_generator_matrix(tab)
+    return layout === :generator ? S : permutedims(S)
 end
 
 """
@@ -54,29 +84,33 @@ throws an `ArgumentError`.
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    return layout === :generator ? copy(tab.destab) : permutedims(tab.destab)
+    b = _destab(tab)
+    D = vcat(b.x, b.z)
+    return layout === :generator ? D : permutedims(D)
 end
 
-# Overwrite `dst` with the generator-major matrix `src` of exactly the same shape.
-# `m`, `iscanonical` and the caches are left alone.
-function _load_generator_matrix!(dst::Matrix{Int}, src::AbstractMatrix{<:Integer})
-    size(src) == size(dst) || throw(ArgumentError(
-        "expected a $(size(dst, 1))×$(size(dst, 2)) matrix, got $(size(src, 1))×$(size(src, 2))"))
-    copyto!(dst, src)
-    return dst
+function _check_generator_matrix_size(src::AbstractMatrix, nrows::Int, ncols::Int)
+    size(src) == (nrows, ncols) || throw(ArgumentError(
+        "expected a $(nrows)×$(ncols) matrix, got $(size(src, 1))×$(size(src, 2))"))
+    return nothing
 end
 
+# Overwrite the generators of a tableau with a generator-major matrix of exactly
+# the shape `stabilizer_matrix` or `destabilizer_matrix` returns. `m`,
+# `iscanonical` and the caches are left alone.
 function _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer})
-    _load_generator_matrix!(tab.stab, S)
+    n = tab.n
+    _check_generator_matrix_size(S, 2n + (tab.storephase ? 1 : 0), n)
+    tab.stab_x .= view(S, 1:n, :)
+    tab.stab_z .= view(S, n+1:2n, :)
+    tab.storephase && (tab.phase .= view(S, 2n + 1, :))
     return tab
 end
 
 function _load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{<:Integer})
-    _load_generator_matrix!(tab.destab, D)
+    n = tab.n
+    _check_generator_matrix_size(D, 2n, n)
+    tab.destab_x .= view(D, 1:n, :)
+    tab.destab_z .= view(D, n+1:2n, :)
     return tab
 end
-
-# Block and phase views of a tableau's storage.
-_stab(tab::AbstractTableau) = _stacked_views(tab.stab, tab.n, tab.storephase)[1]
-_destab(tab::DestabilizerTableau) = _stacked_views(tab.destab, tab.n, false)[1]
-_phase(tab::AbstractTableau) = _stacked_views(tab.stab, tab.n, tab.storephase)[2]

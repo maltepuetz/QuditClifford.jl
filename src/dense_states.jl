@@ -3,7 +3,7 @@
 # `ket`, `state_vector` and `density_matrix` read a tableau and never write to
 # it: they canonicalize a private copy, allocate their own scratch, and never
 # borrow the shared workspaces. Hence no `!`, and no DestabilizerTableau hook --
-# there is no `destab` duality or `xdotz_cache` to keep in step.
+# there is no destabilizer duality or `xdotz_cache` to keep in step.
 #
 # `maxentries` bounds the scalar storage a call returns, never peak memory, and
 # every bound is tested without forming a value that could overflow.

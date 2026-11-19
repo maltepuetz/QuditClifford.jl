@@ -410,39 +410,10 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         @test collect(view(A, 3, :)) == want
     end
 
-    @testset "Site-restricted addmul/submul on a column" begin
-        # Rows q and n + q for each listed site; every other row untouched.
-        # 131 is rejected by the Barrett guard, 1031 lies above its table, so
-        # all four tiers run.
-        rng = Xoshiro(20261119)
-        for d in (2, 3, 5, 31, 131, 1031), n in (1, 4, 9), trial in 1:20
-            dst0 = rand(rng, 0:(d - 1), 2n)
-            src = rand(rng, 0:(d - 1), 2n)
-            k = rand(rng, 0:n)
-            sites = vcat(randperm(rng, n)[1:k], rand(rng, 1:n, 3))  # padding past nsites
-            a = rand(rng, (0, 1, d - 1, rand(rng, 0:(d - 1))))
-            rows = vcat(sites[1:k], n .+ sites[1:k])
-            want_add = copy(dst0)
-            want_sub = copy(dst0)
-            want_add[rows] = _ref_addmul(dst0[rows], src[rows], a, d)
-            want_sub[rows] = _ref_submul(dst0[rows], src[rows], a, d)
-            @test QC.addmul_mod_sites!(copy(dst0), src, sites, k, n, a, d) == want_add
-            @test QC.submul_mod_sites!(copy(dst0), src, sites, k, n, a, d) == want_sub
-            # On a column view, against the full primitive with src zero
-            # outside the sites.
-            M = zeros(Int, 2n + 1, 2)
-            M[1:(2n), 1] = dst0
-            srcz = zeros(Int, 2n)
-            srcz[rows] = src[rows]
-            QC.addmul_mod_sites!(view(M, 1:(2n), 1), srcz, sites, k, n, a, d)
-            @test M[1:(2n), 1] == QC.addmul_mod!(copy(dst0), srcz, a, d)
-            @test M[2n + 1, 1] == 0
-        end
-    end
-
-    @testset "Split site-restricted addmul/submul match the stacked form" begin
+    @testset "Site-restricted addmul/submul" begin
         # X and Z parts as separate vectors; src is nonzero everywhere, so a
-        # form that touched a non-site entry would change it.
+        # form that touched a non-site entry would change it. 131 is rejected
+        # by the Barrett guard, 1031 lies above its table, so all four tiers run.
         rng = Xoshiro(20261120)
         for d in (SMALL_D..., 1031), n in (1, 4, 9), trial in 1:20
             dstx = rand(rng, 0:(d - 1), n); dstz = rand(rng, 0:(d - 1), n)
@@ -450,26 +421,26 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             k = rand(rng, 0:n)
             sites = vcat(randperm(rng, n)[1:k], rand(rng, 1:n, 3))  # padding past nsites
             a = rand(rng, (0, 1, d - 1, rand(rng, 0:(d - 1))))
-            for (split!, stacked!) in ((QC.addmul_mod_sites!, QC.addmul_mod_sites!),
-                                       (QC.submul_mod_sites!, QC.submul_mod_sites!))
-                want = vcat(dstx, dstz)
-                stacked!(want, vcat(srcx, srcz), sites, k, n, a, d)
+            out = trues(n)
+            out[sites[1:k]] .= false
+            for (f!, ref) in ((QC.addmul_mod_sites!, _ref_addmul),
+                              (QC.submul_mod_sites!, _ref_submul))
                 gx = copy(dstx); gz = copy(dstz)
-                split!(gx, gz, srcx, srcz, sites, k, a, d)
-                @test vcat(gx, gz) == want
-                out = trues(n)
-                out[sites[1:k]] .= false
+                @test f!(gx, gz, srcx, srcz, sites, k, a, d) === nothing
+                @test gx[sites[1:k]] == ref(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
+                @test gz[sites[1:k]] == ref(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
                 @test gx[out] == dstx[out] && gz[out] == dstz[out]
             end
-            # Against the naive reference on the sites.
-            ax = copy(dstx); az = copy(dstz)
-            QC.addmul_mod_sites!(ax, az, srcx, srcz, sites, k, a, d)
-            @test ax[sites[1:k]] == _ref_addmul(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
-            @test az[sites[1:k]] == _ref_addmul(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
-            sx = copy(dstx); sz = copy(dstz)
-            QC.submul_mod_sites!(sx, sz, srcx, srcz, sites, k, a, d)
-            @test sx[sites[1:k]] == _ref_submul(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
-            @test sz[sites[1:k]] == _ref_submul(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
+            # On column views of the X and Z blocks, against the full primitive
+            # with src zero outside the sites.
+            X = zeros(Int, n, 2); Z = zeros(Int, n, 2)
+            X[:, 1] = dstx; Z[:, 1] = dstz
+            sx = zeros(Int, n); sz = zeros(Int, n)
+            sx[sites[1:k]] = srcx[sites[1:k]]; sz[sites[1:k]] = srcz[sites[1:k]]
+            QC.addmul_mod_sites!(view(X, :, 1), view(Z, :, 1), sx, sz, sites, k, a, d)
+            @test X[:, 1] == QC.addmul_mod!(copy(dstx), sx, a, d)
+            @test Z[:, 1] == QC.addmul_mod!(copy(dstz), sz, a, d)
+            @test all(iszero, X[:, 2]) && all(iszero, Z[:, 2])
         end
     end
 end

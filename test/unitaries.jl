@@ -484,12 +484,13 @@ end
     end
 end
 
-# `storephase` must change nothing but the phase row. A phase-free tableau's
-# `stab` is 2n x n, so there is no row 2n+1 to write: a gate that wrote it
-# anyway would land in a neighbouring column under `@inbounds` rather than
-# raising a BoundsError. Comparing the exponent blocks of two otherwise
-# identical runs catches that for a StabilizerTableau, which -- unlike a
-# DestabilizerTableau -- carries no dual basis to cross-check against.
+# `storephase` must change nothing but the phases. A phase-free tableau's
+# phase vector is empty, and a gate that wrote a phase anyway would write past
+# its end under `@inbounds` rather than raising a BoundsError. Comparing the
+# exponent blocks of two otherwise identical runs checks that the X and Z
+# exponents move the same way either way, for a StabilizerTableau too, which
+# -- unlike a DestabilizerTableau -- carries no dual basis to cross-check
+# against.
 @testset "apply! moves the same exponents with and without phases" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau),
                         ("DestabilizerTableau", DestabilizerTableau)]
@@ -554,12 +555,13 @@ end
                 @test_throws ArgumentError QC._apply_prepared!(
                     tab, QC._prepare(Fourier(1), other, jit, true))
 
-                # storephase mismatch: `stab` has no phase row to write to.
+                # storephase mismatch: the tableau's phase vector is empty, so
+                # there is no phase to write to.
                 @test_throws ArgumentError QC._apply_prepared!(
                     tab, QC._prepare(Fourier(1), d, jit, false))
 
-                # Out-of-range target: `_gather`/`_scatter!` index rows
-                # `t` and `n + t` under `@inbounds`. Repeated targets cannot
+                # Out-of-range target: `_gather`/`_scatter!` index qudit `t`
+                # of the X and Z blocks under `@inbounds`. Repeated targets cannot
                 # be built from a named gate -- `_check_pair` rejects them at
                 # construction -- so `_validate_targets`' other branch is
                 # exercised directly in the testset below instead.

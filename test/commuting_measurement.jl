@@ -43,7 +43,7 @@ function cmref_after_append!(tab::DestabilizerTableau, newcol::Int, res::Abstrac
         D[1:(2n), j] .= mod.(D[1:(2n), j] .- t .* D[1:(2n), newcol], d)
     end
     QuditClifford._load_destabilizer_matrix!(tab, D)
-    tab.xdotz_cache[newcol] = CM.dot_xz_col(stabilizer_matrix(tab), n, newcol, d)
+    tab.xdotz_cache[newcol] = CM.dot_xz_col(CM._stab(tab), newcol, d)
     return nothing
 end
 
@@ -184,7 +184,7 @@ function cmref_hermitian!(tab)
     n = tab.n
     S = stabilizer_matrix(tab)
     for j in 1:tab.m
-        isodd(S[2n+1, j] - CM.dot_xz_col(S, n, j, 2)) || continue
+        isodd(S[2n+1, j] - CM.dot_xz_col(CM._stacked_views(S, n, false)[1], j, 2)) || continue
         S[2n+1, j] = mod(S[2n+1, j] + 1, 4)
     end
     QuditClifford._load_stabilizer_matrix!(tab, S)
@@ -389,7 +389,7 @@ end
         # Fixed outcome: columns, order and flag unchanged.
         xz = mod.(stabilizer_matrix(S)[1:(2n), 3] .+ stabilizer_matrix(S)[1:(2n), 7], d)
         # Hermitian at d = 2: phase exponent ≡ x·z (mod 2).
-        op = GeneralPauli(xz, d == 2 ? CM.dot_xz_col(reshape(xz, :, 1), n, 1, 2) : 0)
+        op = GeneralPauli(xz, d == 2 ? mod(sum(xz[1:n] .* xz[n+1:2n]), 2) : 0)
         expected = expect_int!(copy(S), op)
         t = measure!(S, op)
         @test stabilizer_matrix(S) == before

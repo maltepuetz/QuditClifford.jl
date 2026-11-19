@@ -23,13 +23,13 @@ function mkref_mul_col!(tab, col::Int, a::Int)
     if tab.storephase
         prow = 2n + 1
         if d == 2
-            cross = MK.dot_xz_ws_vs_col(genws, stab, n, col, d)
+            cross = MK.dot_xz_ws_vs_col(genws, MK._stacked_views(stab, n, false)[1], col, d)
             stab[prow, col] = mod(stab[prow, col] + genws[prow] + 2 * cross, 4)
         else
             inv2 = tab.inversemod(2, d)
             xdotz_ws = MK.dot_xz_ws(genws, n, d)
             k_power = mod(a * genws[prow] + MK.binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d)
-            cross = mod(a * MK.dot_xz_ws_vs_col(genws, stab, n, col, d), d)
+            cross = mod(a * MK.dot_xz_ws_vs_col(genws, MK._stacked_views(stab, n, false)[1], col, d), d)
             stab[prow, col] = mod(stab[prow, col] + k_power + cross, d)
         end
     end
@@ -42,7 +42,7 @@ end
 
 mkref_col_updated!(::StabilizerTableau, ::Int) = nothing
 mkref_col_updated!(tab::DestabilizerTableau, col::Int) =
-    (tab.xdotz_cache[col] = MK.dot_xz_col(stabilizer_matrix(tab), tab.n, col, tab.d); nothing)
+    (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, tab.d); nothing)
 
 mkref_after_noncommuting!(::StabilizerTableau, ::Int, ::Int, ::Int) = nothing
 function mkref_after_noncommuting!(tab::DestabilizerTableau, pivot::Int, comm0::Int, m::Int)
@@ -311,7 +311,7 @@ end
         pd = MK._PivotUpdate(pu.nsupp, false, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         ps = MK._PivotUpdate(pu.nsupp, true, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         for col in 2:n, a in (d == 2 ? (1,) : (1, 2, d - 1))
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(stabilizer_matrix(tab), n, col, d))
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
             before = stabilizer_matrix(tab)[:, col]
             MK._absorb_pivot_power!(tab, col, a, pd)
             dense = stabilizer_matrix(tab)[:, col]
@@ -319,12 +319,12 @@ end
             S = stabilizer_matrix(tab)
             S[:, col] .= before
             QuditClifford._load_stabilizer_matrix!(tab, S)
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(stabilizer_matrix(tab), n, col, d))
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
             MK._absorb_pivot_power!(tab, col, a, ps)
             @test stabilizer_matrix(tab)[:, col] == dense
             @test tab.xdotz_cache[col] == cdense
             if TT === DestabilizerTableau
-                @test cdense == MK.dot_xz_col(stabilizer_matrix(tab), n, col, d)
+                @test cdense == MK.dot_xz_col(MK._stab(tab), col, d)
             end
             S = stabilizer_matrix(tab)
             S[:, col] .= before
