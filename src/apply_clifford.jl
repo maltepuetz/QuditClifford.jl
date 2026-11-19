@@ -304,23 +304,22 @@ end
 ########################################
 
 # Target coordinates in all-X-then-all-Z order, matching the generator order.
-@inline function _gather(A::Matrix{Int}, targets::NTuple{K,Int}, n::Int, j::Int) where {K}
+@inline function _gather(b::XZBlock{GeneratorMajor}, targets::NTuple{K,Int}, j::Int) where {K}
     return ntuple(Val(2K)) do i
         @inline
-        @inbounds i <= K ? A[targets[i], j] : A[n + targets[i - K], j]
+        i <= K ? _xget(b, targets[i], j) : _zget(b, targets[i - K], j)
     end
 end
 
 @inline function _scatter!(
-    A::Matrix{Int},
+    b::XZBlock{GeneratorMajor},
     targets::NTuple{K,Int},
-    n::Int,
     j::Int,
     vout::NTuple{S,Int},
 ) where {K,S}
     @inbounds for i in 1:K
-        A[targets[i], j] = vout[i]
-        A[n + targets[i], j] = vout[K + i]
+        _xset!(b, vout[i], targets[i], j)
+        _zset!(b, vout[K + i], targets[i], j)
     end
     return nothing
 end
@@ -335,15 +334,15 @@ end
 # bang marks that a backing MAY mutate borrowed scratch -- the tuple backing
 # does not need to.
 
-@inline _gather_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
-                          j::Int) where {K,S} = _gather(A, prep.targets, n, j)
+@inline _gather_prepared!(prep::PreparedClifford{K,S}, b::XZBlock{GeneratorMajor},
+                          j::Int) where {K,S} = _gather(b, prep.targets, j)
 
 @inline _matvec_prepared!(prep::PreparedClifford{K,S},
                           v::NTuple{S,Int}) where {K,S} = _matvec(prep, v)
 
-@inline _scatter_prepared!(prep::PreparedClifford{K,S}, A::Matrix{Int}, n::Int,
+@inline _scatter_prepared!(prep::PreparedClifford{K,S}, b::XZBlock{GeneratorMajor},
                            j::Int, vout::NTuple{S,Int}) where {K,S} =
-    _scatter!(A, prep.targets, n, j, vout)
+    _scatter!(b, prep.targets, j, vout)
 
 @inline function _col_xdotz_prepared(prep::PreparedClifford{K,S},
                                      v::NTuple{S,Int}) where {K,S}
@@ -476,22 +475,23 @@ struct PreparedDenseClifford <: AbstractPreparedClifford
     storephase::Bool
 end
 
-@inline function _gather_prepared!(prep::PreparedDenseClifford, A::Matrix{Int},
-                                   n::Int, j::Int)
+@inline function _gather_prepared!(prep::PreparedDenseClifford,
+                                   b::XZBlock{GeneratorMajor}, j::Int)
     t = prep.targets; k = prep.k; v = prep.v
     @inbounds for i in 1:k
-        v[i] = A[t[i], j]
-        v[k + i] = A[n + t[i], j]
+        v[i] = _xget(b, t[i], j)
+        v[k + i] = _zget(b, t[i], j)
     end
     return v
 end
 
-@inline function _scatter_prepared!(prep::PreparedDenseClifford, A::Matrix{Int},
-                                    n::Int, j::Int, vout::Vector{Int})
+@inline function _scatter_prepared!(prep::PreparedDenseClifford,
+                                    b::XZBlock{GeneratorMajor}, j::Int,
+                                    vout::Vector{Int})
     t = prep.targets; k = prep.k
     @inbounds for i in 1:k
-        A[t[i], j] = vout[i]
-        A[n + t[i], j] = vout[k + i]
+        _xset!(b, vout[i], t[i], j)
+        _zset!(b, vout[k + i], t[i], j)
     end
     return nothing
 end
@@ -758,7 +758,7 @@ end
 # so this entry point cannot assume `apply!` built it for this tableau. All
 # three are re-checked here in O(1)/O(k^2) at function entry, never per column:
 # a mismatched `d` would silently reduce exponents and phases against the wrong
-# modulus, a mismatched `storephase` would write past the end of `stab`, and an
+# modulus, a mismatched `storephase` would write past the end of the phase vector, and an
 # out-of-range target would index out of bounds -- the column loop below runs
 # under `@inbounds`, so none of the three would raise on its own.
 # The dense backing re-checks target BOUNDS but trusts its constructor for
@@ -776,20 +776,19 @@ function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
         "PreparedClifford for this tableau before applying it."))
     length(prep.targets) == 0 && return tab
     _validate_clifford_targets(prep, tab.n)
-    n = tab.n
-    stab = tab.stab
-    phase_row = 2n + 1
+    stab = _stab(tab)
+    phase = _phase(tab)
     @inbounds for j in 1:tab.m
-        v = _gather_prepared!(prep, stab, n, j)
+        v = _gather_prepared!(prep, stab, j)
         vout = _matvec_prepared!(prep, v)
         if prep.storephase
             δ = _phase(prep, v, vout)
-            stab[phase_row, j] = add_mod(stab[phase_row, j], δ, prep.p)
+            phase[j] = add_mod(phase[j], δ, prep.p)
         end
         # The cache delta needs the OLD target entries, so it runs before the
         # scatter overwrites them.
         _before_clifford_scatter!(tab, prep, j, v, vout)
-        _scatter_prepared!(prep, stab, n, j, vout)
+        _scatter_prepared!(prep, stab, j, vout)
     end
     _after_clifford!(tab, prep)
     tab.iscanonical = false
@@ -816,12 +815,11 @@ end
 # it runs strictly after that loop, nothing from it stays live, and this is not
 # an instance of the allocating-API scratch rule. Do not give it own buffers.
 function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford)
-    n = tab.n
-    destab = tab.destab
+    destab = _destab(tab)
     @inbounds for j in 1:tab.m
-        v = _gather_prepared!(prep, destab, n, j)
+        v = _gather_prepared!(prep, destab, j)
         vout = _matvec_prepared!(prep, v)
-        _scatter_prepared!(prep, destab, n, j, vout)
+        _scatter_prepared!(prep, destab, j, vout)
     end
     return nothing
 end

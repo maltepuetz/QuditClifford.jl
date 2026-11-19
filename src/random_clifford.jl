@@ -405,13 +405,16 @@ function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
     end
     # Commit. Stabilizer j is the Z image G[:, n + j] and its dual the X image
     # G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without any repair pass.
-    stab = tab.stab
+    stab = _stab(tab)
+    phase = _phase(tab)
     _zero!(stab)
+    fill!(phase, 0)
     @inbounds for j in 1:m
-        for q in 1:S
-            stab[q, j] = G[q, n + j]
+        for q in 1:n
+            _xset!(stab, G[q, n + j], q, j)
+            _zset!(stab, G[n + q, n + j], q, j)
         end
-        tab.storephase && (stab[S + 1, j] = α[j])
+        tab.storephase && (phase[j] = α[j])
     end
     _write_random_duals!(tab, G, m, β)
     tab.m = m
@@ -429,13 +432,14 @@ _write_random_duals!(::AbstractTableau, G::Matrix{Int}, m::Int, D::Vector{Int}) 
 # x·z values; the unused columns and cache entries are zeroed.
 function _write_random_duals!(tab::DestabilizerTableau, G::Matrix{Int}, m::Int,
                               D::Vector{Int})
-    destab = tab.destab
+    destab = _destab(tab)
     cache = tab.xdotz_cache
     _zero!(destab)
     fill!(cache, 0)
     @inbounds for j in 1:m
-        for q in axes(destab, 1)
-            destab[q, j] = G[q, j]
+        for q in 1:_nq(destab)
+            _xset!(destab, G[q, j], q, j)
+            _zset!(destab, G[_nq(destab) + q, j], q, j)
         end
         cache[j] = D[j]
     end
