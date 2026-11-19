@@ -57,3 +57,133 @@
     height: 560px;
   }
 }
+
+/* "On this page" outline in the aside. The rule left of the links steps in
+   and out with the heading level, the stretch beside every heading on screen
+   (or, with none on screen, the section being read) is drawn in the brand
+   color, and a dot on it marks the end you are
+   scrolling towards. VitePress draws a straight border with a sliding marker
+   for a single active link instead; both are hidden here, and the rule, its
+   highlight and the dot are drawn by the script in config.mts, which reads
+   the positions of the links laid out below and marks the links of the
+   sections in view with `data-in-view`. The selectors carry three classes to outrank the
+   component's scoped styles, which load in their own chunk. Only the aside is
+   restyled: the outline dropdown on narrow screens reuses the same list. */
+
+.VPDocAsideOutline .content {
+  border-left: none;
+  padding-left: 0;
+}
+
+.VPDocAsideOutline .content .outline-marker {
+  display: none;
+}
+
+.VPDocAsideOutline .content .outline-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 28px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vp-c-text-2);
+}
+
+/* A left-aligned lines icon, drawn in the text color through a mask. */
+.VPDocAsideOutline .content .outline-title::before {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M21 5H3M15 12H3M17 19H3'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M21 5H3M15 12H3M17 19H3'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.VPDocAsideOutline .content .nested {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Long titles wrap rather than end in an ellipsis; the rule follows the
+   height of each link, whatever it is. The text starts 12px right of the
+   rule, which sits 10px further in per level (the script uses the same
+   step). */
+.VPDocAsideOutline .content .outline-link,
+.VPDocAsideOutline .content .outline-link.active {
+  padding: 5px 0 5px 12px;
+  line-height: 1.45;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: normal;
+  overflow: visible;
+  color: var(--vp-c-text-2);
+}
+
+.VPDocAsideOutline .content .nested .outline-link {
+  padding-left: 22px;
+}
+
+.VPDocAsideOutline .content .nested .nested .outline-link {
+  padding-left: 32px;
+}
+
+.VPDocAsideOutline .content .nested .nested .nested .outline-link {
+  padding-left: 42px;
+}
+
+.VPDocAsideOutline .content .outline-link:hover {
+  color: var(--vp-c-text-1);
+}
+
+.VPDocAsideOutline .content .outline-link[data-in-view] {
+  color: var(--vp-c-brand-1);
+}
+
+.VPDocAsideOutline .outline-rule {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+  /* Above the link list, which the component lifts to z-index 1. */
+  z-index: 2;
+}
+
+.VPDocAsideOutline .outline-rule path {
+  fill: none;
+  stroke-width: 1;
+  stroke: var(--vp-c-border);
+}
+
+.VPDocAsideOutline .outline-rule.highlight path {
+  stroke: var(--vp-c-brand-1);
+}
+
+.VPDocAsideOutline .outline-rule.highlight {
+  transition: clip-path 0.25s ease-out, opacity 0.25s;
+}
+
+/* Centered on the path; offset-rotate keeps it from turning on the bends. */
+.VPDocAsideOutline .outline-dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: var(--vp-c-brand-1);
+  offset-rotate: 0deg;
+  opacity: 0;
+  pointer-events: none;
+  transition: offset-distance 0.25s ease-out, opacity 0.25s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .VPDocAsideOutline .outline-rule.highlight,
+  .VPDocAsideOutline .outline-dot {
+    transition: none;
+  }
+}
