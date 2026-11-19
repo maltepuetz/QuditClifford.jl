@@ -439,4 +439,37 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             @test M[2n + 1, 1] == 0
         end
     end
+
+    @testset "Split site-restricted addmul/submul match the stacked form" begin
+        # X and Z parts as separate vectors; src is nonzero everywhere, so a
+        # form that touched a non-site entry would change it.
+        rng = Xoshiro(20261120)
+        for d in (SMALL_D..., 1031), n in (1, 4, 9), trial in 1:20
+            dstx = rand(rng, 0:(d - 1), n); dstz = rand(rng, 0:(d - 1), n)
+            srcx = rand(rng, 0:(d - 1), n); srcz = rand(rng, 0:(d - 1), n)
+            k = rand(rng, 0:n)
+            sites = vcat(randperm(rng, n)[1:k], rand(rng, 1:n, 3))  # padding past nsites
+            a = rand(rng, (0, 1, d - 1, rand(rng, 0:(d - 1))))
+            for (split!, stacked!) in ((QC.addmul_mod_sites!, QC.addmul_mod_sites!),
+                                       (QC.submul_mod_sites!, QC.submul_mod_sites!))
+                want = vcat(dstx, dstz)
+                stacked!(want, vcat(srcx, srcz), sites, k, n, a, d)
+                gx = copy(dstx); gz = copy(dstz)
+                split!(gx, gz, srcx, srcz, sites, k, a, d)
+                @test vcat(gx, gz) == want
+                out = trues(n)
+                out[sites[1:k]] .= false
+                @test gx[out] == dstx[out] && gz[out] == dstz[out]
+            end
+            # Against the naive reference on the sites.
+            ax = copy(dstx); az = copy(dstz)
+            QC.addmul_mod_sites!(ax, az, srcx, srcz, sites, k, a, d)
+            @test ax[sites[1:k]] == _ref_addmul(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
+            @test az[sites[1:k]] == _ref_addmul(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
+            sx = copy(dstx); sz = copy(dstz)
+            QC.submul_mod_sites!(sx, sz, srcx, srcz, sites, k, a, d)
+            @test sx[sites[1:k]] == _ref_submul(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
+            @test sz[sites[1:k]] == _ref_submul(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
+        end
+    end
 end

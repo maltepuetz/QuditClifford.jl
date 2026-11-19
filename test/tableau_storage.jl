@@ -117,6 +117,34 @@ end
             ts_QC._gen_submul_sites!(b, 1, b2, n, sites, length(sites), a, d)
             @test S[1:2n, 1] == mod.(S0[1:2n, 1] .- a .* S2[1:2n, n], d)
             @test S[2n+1, :] == S0[2n+1, :]
+
+            # nonzero source outside the sites: non-site entries must stay put
+            if length(sites) < n
+                outside = setdiff(1:n, sites)
+                nsel = length(sites)
+                wf = rv(2n)
+                S2[1:2n, n] .= rv(2n)
+                S2p = copy(S2)
+                rows = vcat(sites, n .+ sites)
+                orows = vcat(outside, n .+ outside)
+                copyto!(S, S0)
+                ts_QC._gen_addmul_sites!(b, 1, wf, sites, nsel, a, d)
+                @test S[orows, 1] == S0[orows, 1]
+                @test S[rows, 1] == mod.(S0[rows, 1] .+ a .* wf[rows], d)
+                copyto!(S, S0)
+                ts_QC._gen_submul_sites!(b, 1, wf, sites, nsel, a, d)
+                @test S[orows, 1] == S0[orows, 1]
+                @test S[rows, 1] == mod.(S0[rows, 1] .- a .* wf[rows], d)
+                copyto!(S, S0)
+                ts_QC._gen_addmul_sites!(b, 1, b2, n, sites, nsel, a, d)
+                @test S[orows, 1] == S0[orows, 1]
+                @test S[rows, 1] == mod.(S0[rows, 1] .+ a .* S2p[rows, n], d)
+                copyto!(S, S0)
+                ts_QC._gen_submul_sites!(b, 1, b2, n, sites, nsel, a, d)
+                @test S[orows, 1] == S0[orows, 1]
+                @test S[rows, 1] == mod.(S0[rows, 1] .- a .* S2p[rows, n], d)
+                @test S2 == S2p
+            end
         end
 
         copyto!(S, S0)
