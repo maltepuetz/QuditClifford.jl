@@ -697,7 +697,7 @@ end
 # `StabilizerTableau` needs neither, because clearing `iscanonical` is the
 # existing contract for a stale cache.
 @inline _before_clifford_scatter!(::AbstractTableau, prep, j::Int, v, vout) = nothing
-@inline _after_clifford!(::AbstractTableau, prep, ::Val) = nothing
+@inline _after_clifford!(::AbstractTableau, prep) = nothing
 
 ########################################
 # apply!                               #
@@ -776,23 +776,18 @@ function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
         "PreparedClifford for this tableau before applying it."))
     length(prep.targets) == 0 && return tab
     _validate_clifford_targets(prep, tab.n)
-    pf = _prefetches(_generator_bytes(tab))
-    return pf ? _apply_columns!(tab, prep, Val(true)) : _apply_columns!(tab, prep, Val(false))
+    return _apply_columns!(tab, prep)
 end
 
 # The column loop of `_apply_prepared!`, for a `prep` already checked against
 # `tab`. It is a separate, non-inlined function on purpose: compiled into the
 # same body as the entry checks, the loop ran about 1.3x slower (two-qudit
 # brickwork gates on a `DestabilizerTableau`, n = 511, M3 Pro), and the
-# function barrier costs one call per gate. With `PF` the loop prefetches the
-# target lines `_PREFETCH_COLS` generators ahead (see src/xz_block.jl).
-@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
-                                   ::Val{PF}) where {PF}
+# function barrier costs one call per gate.
+@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford)
     stab = _stab(tab)
     phase = _phase(tab)
-    m = tab.m
-    GC.@preserve tab @inbounds for j in 1:m
-        PF && j + _PREFETCH_COLS <= m && _prefetch_prepared(prep, stab, j + _PREFETCH_COLS)
+    @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, stab, j)
         vout = _matvec_prepared!(prep, v)
         if prep.storephase
@@ -804,17 +799,10 @@ end
         _before_clifford_scatter!(tab, prep, j, v, vout)
         _scatter_prepared!(prep, stab, j, vout)
     end
-    _after_clifford!(tab, prep, Val(PF))
+    _after_clifford!(tab, prep)
     tab.iscanonical = false
     return tab
 end
-
-# Prefetch the target lines of generator `j`. Only the tuple backing does; the
-# dense backing serves supports of four or more qudits, where the arithmetic
-# per generator outweighs the misses.
-@inline _prefetch_prepared(prep::PreparedClifford, b::_GMBlock, j::Int) =
-    _prefetch_gen(b, prep.targets, j)
-@inline _prefetch_prepared(::PreparedDenseClifford, ::_GMBlock, ::Int) = nothing
 
 ########################################
 # DestabilizerTableau hooks            #
@@ -835,12 +823,9 @@ end
 # deliberately REUSES the main loop's `v`/`vout` buffers on the dense backing:
 # it runs strictly after that loop, nothing from it stays live, and this is not
 # an instance of the allocating-API scratch rule. Do not give it own buffers.
-function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford,
-                         ::Val{PF}) where {PF}
+function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford)
     destab = _destab(tab)
-    m = tab.m
-    GC.@preserve tab @inbounds for j in 1:m
-        PF && j + _PREFETCH_COLS <= m && _prefetch_prepared(prep, destab, j + _PREFETCH_COLS)
+    @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, destab, j)
         vout = _matvec_prepared!(prep, v)
         _scatter_prepared!(prep, destab, j, vout)
