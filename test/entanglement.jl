@@ -447,14 +447,14 @@ end
         dt = DestabilizerTableau(d, copy(raw); m=n, storephase=true)
         canonicalize!(st)
         canonicalize!(dt)
-        @test st.stab == dt.stab
+        @test stabilizer_matrix(st) == stabilizer_matrix(dt)
         @test st.pivcol_of_row == dt.pivcol_of_row
         for r in 1:(2n)
             c = st.pivcol_of_row[r]
             c == 0 && continue
-            @test st.stab[r, c] == 1
+            @test stabilizer_matrix(st)[r, c] == 1
             for jj in 1:st.m
-                jj == c || @test st.stab[r, jj] == 0
+                jj == c || @test stabilizer_matrix(st)[r, jj] == 0
             end
         end
     end

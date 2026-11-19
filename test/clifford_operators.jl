@@ -71,9 +71,9 @@ end
             dense_tab = deepcopy(tuple_tab)
             QC._apply_prepared!(tuple_tab, QC._prepare(g, d, jit, sp))
             QC._apply_prepared!(dense_tab, dense_prep_from_gate(g, d; storephase = sp))
-            @test dense_tab.stab == tuple_tab.stab
+            @test stabilizer_matrix(dense_tab) == stabilizer_matrix(tuple_tab)
             if TT === DestabilizerTableau
-                @test dense_tab.destab == tuple_tab.destab
+                @test destabilizer_matrix(dense_tab) == destabilizer_matrix(tuple_tab)
                 @test dense_tab.xdotz_cache == tuple_tab.xdotz_cache
             end
         end
@@ -407,9 +407,9 @@ end
             stored = TT(d, 6; state = :ghz, storephase = storephase)
             apply!(named, g)
             apply!(stored, CliffordOperator(g, d))
-            @test stored.stab == named.stab
+            @test stabilizer_matrix(stored) == stabilizer_matrix(named)
             @test stored.m == named.m
-            TT === DestabilizerTableau && @test stored.destab == named.destab
+            TT === DestabilizerTableau && @test destabilizer_matrix(stored) == destabilizer_matrix(named)
         end
     end
 end
@@ -433,15 +433,15 @@ end
     end
     # Dimension mismatch fails before any tableau mutation.
     tab = StabilizerTableau(5, 3; state = :ghz)
-    before = copy(tab.stab)
+    before = copy(stabilizer_matrix(tab))
     @test_throws ArgumentError apply!(tab, U)
-    @test tab.stab == before
+    @test stabilizer_matrix(tab) == before
     # Out-of-register target fails before mutation too.
     W = CliffordOperator(Fourier(9), 3)
     tab3 = StabilizerTableau(3, 3; state = :ghz)
-    before3 = copy(tab3.stab)
+    before3 = copy(stabilizer_matrix(tab3))
     @test_throws ArgumentError apply!(tab3, W)
-    @test tab3.stab == before3
+    @test stabilizer_matrix(tab3) == before3
     for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true)
         tab = TT(3, 3; state = :ghz, storephase = sp)
         mismatched = CliffordOperator(Fourier(1), 5)
@@ -593,9 +593,9 @@ end
             # Applying U then inv(U) is the identity on a tableau, phases included.
             for TT in (StabilizerTableau, DestabilizerTableau)
                 tab = TT(d, 4; state = :ghz)
-                before = copy(tab.stab)
+                before = copy(stabilizer_matrix(tab))
                 apply!(tab, U); apply!(tab, W)
-                @test tab.stab == before
+                @test stabilizer_matrix(tab) == before
             end
             # Operand and its scratch are untouched.
             fill!(U.v, -1); fill!(U.vout, -2); fill!(U.zpref, -3)
@@ -628,8 +628,8 @@ end
                 one = TT(d, 4; state = :ghz)
                 apply!(seq, V); apply!(seq, U)     # V first
                 apply!(one, UV)
-                @test one.stab == seq.stab
-                TT === DestabilizerTableau && @test one.destab == seq.destab
+                @test stabilizer_matrix(one) == stabilizer_matrix(seq)
+                TT === DestabilizerTableau && @test destabilizer_matrix(one) == destabilizer_matrix(seq)
             end
             # Group laws.
             @test U ∘ inv(U) == CliffordOperator(d, U.targets,
@@ -819,16 +819,16 @@ end
     # the same error could cancel in an inverse round trip.
     for TT in (StabilizerTableau, DestabilizerTableau), sp in (false, true)
         tab = TT(2, n; state = :product, basis = :Y, storephase = sp)
-        before = copy(tab.stab)
+        before = copy(stabilizer_matrix(tab))
         apply!(tab, UF)
         expected = copy(before)
         sp && (expected[2n + 1, q] = 3)
-        @test tab.stab == expected
+        @test stabilizer_matrix(tab) == expected
         if TT === DestabilizerTableau
             @test tab.xdotz_cache == ones(Int, n)
         end
         apply!(tab, inv(UF))
-        @test tab.stab == before
+        @test stabilizer_matrix(tab) == before
     end
 
     # A one-qudit support whose only physical target is 65 has local arity ONE
@@ -954,24 +954,24 @@ end
                 measure!(named, SinglePauli(targets[2], 0, 1); outcome = 0)
             end
             one = deepcopy(named)
-            old = copy(one.stab)
+            old = copy(stabilizer_matrix(one))
             oldm = one.m
             for g in gates
                 apply!(named, physical_gate(g, targets))
             end
             apply!(one, U)
-            @test one.stab == named.stab && one.m == oldm
-            @test all(iszero, one.stab[:, (oldm + 1):end])
+            @test stabilizer_matrix(one) == stabilizer_matrix(named) && one.m == oldm
+            @test all(iszero, stabilizer_matrix(one)[:, (oldm + 1):end])
             for q in setdiff(1:n, targets)
-                @test one.stab[q, :] == old[q, :]
-                @test one.stab[n + q, :] == old[n + q, :]
+                @test stabilizer_matrix(one)[q, :] == old[q, :]
+                @test stabilizer_matrix(one)[n + q, :] == old[n + q, :]
             end
             if TT === DestabilizerTableau
-                @test one.destab == named.destab
+                @test destabilizer_matrix(one) == destabilizer_matrix(named)
                 @test one.xdotz_cache == named.xdotz_cache
             end
             apply!(one, inv(U))
-            @test one.stab == old
+            @test stabilizer_matrix(one) == old
         end
         for sample in 1:8
             v = rand(rng, 0:(d - 1), 2k)
@@ -1033,7 +1033,7 @@ end
         # arithmetic, without general tableau re-initialization at large d.
         apply!(tab, Phase(1))
         apply!(tab, Phase(2))
-        old = copy(tab.stab)
+        old = copy(stabilizer_matrix(tab))
         expected = copy(old)
         for j in 1:tab.m
             v = old[1:4, j]
@@ -1041,14 +1041,14 @@ end
             sp && (expected[5, j] = Int(mod(big(old[5, j]) +
                 phase_reference_dense(U.F, U.a, v, d), d)))
         end
-        olddual = TT === DestabilizerTableau ? copy(tab.destab) : nothing
+        olddual = TT === DestabilizerTableau ? copy(destabilizer_matrix(tab)) : nothing
         apply!(tab, U)
-        @test tab.stab == expected
+        @test stabilizer_matrix(tab) == expected
         if TT === DestabilizerTableau
-            @test tab.destab == Int.(mod.(big.(M) * olddual, d))
+            @test destabilizer_matrix(tab) == Int.(mod.(big.(M) * olddual, d))
             for j in 1:tab.m
-                @test tab.xdotz_cache[j] == Int(mod(sum(big(tab.stab[q, j]) *
-                    tab.stab[2 + q, j] for q in 1:2), d))
+                @test tab.xdotz_cache[j] == Int(mod(sum(big(stabilizer_matrix(tab)[q, j]) *
+                    stabilizer_matrix(tab)[2 + q, j] for q in 1:2), d))
             end
         end
         stored_apply_allocations(tab, U)
@@ -1141,12 +1141,12 @@ end
         QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, sp))
         usnap = operator_snapshot(U)
         @test apply!(tab, U) === tab
-        @test tab.stab == ref.stab
+        @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
         @test tab.m == ref.m
         @test !tab.iscanonical
         @test operator_snapshot(U) == usnap
         if TT === DestabilizerTableau
-            @test tab.destab == ref.destab
+            @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
             @test tab.xdotz_cache == ref.xdotz_cache
         end
         if k <= 3
@@ -1256,7 +1256,7 @@ end
         ref = deepcopy(tab)
         QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, true))
         apply!(tab, U)
-        @test tab.stab == ref.stab
+        @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
         TT === DestabilizerTableau && @test tab.xdotz_cache == ref.xdotz_cache
     end
 end
@@ -1267,9 +1267,9 @@ end
         tab = TT(d, 4; state = :mixed)
         canonicalize!(tab)
         @test tab.iscanonical
-        before = copy(tab.stab)
+        before = copy(stabilizer_matrix(tab))
         @test apply!(tab, U) === tab
-        @test tab.stab == before
+        @test stabilizer_matrix(tab) == before
         @test !tab.iscanonical
         TT === DestabilizerTableau && @test all(iszero, tab.xdotz_cache)
         wrongd = TT(5, 4; state = :mixed)

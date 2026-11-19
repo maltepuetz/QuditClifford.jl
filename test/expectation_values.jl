@@ -10,9 +10,9 @@ using Random
             raw[j, j] = d - 1  # Independent X generators; large products can overflow.
         end
         tab = TT(d, raw; storephase=false)
-        before = copy(tab.stab)
+        before = copy(stabilizer_matrix(tab))
         canonical_before = tab.iscanonical
-        dual_before = TT === DestabilizerTableau ? copy(tab.destab) : nothing
+        dual_before = TT === DestabilizerTableau ? copy(destabilizer_matrix(tab)) : nothing
 
         # Multiples of d represent identity in Z, even near the Int limits.
         for large in (typemax(Int) - mod(typemax(Int), d),
@@ -31,9 +31,9 @@ using Random
                 end
             end
         end
-        @test tab.stab == before
+        @test stabilizer_matrix(tab) == before
         @test tab.iscanonical == canonical_before
-        TT === DestabilizerTableau && @test tab.destab == dual_before
+        TT === DestabilizerTableau && @test destabilizer_matrix(tab) == dual_before
     end
 end
 
@@ -187,7 +187,7 @@ end
             P[i, i] = 1
         end
         for j in 1:tab.m
-            g = _paulimat(d, n, tab.stab[1:n, j], tab.stab[(n + 1):(2n), j], tab.stab[2n + 1, j])
+            g = _paulimat(d, n, stabilizer_matrix(tab)[1:n, j], stabilizer_matrix(tab)[(n + 1):(2n), j], stabilizer_matrix(tab)[2n + 1, j])
             S = zeros(ComplexF64, D, D)
             gt = zeros(ComplexF64, D, D)
             for i in 1:D
@@ -218,10 +218,10 @@ end
         dt = DestabilizerTableau(d, copy(raw); m=n, storephase=true)
 
         # they commute, so this is a legal stabilizer group ...
-        @test mod(QuditClifford.commutation_col(st.stab, 1, st.stab[:, 2]), d) == 0
+        @test mod(QuditClifford.commutation_col(stabilizer_matrix(st), 1, stabilizer_matrix(st)[:, 2]), d) == 0
         # ... and the ordered cross terms are genuinely nonzero
-        @test QuditClifford.dot_xz_col(st.stab, n, 1, 2, d) == 1
-        @test QuditClifford.dot_xz_col(st.stab, n, 2, 1, d) == 1
+        @test QuditClifford.dot_xz_col(stabilizer_matrix(st), n, 1, 2, d) == 1
+        @test QuditClifford.dot_xz_col(stabilizer_matrix(st), n, 2, 1, d) == 1
 
         for a in 1:(d - 1), b in 1:(d - 1)
             (a == 1 && b == 1) && continue          # want coefficients > 1
@@ -257,10 +257,10 @@ expval_invalid_ops() = (
             for op in expval_invalid_ops()
                 @test_throws ArgumentError expect!(tab, op)
                 @test_throws ArgumentError expect_int!(tab, op)
-                @test tab.stab == before.stab
+                @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.m == before.m
                 if tab isa DestabilizerTableau
-                    @test tab.destab == before.destab
+                    @test destabilizer_matrix(tab) == destabilizer_matrix(before)
                 end
             end
         end

@@ -109,9 +109,9 @@ neg_allocated(tab, A) = @allocated entanglement_negativity(tab, A)
                     tab = TT(d, n)
                     random_state!(rng, tab; m=rand(rng, 0:n))
                     A, B = neg_random_split(rng, n)
-                    stab_before = copy(tab.stab)
+                    stab_before = copy(stabilizer_matrix(tab))
                     E = entanglement_negativity(tab, A, B)
-                    @test tab.stab == stab_before
+                    @test stabilizer_matrix(tab) == stab_before
                     @test E isa Int
                     @test E ≈ neg_dense_negativity(tab, A, B) atol = 1e-8
                     @test entanglement_negativity(tab, B, A) == E

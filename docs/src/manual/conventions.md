@@ -80,9 +80,13 @@ and a plain vector may carry the phase exponent as an extra entry `2n + 1`.
 
 ## Tableau layout
 
-A tableau stores generators in **columns**. For `n` qudits, `tab.stab` has
-rows `1:n` for the X exponents, rows `n+1:2n` for the Z exponents, and, when
-`storephase=true`, row `2n + 1` for the phase exponents. The first `m` columns
+A tableau stores generators in **columns**. For `n` qudits,
+[`stabilizer_matrix`](@ref)`(tab)` has rows `1:n` for the X exponents, rows
+`n+1:2n` for the Z exponents, and, when `storephase=true`, row `2n + 1` for the
+phase exponents. `layout = :qudit` returns the transpose, with one row per
+generator. [`destabilizer_matrix`](@ref) returns the same layout for the
+destabilizers of a `DestabilizerTableau`. Both return a fresh copy; writing to
+it does not change the tableau. The first `m` columns
 are the active generators, with ``0 \leq m \leq n``. The remaining columns are
 zeroed capacity for measurements that raise `m`. A pure state has `m = n`; a
 mixed state has `m < n`. [Tableaux](tableaux.md) covers construction from

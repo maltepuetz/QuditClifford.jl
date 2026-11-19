@@ -296,7 +296,7 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             # generator contract. Reduction-on-write is what is under test here
             # and it runs before any validation.
             tab = StabilizerTableau(d, raw; m=3, storephase=true, check=false)
-            @test all(0 .<= tab.stab[1:(2 * 3), :] .< d)
+            @test all(0 .<= stabilizer_matrix(tab)[1:(2 * 3), :] .< d)
 
             t2 = StabilizerTableau(d, 3; state=:product, basis=:Z)
             ws = zeros(Int, 2 * 3 + 1)

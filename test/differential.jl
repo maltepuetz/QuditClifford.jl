@@ -137,7 +137,7 @@ function dft_rho(tab)
     D = d^n
     rho = dft_eye(D) / D
     for j in 1:tab.m
-        g = dft_pauli(d, n, tab.stab[1:2n, j], tab.storephase ? tab.stab[2n+1, j] : 0)
+        g = dft_pauli(d, n, stabilizer_matrix(tab)[1:2n, j], tab.storephase ? stabilizer_matrix(tab)[2n+1, j] : 0)
         rho = rho * sum(g^k for k in 0:d-1)
     end
     return rho
@@ -163,24 +163,24 @@ end
 function dft_check_invariants(tab)
     d, n, m = tab.d, tab.n, tab.m
     @test 0 <= m <= n
-    @test all(iszero, tab.stab[:, m+1:n])
-    @test all(x -> 0 <= x < d, tab.stab[1:2n, :])
-    tab.storephase && @test all(x -> 0 <= x < dft_pmod(d), tab.stab[2n+1, :])
-    @test all(dft_symp(tab.stab[:, i], tab.stab[:, j], n, d) == 0 for i in 1:m, j in 1:m)
+    @test all(iszero, stabilizer_matrix(tab)[:, m+1:n])
+    @test all(x -> 0 <= x < d, stabilizer_matrix(tab)[1:2n, :])
+    tab.storephase && @test all(x -> 0 <= x < dft_pmod(d), stabilizer_matrix(tab)[2n+1, :])
+    @test all(dft_symp(stabilizer_matrix(tab)[:, i], stabilizer_matrix(tab)[:, j], n, d) == 0 for i in 1:m, j in 1:m)
     if tab isa DestabilizerTableau
-        @test all(iszero, tab.destab[:, m+1:n])
-        @test all(x -> 0 <= x < d, tab.destab)
-        @test all(dft_symp(tab.destab[:, i], tab.stab[:, j], n, d) == (i == j)
+        @test all(iszero, destabilizer_matrix(tab)[:, m+1:n])
+        @test all(x -> 0 <= x < d, destabilizer_matrix(tab))
+        @test all(dft_symp(destabilizer_matrix(tab)[:, i], stabilizer_matrix(tab)[:, j], n, d) == (i == j)
                   for i in 1:m, j in 1:m)
         @test all(tab.xdotz_cache[j] ==
-                  mod(sum(Int128(tab.stab[q, j]) * tab.stab[n+q, j] for q in 1:n; init = Int128(0)), d)
+                  mod(sum(Int128(stabilizer_matrix(tab)[q, j]) * stabilizer_matrix(tab)[n+q, j] for q in 1:n; init = Int128(0)), d)
                   for j in 1:m)
     end
     if tab.iscanonical
         c = copy(tab)
         c.iscanonical = false
         canonicalize!(c)
-        @test c.stab == tab.stab
+        @test stabilizer_matrix(c) == stabilizer_matrix(tab)
     end
     return nothing
 end
@@ -487,8 +487,8 @@ end
             a = copy(tab); b = copy(tab)
             apply!(a, V); apply!(a, U)
             apply!(b, U ∘ V)
-            @test a.stab == b.stab
-            TT === DestabilizerTableau && @test a.destab == b.destab
+            @test stabilizer_matrix(a) == stabilizer_matrix(b)
+            TT === DestabilizerTableau && @test destabilizer_matrix(a) == destabilizer_matrix(b)
             dft_check_invariants(b)
             apply!(b, inv(U ∘ V))
             @test b == tab

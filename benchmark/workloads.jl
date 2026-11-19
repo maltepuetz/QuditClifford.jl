@@ -21,6 +21,16 @@ of them well above it. A leaf whose body mutates the state it measures keeps
 """
 const READONLY_EVALS = 100
 
+# `stabilizer_matrix` and `destabilizer_matrix` return copies; a baseline
+# without them exposes the matrices as fields, which are read and written in
+# place.
+_wl_stab(tab) = isdefined(QuditClifford, :stabilizer_matrix) ? stabilizer_matrix(tab) : tab.stab
+_wl_destab(tab) = isdefined(QuditClifford, :destabilizer_matrix) ? destabilizer_matrix(tab) : tab.destab
+_wl_load_stab!(tab, S) = isdefined(QuditClifford, :_load_stabilizer_matrix!) ?
+    QuditClifford._load_stabilizer_matrix!(tab, S) : copyto!(tab.stab, S)
+_wl_load_destab!(tab, D) = isdefined(QuditClifford, :_load_destabilizer_matrix!) ?
+    QuditClifford._load_destabilizer_matrix!(tab, D) : copyto!(tab.destab, D)
+
 """Total bytes held by a tableau and all its workspaces."""
 tableau_bytes(tab) = Base.summarysize(tab)
 
@@ -45,23 +55,23 @@ so they need no restoring.
 """
 struct TableauSnapshot{TT}
     tab::TT
-    stab::Matrix{Int}
-    destab::Union{Matrix{Int},Nothing}
+    stabmat::Matrix{Int}
+    destabmat::Union{Matrix{Int},Nothing}
     xdotz::Vector{Int}
     m::Int
     iscanonical::Bool
 end
 
 snapshot(tab::StabilizerTableau) = TableauSnapshot(
-    tab, copy(tab.stab), nothing, copy(tab.xdotz_cache), tab.m, tab.iscanonical)
+    tab, copy(_wl_stab(tab)), nothing, copy(tab.xdotz_cache), tab.m, tab.iscanonical)
 
 snapshot(tab::DestabilizerTableau) = TableauSnapshot(
-    tab, copy(tab.stab), copy(tab.destab), copy(tab.xdotz_cache), tab.m, tab.iscanonical)
+    tab, copy(_wl_stab(tab)), copy(_wl_destab(tab)), copy(tab.xdotz_cache), tab.m, tab.iscanonical)
 
 """Put the tableau back into the state it had when the snapshot was taken."""
 function restore!(s::TableauSnapshot)
-    copyto!(s.tab.stab, s.stab)
-    s.destab === nothing || copyto!(s.tab.destab, s.destab)
+    _wl_load_stab!(s.tab, s.stabmat)
+    s.destabmat === nothing || _wl_load_destab!(s.tab, s.destabmat)
     copyto!(s.tab.xdotz_cache, s.xdotz)
     s.tab.m = s.m
     s.tab.iscanonical = s.iscanonical
@@ -267,7 +277,7 @@ function rank_fixture(kind::Symbol, d::Int, n::Int; seed::Int = 20261118)
     elseif kind === :monitored
         D, bonds, rng = monitored_setup(; d, n, seed, T = DestabilizerTableau)
         monitored_layers!(D, bonds, rng, 64; p = 0.15)
-        return StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase,
+        return StabilizerTableau(d, copy(_wl_stab(D)); m = D.m, storephase = D.storephase,
                                  check = false)
     end
     throw(ArgumentError("unknown rank fixture kind $(repr(kind))"))
@@ -326,7 +336,7 @@ function monitored_measure_group(; d::Int, n::Int, T, seed::Int = 20261119)
     D, bonds, rng = monitored_setup(; d, n, seed, T = DestabilizerTableau)
     monitored_layers!(D, bonds, rng, 64; p = 0.15)
     tab = T === DestabilizerTableau ? D :
-          StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase, check = false)
+          StabilizerTableau(d, copy(_wl_stab(D)); m = D.m, storephase = D.storephase, check = false)
     sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
     two(q, x, z) = DoublePauli(q, x, z, mod1(q + 1, n), x, z)
     ops = (("Z", [SinglePauli(q, 0, 1) for q in sites]),
@@ -405,7 +415,7 @@ function purifying_measure_group(; d::Int, n::Int, T, seed::Int = 20261119)
     D = DestabilizerTableau(d, n; state = :mixed)
     monitored_layers!(D, bonds, rng, 4; p = 0.15)
     tab = T === DestabilizerTableau ? D :
-          StabilizerTableau(d, copy(D.stab); m = D.m, storephase = D.storephase, check = false)
+          StabilizerTableau(d, copy(_wl_stab(D)); m = D.m, storephase = D.storephase, check = false)
     sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
     pairs = [DoublePauli(q, 0, 1, mod1(q + r, n), 0, 1) for r in 1:(n ÷ 2) for q in sites]
     g = BenchmarkGroup()
@@ -949,7 +959,7 @@ assume a hardcoded operator still anticommutes after the state was scrambled.
 function first_anticommuting(tab, candidates)
     for op in candidates
         for j in 1:tab.m
-            if mod(QuditClifford.commutation_col(tab.stab, j, op), tab.d) != 0
+            if mod(QuditClifford.commutation_col(_wl_stab(tab), j, op), tab.d) != 0
                 return op
             end
         end
@@ -958,7 +968,7 @@ function first_anticommuting(tab, candidates)
 end
 
 """One of the tableau's own generators, as a dense operator: in span by construction."""
-in_span_operator(tab) = GeneralPauli(copy(tab.stab[1:(2 * tab.n), 1]), 0)
+in_span_operator(tab) = GeneralPauli(copy(_wl_stab(tab)[1:(2 * tab.n), 1]), 0)
 
 """
     midcircuit_group(; d, n, T, seed)
@@ -1001,7 +1011,7 @@ function midcircuit_group(; d::Int, n::Int, T, seed::Int = 20260910)
     end
 
     # entanglement_entropy gets its OWN tableau, deliberately NOT canonicalized.
-    # Unlike expect!, it never canonicalizes -- it reads tab.stab straight into
+    # Unlike expect!, it never canonicalizes -- it reads the stabilizer matrix straight into
     # the workspace -- so a caller reaching it after a run of measure! has
     # iscanonical == false, and how much the elimination in rank_fp_cols! has to
     # do depends entirely on how close the generators already are to echelon
@@ -1049,7 +1059,7 @@ function dense_state(T, d::Int, n::Int; m::Int = n, seed::Int = DENSE_SEED)
     D = DestabilizerTableau(d, n)
     random_state!(Random.Xoshiro(seed + 7919 * d + n), D; m)
     T === DestabilizerTableau && return D
-    return StabilizerTableau(d, D.stab[:, 1:m]; m)
+    return StabilizerTableau(d, _wl_stab(D)[:, 1:m]; m)
 end
 
 """
@@ -1067,7 +1077,7 @@ function span_product(tab; k::Int = cld(tab.m, 2), seed::Int = DENSE_SEED)
     xz = zeros(Int, 2n)
     for j in Random.randperm(rng, tab.m)[1:k]
         c = rand(rng, 1:(d - 1))
-        @views xz .= mod.(xz .+ c .* tab.stab[1:(2n), j], d)
+        @views xz .= mod.(xz .+ c .* _wl_stab(tab)[1:(2n), j], d)
     end
     return GeneralPauli(xz, 0)
 end
@@ -1088,9 +1098,9 @@ function commuting_out_of_span(D::DestabilizerTableau; seed::Int = DENSE_SEED)
     rng = Random.Xoshiro(seed)
     w = rand(rng, 0:(d - 1), 2n)
     for j in 1:m
-        t = D.destab[1:(2n), j]
-        c = mod(QuditClifford.commutation_col(D.stab, j, GeneralPauli(w, 0)), d)
-        λ = mod(QuditClifford.commutation_col(D.stab, j, GeneralPauli(t, 0)), d)
+        t = _wl_destab(D)[1:(2n), j]
+        c = mod(QuditClifford.commutation_col(_wl_stab(D), j, GeneralPauli(w, 0)), d)
+        λ = mod(QuditClifford.commutation_col(_wl_stab(D), j, GeneralPauli(t, 0)), d)
         w .= mod.(w .- c * invmod(λ, d) .* t, d)
     end
     return GeneralPauli(w, 0)
@@ -1297,7 +1307,7 @@ function tableau_group(; d::Int, n::Int, T)
     canonicalize!(other)
     dst = copy(tab)
     nraw = max(2, n ÷ 4)
-    M = scrambled_tableau(tableau_maker(T, d, nraw), d, nraw; seed = DENSE_SEED).stab
+    M = _wl_stab(scrambled_tableau(tableau_maker(T, d, nraw), d, nraw; seed = DENSE_SEED))
     g = BenchmarkGroup()
     g["copy"] = @benchmarkable copy($tab)
     g["copy!"] = @benchmarkable copy!($dst, $tab)

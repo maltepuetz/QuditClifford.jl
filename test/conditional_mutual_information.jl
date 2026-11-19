@@ -94,7 +94,7 @@ cmi_allocated(tab, A, B, C) = @allocated conditional_mutual_information(tab, A, 
                     tab = TT(d, n; storephase=isodd(trial))
                     random_state!(rng, tab; m=rand(rng, 0:n))
                     A, B, C = cmi_random_parts(rng, n)
-                    stab_before = copy(tab.stab)
+                    stab_before = copy(stabilizer_matrix(tab))
 
                     I = conditional_mutual_information(tab, A, B, C)
                     @test I isa Int
@@ -110,7 +110,7 @@ cmi_allocated(tab, A, B, C) = @allocated conditional_mutual_information(tab, A, 
                         @test tripartite_information(tab, A, B, C) ==
                               mutual_information(tab, A, B) - I
                     end
-                    @test tab.stab == stab_before
+                    @test stabilizer_matrix(tab) == stab_before
                     push!(values, I)
                 end
                 @test length(values) >= 4

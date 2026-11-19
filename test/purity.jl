@@ -91,7 +91,7 @@ end
 
             # A genuine state's generators, reached through the package.
             tab = StabilizerTableau(d, n; state = :ghz)
-            @test kernel(tab.stab, n, tab.m, d) == (0, 0)
+            @test kernel(stabilizer_matrix(tab), n, tab.m, d) == (0, 0)
         end
     end
 

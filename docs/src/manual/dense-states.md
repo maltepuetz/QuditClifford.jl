@@ -173,7 +173,7 @@ julia> measure!(untracked, SinglePauli(1, 0, 1); outcome = 1)
 julia> ket(untracked)
 ERROR: ArgumentError: ket needs a tableau with storephase=true: without stored phases the tableau does not determine a state. Track phases from state preparation onward; adding zero phases afterwards does not recover the lost state.
 
-julia> ket(StabilizerTableau(2, [untracked.stab; zeros(Int, 1, 1)]))
+julia> ket(StabilizerTableau(2, [stabilizer_matrix(untracked); zeros(Int, 1, 1)]))
 StabilizerKet (d = 2, n = 1, 1 term):
   |0⟩
 ```

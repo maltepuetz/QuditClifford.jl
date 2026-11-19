@@ -495,9 +495,9 @@ end
             before = deepcopy(tab)
             apply!(tab, U)
             apply!(tab, inv(U))
-            @test tab.stab == before.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(before)
             if TT === DestabilizerTableau
-                @test tab.destab == before.destab
+                @test destabilizer_matrix(tab) == destabilizer_matrix(before)
                 @test tab.xdotz_cache == before.xdotz_cache
             end
         end
@@ -509,7 +509,7 @@ end
     before = deepcopy(tab)
     apply!(tab, U)
     apply!(tab, inv(U))
-    @test tab.stab == before.stab && tab.destab == before.destab
+    @test stabilizer_matrix(tab) == stabilizer_matrix(before) && destabilizer_matrix(tab) == destabilizer_matrix(before)
 end
 
 @testset "A k = 65 qubit sample round-trips through a 65-qubit tableau" begin
@@ -522,7 +522,7 @@ end
         apply!(tab, U)
         @test is_pure(tab; verify = true)
         apply!(tab, inv(U))
-        @test tab.stab == before.stab
+        @test stabilizer_matrix(tab) == stabilizer_matrix(before)
     end
 end
 
@@ -588,7 +588,7 @@ function rc_density(tab)
     d, n, m = tab.d, tab.n, tab.m
     ρ = Matrix{ComplexF64}(I, d^n, d^n)
     for j in 1:m
-        g = rc_pauli_matrix(tab.stab[1:(2n), j], tab.stab[2n + 1, j], d)
+        g = rc_pauli_matrix(stabilizer_matrix(tab)[1:(2n), j], stabilizer_matrix(tab)[2n + 1, j], d)
         ρ *= sum(g^t for t in 0:(d - 1)) / d
     end
     return ρ / d^(n - m)
@@ -644,7 +644,7 @@ const RC_STATE_COUNTS = [((2, 1, 1), 6, 3), ((3, 1, 1), 12, 4), ((2, 2, 1), 30, 
             failure = rc_failed((; d, n, m, index, storephase = false),
                 :consumed => rc_consumed_all(src))
             failure === nothing || break
-            key = first(rc_rref(permutedims(plain.stab[:, 1:m]), d))
+            key = first(rc_rref(permutedims(stabilizer_matrix(plain)[:, 1:m]), d))
             spaces[key] = get(spaces, key, 0) + 1
         end
         @test failure === nothing
@@ -663,8 +663,8 @@ end
     @test rc_unchanged(tab, snap)
     # m = 0 is the maximally mixed state, drawn from nothing, even at n = 0.
     @test random_state!(none, tab; m = 0) === tab
-    @test tab.m == 0 && all(iszero, tab.stab) && !tab.iscanonical
-    TT === DestabilizerTableau && @test all(iszero, tab.destab) && all(iszero, tab.xdotz_cache)
+    @test tab.m == 0 && all(iszero, stabilizer_matrix(tab)) && !tab.iscanonical
+    TT === DestabilizerTableau && @test all(iszero, destabilizer_matrix(tab)) && all(iszero, tab.xdotz_cache)
     empty = TT(3, 0)
     @test random_state!(none, empty) === empty && empty.m == 0
     @test_throws ArgumentError random_state!(none, empty; m = 1)
@@ -701,15 +701,15 @@ end
     for (_, TT) in RC_TABLEAU_TYPES, d in (2, 3)
         a = random_state!(Xoshiro(4), TT(d, 5); m = 3)
         b = random_state!(Xoshiro(4), TT(d, 5); m = 3)
-        @test a.stab == b.stab
+        @test stabilizer_matrix(a) == stabilizer_matrix(b)
         Random.seed!(12)
         c = random_state!(TT(d, 5); m = 3)
         Random.seed!(12)
-        @test random_state!(Random.default_rng(), TT(d, 5); m = 3).stab == c.stab
+        @test stabilizer_matrix(random_state!(Random.default_rng(), TT(d, 5); m = 3)) == stabilizer_matrix(c)
         Random.seed!(13)
         e = random_state!(TT(d, 5))
         Random.seed!(13)
-        @test random_state!(Random.default_rng(), TT(d, 5); m = 5).stab == e.stab
+        @test stabilizer_matrix(random_state!(Random.default_rng(), TT(d, 5); m = 5)) == stabilizer_matrix(e)
     end
 end
 
@@ -729,21 +729,21 @@ end
             @test !tab.iscanonical && tab.inversemod === QC.JustInTimeInvMod()
             @test all(f -> !(getfield(tab, f) isa Array) ||
                            getfield(tab, f) === before[findfirst(==(f), fields)], fields)
-            @test all(x -> 0 <= x < d, tab.stab[1:(2n), :])
-            storephase && @test all(x -> 0 <= x < QC.phase_modulus(d), tab.stab[2n + 1, :])
-            @test all(iszero, tab.stab[:, (m + 1):n])
+            @test all(x -> 0 <= x < d, stabilizer_matrix(tab)[1:(2n), :])
+            storephase && @test all(x -> 0 <= x < QC.phase_modulus(d), stabilizer_matrix(tab)[2n + 1, :])
+            @test all(iszero, stabilizer_matrix(tab)[:, (m + 1):n])
             # The raw constructor checks commutation and independence. At m = 0
             # there is nothing to check, and a 0 × 0 raw matrix (n = 0 without a
             # phase row) hangs the constructor's @turbo pass.
-            m > 0 && @test TT(d, tab.stab[:, 1:m]; m, storephase) isa TT
+            m > 0 && @test TT(d, stabilizer_matrix(tab)[:, 1:m]; m, storephase) isa TT
             if storephase && d == 2
-                @test all(j -> iseven(tab.stab[2n + 1, j] -
-                                      sum(tab.stab[q, j] * tab.stab[n + q, j] for q in 1:n;
+                @test all(j -> iseven(stabilizer_matrix(tab)[2n + 1, j] -
+                                      sum(stabilizer_matrix(tab)[q, j] * stabilizer_matrix(tab)[n + q, j] for q in 1:n;
                                           init = 0)), 1:m)
             end
             @test is_pure(tab; verify = true) == (m == n)
             if TT === DestabilizerTableau
-                @test all(iszero, tab.destab[:, (m + 1):n])
+                @test all(iszero, destabilizer_matrix(tab)[:, (m + 1):n])
                 @test all(iszero, tab.xdotz_cache[(m + 1):n])
             end
         end
@@ -754,9 +754,13 @@ end
 # tableau with its columns after m cleared. A bare reset! would be pure.
 function rc_z_fixture(TT, d::Int, n::Int, m::Int, storephase::Bool)
     tab = TT(d, n; state = :product, basis = :Z, storephase)
-    tab.stab[:, (m + 1):n] .= 0
+    S = stabilizer_matrix(tab)
+    S[:, (m + 1):n] .= 0
+    QuditClifford._load_stabilizer_matrix!(tab, S)
     if tab isa DestabilizerTableau
-        tab.destab[:, (m + 1):n] .= 0
+        D = destabilizer_matrix(tab)
+        D[:, (m + 1):n] .= 0
+        QuditClifford._load_destabilizer_matrix!(tab, D)
         tab.xdotz_cache[(m + 1):n] .= 0
     end
     tab.m = m
@@ -789,8 +793,8 @@ end
                     :consumed => rc_consumed_all(src),
                     :m => target.m == expected.m == m,
                     :iscanonical => !target.iscanonical && !expected.iscanonical,
-                    :stab => target.stab == expected.stab,
-                    :destab => !destab || target.destab == expected.destab,
+                    :stab => stabilizer_matrix(target) == stabilizer_matrix(expected),
+                    :destab => !destab || destabilizer_matrix(target) == destabilizer_matrix(expected),
                     :xdotz_cache => !destab || target.xdotz_cache == expected.xdotz_cache)
                 failure === nothing || break
             end
@@ -806,7 +810,7 @@ end
     for (_, TT) in RC_TABLEAU_TYPES, m in 1:n
         tab = TT(d, n; inversemod = QC.JustInTimeInvMod())
         random_state!(Xoshiro(m), tab; m)
-        S = tab.stab[1:(2n), 1:m]
+        S = stabilizer_matrix(tab)[1:(2n), 1:m]
         @test all(x -> 0 <= x < d, S)
         @test all(rc_pair(view(S, :, i), view(S, :, j), n, d) == 0 for i in 1:m, j in 1:m)
         # Independence: a nonzero 2 × 2 minor when m = 2, a nonzero vector when m = 1.
@@ -814,7 +818,7 @@ end
               any(mod(big(S[i, 1]) * S[j, 2] - big(S[j, 1]) * S[i, 2], d) != 0
                   for i in 1:(2n), j in 1:(2n))
         if TT === DestabilizerTableau
-            @test all(rc_pair(view(tab.destab, :, i), view(S, :, j), n, d) == (i == j)
+            @test all(rc_pair(view(destabilizer_matrix(tab), :, i), view(S, :, j), n, d) == (i == j)
                       for i in 1:m, j in 1:m)
             @test all(tab.xdotz_cache[j] ==
                       mod(sum(big(S[q, j]) * S[n + q, j] for q in 1:n), d) for j in 1:m)

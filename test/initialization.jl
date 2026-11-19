@@ -8,52 +8,52 @@ using QuditClifford
                 # Mixed state
                 tab_mixed = TT(2, 3; state=:mixed, storephase=true)
                 @test tab_mixed.m == 0
-                @test all(tab_mixed.stab .== 0)
+                @test all(stabilizer_matrix(tab_mixed) .== 0)
 
                 # Accept transposed tableau inputs (m × (2n+1))
                 tab_row = reshape(Int[0, 1, 0], 1, 3)
                 tab_row = TT(2, tab_row; m=1, storephase=true)
-                @test tab_row.stab[2, 1] == 1
+                @test stabilizer_matrix(tab_row)[2, 1] == 1
 
                 # Product states in Z and X bases
                 tab_z = TT(2, 2; state=:product, basis=:Z, storephase=true)
                 @test tab_z.m == 2
-                @test tab_z.stab[3, 1] == 1
-                @test tab_z.stab[4, 2] == 1
+                @test stabilizer_matrix(tab_z)[3, 1] == 1
+                @test stabilizer_matrix(tab_z)[4, 2] == 1
 
                 tab_x = TT(2, 2; state=:product, basis=:X, storephase=true)
-                @test tab_x.stab[1, 1] == 1
-                @test tab_x.stab[2, 2] == 1
+                @test stabilizer_matrix(tab_x)[1, 1] == 1
+                @test stabilizer_matrix(tab_x)[2, 2] == 1
                 tab_x_alias = TT(2, 1; state=:X)
-                @test tab_x_alias.stab[1, 1] == 1
+                @test stabilizer_matrix(tab_x_alias)[1, 1] == 1
 
                 # Y basis (qubits only) requires phase row
                 tab_y = TT(2, 1; state=:product, basis=:Y, storephase=true)
-                @test tab_y.stab[1, 1] == 1
-                @test tab_y.stab[2, 1] == 1
-                @test tab_y.stab[3, 1] == 1
+                @test stabilizer_matrix(tab_y)[1, 1] == 1
+                @test stabilizer_matrix(tab_y)[2, 1] == 1
+                @test stabilizer_matrix(tab_y)[3, 1] == 1
 
                 # GHZ state
                 tab_ghz = TT(2, 3; state=:ghz, storephase=true)
                 @test tab_ghz.m == 3
-                @test tab_ghz.stab[1, 1] == 1
-                @test tab_ghz.stab[2, 1] == 1
-                @test tab_ghz.stab[3, 1] == 1
-                @test tab_ghz.stab[4, 2] == 1
-                @test tab_ghz.stab[5, 2] == 1
-                @test tab_ghz.stab[5, 3] == 1
-                @test tab_ghz.stab[6, 3] == 1
+                @test stabilizer_matrix(tab_ghz)[1, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[2, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[3, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[4, 2] == 1
+                @test stabilizer_matrix(tab_ghz)[5, 2] == 1
+                @test stabilizer_matrix(tab_ghz)[5, 3] == 1
+                @test stabilizer_matrix(tab_ghz)[6, 3] == 1
 
                 # reset! to presets
                 tab_reset = TT(2, 2; state=:mixed, storephase=true)
                 reset!(tab_reset; state=:product, basis=:Z)
                 @test tab_reset.m == 2
-                @test tab_reset.stab[3, 1] == 1
-                @test tab_reset.stab[4, 2] == 1
+                @test stabilizer_matrix(tab_reset)[3, 1] == 1
+                @test stabilizer_matrix(tab_reset)[4, 2] == 1
                 reset!(tab_reset, :ghz)
-                @test tab_reset.stab[1, 1] == 1
-                @test tab_reset.stab[2, 1] == 1
-                @test tab_reset.stab[3, 2] == 1
+                @test stabilizer_matrix(tab_reset)[1, 1] == 1
+                @test stabilizer_matrix(tab_reset)[2, 1] == 1
+                @test stabilizer_matrix(tab_reset)[3, 2] == 1
 
                 tab_nophase = TT(2, 1; state=:mixed, storephase=false)
                 reset!(tab_nophase; state=:product, basis=:Y)
@@ -76,36 +76,36 @@ using QuditClifford
             @testset "Qudit (d=3)" begin
                 tab_mixed = TT(3, 2; state=:mixed, storephase=true)
                 @test tab_mixed.m == 0
-                @test all(tab_mixed.stab .== 0)
+                @test all(stabilizer_matrix(tab_mixed) .== 0)
 
                 tab_z = TT(3, 2; state=:product, basis=:Z, storephase=true)
                 @test tab_z.m == 2
-                @test tab_z.stab[3, 1] == 1
-                @test tab_z.stab[4, 2] == 1
+                @test stabilizer_matrix(tab_z)[3, 1] == 1
+                @test stabilizer_matrix(tab_z)[4, 2] == 1
 
                 tab_x = TT(3, 2; state=:product, basis=:X, storephase=true)
-                @test tab_x.stab[1, 1] == 1
-                @test tab_x.stab[2, 2] == 1
+                @test stabilizer_matrix(tab_x)[1, 1] == 1
+                @test stabilizer_matrix(tab_x)[2, 2] == 1
                 tab_x_alias = TT(3, 1; state=:X)
-                @test tab_x_alias.stab[1, 1] == 1
+                @test stabilizer_matrix(tab_x_alias)[1, 1] == 1
 
                 tab_ghz = TT(3, 3; state=:ghz, storephase=true)
                 @test tab_ghz.m == 3
-                @test tab_ghz.stab[1, 1] == 1
-                @test tab_ghz.stab[2, 1] == 1
-                @test tab_ghz.stab[3, 1] == 1
-                @test tab_ghz.stab[4, 2] == 1
-                @test tab_ghz.stab[5, 2] == 2 # d-1 for qudits
-                @test tab_ghz.stab[5, 3] == 1
-                @test tab_ghz.stab[6, 3] == 2 # d-1 for qudits
+                @test stabilizer_matrix(tab_ghz)[1, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[2, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[3, 1] == 1
+                @test stabilizer_matrix(tab_ghz)[4, 2] == 1
+                @test stabilizer_matrix(tab_ghz)[5, 2] == 2 # d-1 for qudits
+                @test stabilizer_matrix(tab_ghz)[5, 3] == 1
+                @test stabilizer_matrix(tab_ghz)[6, 3] == 2 # d-1 for qudits
 
                 tab_reset = TT(3, 2; state=:mixed, storephase=true)
                 reset!(tab_reset; state=:product, basis=:Z)
                 @test tab_reset.m == 2
                 reset!(tab_reset, :ghz)
-                @test tab_reset.stab[1, 1] == 1
-                @test tab_reset.stab[2, 1] == 1
-                @test tab_reset.stab[3, 2] == 1
+                @test stabilizer_matrix(tab_reset)[1, 1] == 1
+                @test stabilizer_matrix(tab_reset)[2, 1] == 1
+                @test stabilizer_matrix(tab_reset)[3, 2] == 1
             end
         end
     end
@@ -122,21 +122,21 @@ end
             tab = TT(3, partial)
             @test tab.n == 2
             @test tab.m == 1
-            @test size(tab.stab) == (5, 2)
-            @test tab.stab[:, 1] == partial[:, 1]
-            @test all(iszero, tab.stab[:, 2])
+            @test size(stabilizer_matrix(tab)) == (5, 2)
+            @test stabilizer_matrix(tab)[:, 1] == partial[:, 1]
+            @test all(iszero, stabilizer_matrix(tab)[:, 2])
 
             full = zeros(Int, 5, 2)
             full[3, 1] = 1
             full[4, 2] = 1
             full_tab = TT(3, full)
             @test full_tab.n == full_tab.m == 2
-            @test full_tab.stab == full
+            @test stabilizer_matrix(full_tab) == full
 
             # Positional state construction is an exact alias of the keyword API.
             positional = TT(2, 1, :X)
             keyword = TT(2, 1; state=:X)
-            @test positional.stab == keyword.stab
+            @test stabilizer_matrix(positional) == stabilizer_matrix(keyword)
             @test positional.m == keyword.m == 1
 
             @test_throws ArgumentError TT(2, zeros(Int, 4, 3))
@@ -156,13 +156,13 @@ end
     ]
         @testset "$label" begin
             tab = TT(2, 3; state=:product, basis=(:x, :Y, :z))
-            @test tab.stab[:, 1] == Int[1, 0, 0, 0, 0, 0, 0]
-            @test tab.stab[:, 2] == Int[0, 1, 0, 0, 1, 0, 1]
-            @test tab.stab[:, 3] == Int[0, 0, 0, 0, 0, 1, 0]
+            @test stabilizer_matrix(tab)[:, 1] == Int[1, 0, 0, 0, 0, 0, 0]
+            @test stabilizer_matrix(tab)[:, 2] == Int[0, 1, 0, 0, 1, 0, 1]
+            @test stabilizer_matrix(tab)[:, 3] == Int[0, 0, 0, 0, 0, 1, 0]
 
             mixed_alias = TT(2, 1; state=:maximally_mixed, basis=:z)
             @test mixed_alias.m == 0
-            @test all(iszero, mixed_alias.stab)
+            @test all(iszero, stabilizer_matrix(mixed_alias))
 
             @test_throws ArgumentError TT(2, 1; state=:X, basis=:Y)
             @test_throws ArgumentError TT(2, 1; state=:X, basis=[:X])
@@ -204,11 +204,11 @@ end
 
     for TT in (StabilizerTableau, DestabilizerTableau)
         # 1+2. canonicalization of a GHZ tableau agrees with the Int control
-        ref = (t = mk(TT, tables[1]; state=:ghz); canonicalize!(t); copy(t.stab))
+        ref = (t = mk(TT, tables[1]; state=:ghz); canonicalize!(t); copy(stabilizer_matrix(t)))
         for tbl in tables
             t = mk(TT, tbl; state=:ghz)
             canonicalize!(t)
-            @test t.stab == ref
+            @test stabilizer_matrix(t) == ref
         end
 
         # 3. expectation / span reconstruction agrees
@@ -226,22 +226,22 @@ end
             tab = mk(TT, tbl; state=:product, basis=:X)
             @test measure!(tab, op; outcome=0) == 0
             for i in 1:tab.m, j in 1:tab.m
-                @test mod(QuditClifford.commutation_col(tab.stab, i, tab.stab[:, j]), tab.d) == 0
+                @test mod(QuditClifford.commutation_col(stabilizer_matrix(tab), i, stabilizer_matrix(tab)[:, j]), tab.d) == 0
             end
-            @test tab.stab == ctrl.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(ctrl)
             @test tab.m == ctrl.m
-            @test all(tab.stab[:, (tab.m+1):end] .== 0)      # capacity stays zeroed
+            @test all(stabilizer_matrix(tab)[:, (tab.m+1):end] .== 0)      # capacity stays zeroed
 
             # 5. destabilizer duality and the x.z cache survive too
             if TT === DestabilizerTableau
-                @test tab.destab == ctrl.destab
+                @test destabilizer_matrix(tab) == destabilizer_matrix(ctrl)
                 for i in 1:tab.m, j in 1:tab.m
-                    v = mod(sum(tab.destab[q, i] * tab.stab[tab.n + q, j] -
-                                tab.destab[tab.n + q, i] * tab.stab[q, j] for q in 1:tab.n), tab.d)
+                    v = mod(sum(destabilizer_matrix(tab)[q, i] * stabilizer_matrix(tab)[tab.n + q, j] -
+                                destabilizer_matrix(tab)[tab.n + q, i] * stabilizer_matrix(tab)[q, j] for q in 1:tab.n), tab.d)
                     @test v == (i == j ? 1 : 0)
                 end
                 for j in 1:tab.m
-                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(tab.stab, tab.n, j, tab.d)
+                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(stabilizer_matrix(tab), tab.n, j, tab.d)
                 end
             end
         end
@@ -423,10 +423,10 @@ end
                                  state=state, basis=basis)
 
             for tab in (fresh, after_reset)
-                @test all(v -> 0 <= v < d, @view tab.stab[1:(2n), :])
+                @test all(v -> 0 <= v < d, @view stabilizer_matrix(tab)[1:(2n), :])
                 if storephase
                     dphase = QuditClifford.phase_modulus(d)
-                    @test all(v -> 0 <= v < dphase, @view tab.stab[2n + 1, :])
+                    @test all(v -> 0 <= v < dphase, @view stabilizer_matrix(tab)[2n + 1, :])
                 end
             end
         end
@@ -459,18 +459,21 @@ end
                     a = TT(d, raw; kw...)
                     b = TT(d, raw; kw...)
                     @test raw == raw0                       # construction leaves it alone
-                    @test a.stab !== b.stab
-                    @test a.stab !== raw
+                    ref0 = copy(stabilizer_matrix(b))
+                    c = TT(d, raw; kw...)
+                    QuditClifford._load_stabilizer_matrix!(c, zero(stabilizer_matrix(c)))
+                    @test stabilizer_matrix(b) == ref0       # a and b share no storage
+                    @test raw == raw0                        # nor does the tableau share it with raw
 
-                    ref = copy(b.stab)
+                    ref = copy(stabilizer_matrix(b))
                     measure!(a, SinglePauli(1, 1, 0); outcome=0)   # anticommutes with Z₁
                     @test raw == raw0                       # so does a later update
-                    @test b.stab == ref                     # and b is unaffected
+                    @test stabilizer_matrix(b) == ref                     # and b is unaffected
 
                     raw .= 0
-                    @test b.stab == ref                     # nor does the caller reach in
-                    @test all(v -> 0 <= v < d, @view b.stab[1:4, :])
-                    @test 0 <= b.stab[5, 1] < pm
+                    @test stabilizer_matrix(b) == ref                     # nor does the caller reach in
+                    @test all(v -> 0 <= v < d, @view stabilizer_matrix(b)[1:4, :])
+                    @test 0 <= stabilizer_matrix(b)[5, 1] < pm
                 end
             end
         end
@@ -499,7 +502,7 @@ end
         for (raw, sp) in ((zeros(Int, 0, 0), false), (zeros(Int, 1, 0), true))
             tab = TT(d, raw; m=0, storephase=sp)
             @test tab.n == tab.m == 0
-            @test size(tab.stab) == (sp ? 1 : 0, 0)
+            @test size(stabilizer_matrix(tab)) == (sp ? 1 : 0, 0)
             @test tab.storephase == sp
         end
     end

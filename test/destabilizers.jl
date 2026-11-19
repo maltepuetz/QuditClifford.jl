@@ -13,7 +13,7 @@ end
 
 @inline function _assert_duality(tab)
     for i in 1:tab.m, j in 1:tab.m
-        val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+        val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), tab.d)
         @test val == (i == j ? 1 : 0)
     end
 end
@@ -25,7 +25,7 @@ end
             @test tab.m == n
             for i in 1:n
                 for j in 1:n
-                    val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), d)
+                    val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), d)
                     @test val == (i == j ? 1 : 0)
                 end
             end
@@ -37,7 +37,7 @@ end
         out = measure!(tab, SinglePauli(1, 1, 0); outcome=1) # measure X
         @test out == 1
         @test tab.m == 1
-        val = mod(_symp(tab.destab, 1, tab.stab, 1, tab.n), tab.d)
+        val = mod(_symp(destabilizer_matrix(tab), 1, stabilizer_matrix(tab), 1, tab.n), tab.d)
         @test val == 1
     end
 
@@ -46,7 +46,7 @@ end
         out = measure!(tab, SinglePauli(1, 0, 1); outcome=2) # measure Z
         @test out == 2
         @test tab.m == 1
-        val = mod(_symp(tab.destab, 1, tab.stab, 1, tab.n), tab.d)
+        val = mod(_symp(destabilizer_matrix(tab), 1, stabilizer_matrix(tab), 1, tab.n), tab.d)
         @test val == 1
     end
 
@@ -61,13 +61,13 @@ end
 
         @test measure!(tab, SinglePauli(1, 1, 0); outcome=0) == 0
         @test tab.m == 2
-        @test tab.stab[1:4, 1] == Int[1, 1, 0, 0]
-        @test tab.stab[1:4, 2] == Int[1, 0, 0, 0]
-        @test tab.destab[:, 1] == Int[0, 0, 0, 1] # Z₂
-        @test tab.destab[:, 2] == Int[0, 0, 1, 1] # Z₁Z₂
+        @test stabilizer_matrix(tab)[1:4, 1] == Int[1, 1, 0, 0]
+        @test stabilizer_matrix(tab)[1:4, 2] == Int[1, 0, 0, 0]
+        @test destabilizer_matrix(tab)[:, 1] == Int[0, 0, 0, 1] # Z₂
+        @test destabilizer_matrix(tab)[:, 2] == Int[0, 0, 1, 1] # Z₁Z₂
 
         for i in 1:tab.m, j in 1:tab.m
-            val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+            val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), tab.d)
             @test val == (i == j ? 1 : 0)
         end
     end
@@ -79,13 +79,13 @@ end
         op = DoublePauli(1, 0, 1, 2, 1, 0)
 
         @test measure!(tab, op; outcome=0) == 0
-        @test tab.stab[1:4, 1] == Int[0, 1, 1, 0]
-        @test tab.stab[1:4, 2] == Int[0, 1, 0, 0]
-        @test tab.destab[:, 1] == Int[1, 0, 0, 0] # X₁
-        @test tab.destab[:, 2] == Int[1, 0, 0, 1] # X₁Z₂
+        @test stabilizer_matrix(tab)[1:4, 1] == Int[0, 1, 1, 0]
+        @test stabilizer_matrix(tab)[1:4, 2] == Int[0, 1, 0, 0]
+        @test destabilizer_matrix(tab)[:, 1] == Int[1, 0, 0, 0] # X₁
+        @test destabilizer_matrix(tab)[:, 2] == Int[1, 0, 0, 1] # X₁Z₂
 
         for i in 1:tab.m, j in 1:tab.m
-            val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), tab.d)
+            val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), tab.d)
             @test val == (i == j ? 1 : 0)
         end
     end
@@ -97,14 +97,14 @@ end
         # not just the first one it meets.
         for d in (2, 3)
             tab = DestabilizerTableau(d, 3; state=:product, basis=:X)
-            d2_before = copy(tab.destab[:, 2])
-            d3_before = copy(tab.destab[:, 3])
+            d2_before = copy(destabilizer_matrix(tab)[:, 2])
+            d3_before = copy(destabilizer_matrix(tab)[:, 3])
 
             @test measure!(tab, TriplePauli(1, 0, 1, 2, 1, 0, 3, 1, 0);
                            outcome=0, phase_policy=1) == 0
 
-            @test tab.destab[:, 2] != d2_before   # both duals really moved
-            @test tab.destab[:, 3] != d3_before
+            @test destabilizer_matrix(tab)[:, 2] != d2_before   # both duals really moved
+            @test destabilizer_matrix(tab)[:, 3] != d3_before
             _assert_duality(tab)
         end
     end
@@ -149,11 +149,11 @@ end
             for (basis, op) in (([:Z, :X], DoublePauli(1, 0, 1, 2, 0, 1)),
                                 ([:X, :Z], DoublePauli(1, 1, 0, 2, 1, 0)))
                 tab = DestabilizerTableau(d, 2; state=:product, basis=basis)
-                d1_before = copy(tab.destab[:, 1])
+                d1_before = copy(destabilizer_matrix(tab)[:, 1])
 
                 @test measure!(tab, op; outcome=0, phase_policy=1) == 0
 
-                @test tab.destab[:, 1] != d1_before   # the dual really moved
+                @test destabilizer_matrix(tab)[:, 1] != d1_before   # the dual really moved
                 _assert_duality(tab)
             end
         end
@@ -213,7 +213,7 @@ end
 
             for i in 1:tab.m
                 for j in 1:tab.m
-                    val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), d)
+                    val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), d)
                     @test val == (i == j ? 1 : 0)
                 end
             end
@@ -235,7 +235,7 @@ end
         @test tab.iscanonical
         @test tab.xdotz_cache[1] == 0
         @test tab.xdotz_cache[2:3] == [0, 0]
-        @test mod(_symp(tab.destab, 1, tab.stab, 1, tab.n), tab.d) == 1
+        @test mod(_symp(destabilizer_matrix(tab), 1, stabilizer_matrix(tab), 1, tab.n), tab.d) == 1
     end
 
     @testset "Purity checks preserve duality" begin
@@ -253,7 +253,7 @@ end
 
         for i in 1:tab.m
             for j in 1:tab.m
-                val = mod(_symp(tab.destab, i, tab.stab, j, tab.n), d)
+                val = mod(_symp(destabilizer_matrix(tab), i, stabilizer_matrix(tab), j, tab.n), d)
                 @test val == (i == j ? 1 : 0)
             end
         end
@@ -297,12 +297,12 @@ end
 
                 for j in 1:tab.m
                     @test tab.xdotz_cache[j] ==
-                          QuditClifford.dot_xz_col(tab.stab, n, j, d)
+                          QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
                 end
 
-                direct = copy(tab.destab)
+                direct = copy(destabilizer_matrix(tab))
                 QuditClifford.rebuild_destabilizers!(tab)
-                @test tab.destab == direct
+                @test destabilizer_matrix(tab) == direct
             end
         end
     end
@@ -330,10 +330,10 @@ end
     # The exact canonical form, not just "it is canonical and dual". S_1 = Z_1^2
     # normalizes to Z_1 and then clears Z_1 out of S_2, leaving Z_2^2 -> Z_2.
     # Phases stay 0 because both generators are Z-type, so every x.z term is 0.
-    @test tab.stab[:, 1] == [0, 0, 1, 0, 0]
-    @test tab.stab[:, 2] == [0, 0, 0, 1, 0]
-    @test tab.destab[:, 1] == [1, 0, 0, 0]
-    @test tab.destab[:, 2] == [0, 1, 0, 0]
+    @test stabilizer_matrix(tab)[:, 1] == [0, 0, 1, 0, 0]
+    @test stabilizer_matrix(tab)[:, 2] == [0, 0, 0, 1, 0]
+    @test destabilizer_matrix(tab)[:, 1] == [1, 0, 0, 0]
+    @test destabilizer_matrix(tab)[:, 2] == [0, 1, 0, 0]
     @test tab.pivcol_of_row == [0, 0, 1, 2]     # pivot metadata
     @test tab.xdotz_cache[1:2] == [0, 0]
 
@@ -341,16 +341,16 @@ end
     for r in 1:(2 * tab.n)
         c = tab.pivcol_of_row[r]
         c == 0 && continue
-        @test tab.stab[r, c] == 1
+        @test stabilizer_matrix(tab)[r, c] == 1
         for jj in 1:tab.m
-            jj == c || @test tab.stab[r, jj] == 0
+            jj == c || @test stabilizer_matrix(tab)[r, jj] == 0
         end
     end
 
     # A StabilizerTableau from the same raw input canonicalizes identically.
     ref = StabilizerTableau(3, copy(raw); m=2, storephase=true)
     canonicalize!(ref)
-    @test ref.stab == tab.stab
+    @test stabilizer_matrix(ref) == stabilizer_matrix(tab)
     @test ref.pivcol_of_row == tab.pivcol_of_row
 end
 
@@ -418,8 +418,8 @@ end
         tab = TT(d, n; state=:product, basis=:Z)
 
         if want_mult !== nothing
-            c1 = mod(QuditClifford.commutation_col(tab.stab, 1, op), d)
-            c2 = mod(QuditClifford.commutation_col(tab.stab, 2, op), d)
+            c1 = mod(QuditClifford.commutation_col(stabilizer_matrix(tab), 1, op), d)
+            c2 = mod(QuditClifford.commutation_col(stabilizer_matrix(tab), 2, op), d)
             @test mod(-c2 * invmod(c1, d), d) == want_mult
         end
 
@@ -429,15 +429,15 @@ end
 
         # generators stay mutually commuting
         for i in 1:tab.m, j in 1:tab.m
-            @test mod(QuditClifford.commutation_col(tab.stab, i, tab.stab[:, j]), d) == 0
+            @test mod(QuditClifford.commutation_col(stabilizer_matrix(tab), i, stabilizer_matrix(tab)[:, j]), d) == 0
         end
         # inactive capacity stays zeroed
-        @test all(tab.stab[:, (tab.m + 1):end] .== 0)
+        @test all(stabilizer_matrix(tab)[:, (tab.m + 1):end] .== 0)
 
         if TT === DestabilizerTableau
             _assert_duality(tab)
             for j in 1:tab.m
-                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(tab.stab, n, j, d)
+                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):end] .== 0)
         end
@@ -488,28 +488,28 @@ end
             apply!(tab, g)
 
             for a in 1:tab.m, b in 1:tab.m
-                s = sum(tab.destab[q, a] * tab.stab[n + q, b] -
-                        tab.destab[n + q, a] * tab.stab[q, b] for q in 1:n)
+                s = sum(destabilizer_matrix(tab)[q, a] * stabilizer_matrix(tab)[n + q, b] -
+                        destabilizer_matrix(tab)[n + q, a] * stabilizer_matrix(tab)[q, b] for q in 1:n)
                 @test mod(s, d) == (a == b ? 1 : 0)
             end
 
             for j in 1:tab.m
                 @test tab.xdotz_cache[j] ==
-                      QuditClifford.dot_xz_col(tab.stab, n, j, d)
+                      QuditClifford.dot_xz_col(stabilizer_matrix(tab), n, j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):n] .== 0)
-            @test all(tab.destab[:, (tab.m + 1):n] .== 0)
+            @test all(destabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)
         end
 
         # A deterministic odd-prime query that actually consumes the cache:
         # measuring a generator of the state is in-span and must not move it.
         if d != 2 && storephase && tab.m > 0
-            x = [tab.stab[q, 1] for q in 1:n]
-            z = [tab.stab[n + q, 1] for q in 1:n]
+            x = [stabilizer_matrix(tab)[q, 1] for q in 1:n]
+            z = [stabilizer_matrix(tab)[n + q, 1] for q in 1:n]
             op = GeneralPauli(vcat(x, z), 0)
-            before = copy(tab.stab)
-            @test measure!(tab, op) == mod(-tab.stab[2n + 1, 1], d)
-            @test tab.stab == before
+            before = copy(stabilizer_matrix(tab))
+            @test measure!(tab, op) == mod(-stabilizer_matrix(tab)[2n + 1, 1], d)
+            @test stabilizer_matrix(tab) == before
         end
     end
 end
@@ -531,16 +531,16 @@ end
             @test tab.m == oldm
             _assert_duality(tab)
             for j in 1:tab.m
-                expected = Int(mod(sum(big(tab.stab[q, j]) * tab.stab[tab.n + q, j]
+                expected = Int(mod(sum(big(stabilizer_matrix(tab)[q, j]) * stabilizer_matrix(tab)[tab.n + q, j]
                                        for q in 1:tab.n), d))
                 @test tab.xdotz_cache[j] == expected
             end
-            @test all(iszero, tab.stab[:, (tab.m + 1):end])
-            @test all(iszero, tab.destab[:, (tab.m + 1):end])
+            @test all(iszero, stabilizer_matrix(tab)[:, (tab.m + 1):end])
+            @test all(iszero, destabilizer_matrix(tab)[:, (tab.m + 1):end])
             @test all(iszero, tab.xdotz_cache[(tab.m + 1):end])
             if sp && d > 2
                 # Immediate deterministic query consumes the live cache.
-                op = GeneralPauli(copy(tab.stab[1:(2tab.n), 1]), tab.stab[2tab.n + 1, 1])
+                op = GeneralPauli(copy(stabilizer_matrix(tab)[1:(2tab.n), 1]), stabilizer_matrix(tab)[2tab.n + 1, 1])
                 @test expect_int!(tab, op) == 0
             end
         end
@@ -549,7 +549,7 @@ end
 
 # x·z of stabilizer column j, the value `xdotz_cache[j]` must hold.
 _stab_xdotz(tab, j) =
-    mod(sum(tab.stab[q, j] * tab.stab[tab.n + q, j] for q in 1:tab.n; init = 0), tab.d)
+    mod(sum(stabilizer_matrix(tab)[q, j] * stabilizer_matrix(tab)[tab.n + q, j] for q in 1:tab.n; init = 0), tab.d)
 
 function _assert_active_cache(tab)
     for j in 1:tab.m
@@ -576,12 +576,12 @@ end
         _assert_active_cache(tab)
         if m > 0
             # In span: a generator's own exponents give a deterministic outcome.
-            measure!(tab, _hermitian_pauli(tab.stab[1:(2n), 1], d))
+            measure!(tab, _hermitian_pauli(stabilizer_matrix(tab)[1:(2n), 1], d))
             @test tab.m == m
             _assert_duality(tab)
             _assert_active_cache(tab)
             # Noncommuting: a dual anticommutes with its own stabilizer.
-            measure!(tab, _hermitian_pauli(tab.destab[:, 1], d);
+            measure!(tab, _hermitian_pauli(destabilizer_matrix(tab)[:, 1], d);
                      outcome = rand(rng, 0:(d - 1)))
             @test tab.m == m
             _assert_duality(tab)
@@ -596,8 +596,8 @@ end
                 x = rand(rng, 0:(d - 1), 2n, 1)
                 v = vec(x)
                 for j in 1:m
-                    c = mod(_symp(x, 1, tab.stab, j, n), d)
-                    v = mod.(v .- c .* tab.destab[:, j], d)
+                    c = mod(_symp(x, 1, stabilizer_matrix(tab), j, n), d)
+                    v = mod.(v .- c .* destabilizer_matrix(tab)[:, j], d)
                 end
                 op = _hermitian_pauli(v, d)
                 expect_int!(tab, op) == -1 && break

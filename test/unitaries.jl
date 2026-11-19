@@ -336,9 +336,9 @@ function oracle_density(tab)
     dim = d^n
     ρ = Matrix{ComplexF64}(I, dim, dim)
     for j in 1:tab.m
-        x = [tab.stab[q, j] for q in 1:n]
-        z = [tab.stab[n + q, j] for q in 1:n]
-        h = tab.storephase ? tab.stab[2n + 1, j] : 0
+        x = [stabilizer_matrix(tab)[q, j] for q in 1:n]
+        z = [stabilizer_matrix(tab)[n + q, j] for q in 1:n]
+        h = tab.storephase ? stabilizer_matrix(tab)[2n + 1, j] : 0
         Sj = oracle_ζ(d)^h * oracle_pauli(d, x, z)
         acc = zeros(ComplexF64, dim, dim)
         P = Matrix{ComplexF64}(I, dim, dim)
@@ -447,24 +447,24 @@ end
                 measure!(tab, SinglePauli(3, 1, 0); outcome = 1)
                 m_before = tab.m
                 canonicalize!(tab)
-                untouched = copy(tab.stab[3, :])      # qudit 3 X row, never a target
+                untouched = copy(stabilizer_matrix(tab)[3, :])      # qudit 3 X row, never a target
                 @test any(!iszero, untouched)          # confirm the seeding worked
                 if storephase
-                    phase_before = copy(tab.stab[2n + 1, 1:tab.m])
+                    phase_before = copy(stabilizer_matrix(tab)[2n + 1, 1:tab.m])
                     @test any(!iszero, phase_before)   # ditto for the phase row
                 end
                 apply!(tab, SUM(1, 2, 1))
                 @test tab.m == m_before
                 @test !tab.iscanonical
-                @test tab.stab[3, :] == untouched
-                @test all(tab.stab[:, (tab.m + 1):n] .== 0)
-                @test all(0 .<= tab.stab[1:2n, 1:tab.m] .< d)
+                @test stabilizer_matrix(tab)[3, :] == untouched
+                @test all(stabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)
+                @test all(0 .<= stabilizer_matrix(tab)[1:2n, 1:tab.m] .< d)
                 if storephase
                     # SUM's phase delta is identically zero on this fixture at
                     # both d, so equality is the assertion with content here; a
                     # range check alone would pass against a phase row that
                     # `apply!` never touched.
-                    @test tab.stab[2n + 1, 1:tab.m] == phase_before
+                    @test stabilizer_matrix(tab)[2n + 1, 1:tab.m] == phase_before
                 end
                 # A gate that does move the phase row, so the range check below
                 # is inspecting `apply!`'s output rather than `measure!`'s.
@@ -472,12 +472,12 @@ end
                 # and the exponent bounds still hold after it.
                 apply!(tab, PauliGate(1, 1, 1))
                 @test tab.m == m_before
-                @test tab.stab[3, :] == untouched
-                @test all(tab.stab[:, (tab.m + 1):n] .== 0)
-                @test all(0 .<= tab.stab[1:2n, 1:tab.m] .< d)
+                @test stabilizer_matrix(tab)[3, :] == untouched
+                @test all(stabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)
+                @test all(0 .<= stabilizer_matrix(tab)[1:2n, 1:tab.m] .< d)
                 if storephase
-                    @test tab.stab[2n + 1, 1:tab.m] != phase_before
-                    @test all(0 .<= tab.stab[2n + 1, 1:tab.m] .< (d == 2 ? 4 : d))
+                    @test stabilizer_matrix(tab)[2n + 1, 1:tab.m] != phase_before
+                    @test all(0 .<= stabilizer_matrix(tab)[2n + 1, 1:tab.m] .< (d == 2 ? 4 : d))
                 end
             end
         end
@@ -512,11 +512,11 @@ end
                     without = seeded(false)
                     # The fixture itself must agree before the gate, or the
                     # comparison afterwards would be meaningless.
-                    @test with.stab[1:2n, :] == without.stab[1:2n, :]
+                    @test stabilizer_matrix(with)[1:2n, :] == stabilizer_matrix(without)[1:2n, :]
                     apply!(with, g)
                     apply!(without, g)
-                    @test with.stab[1:2n, :] == without.stab[1:2n, :]
-                    @test size(without.stab, 1) == 2n
+                    @test stabilizer_matrix(with)[1:2n, :] == stabilizer_matrix(without)[1:2n, :]
+                    @test size(stabilizer_matrix(without), 1) == 2n
                     @test without.m == with.m
                 end
             end
@@ -530,7 +530,7 @@ end
     @test_throws ArgumentError apply!(tab, SUM(1, 5, 1))
     @test_throws ArgumentError apply!(tab, Multiplier(1, 3))   # 3 ≡ 0 (mod 3)
     # The rejected calls must not have mutated anything.
-    @test tab.stab == StabilizerTableau(3, 2; state = :product).stab
+    @test stabilizer_matrix(tab) == stabilizer_matrix(StabilizerTableau(3, 2; state = :product))
 end
 
 # `_apply_prepared!` is the reuse point for stored Clifford operators, which
@@ -547,7 +547,7 @@ end
             for d in (2, 3)
                 other = d == 2 ? 3 : 2
                 tab = TT(d, 3; state = :product)
-                before = copy(tab.stab)
+                before = copy(stabilizer_matrix(tab))
 
                 # Dimension mismatch: the exponents would be reduced mod the
                 # prepared `d` and the phase mod the prepared modulus.
@@ -568,17 +568,17 @@ end
                 @test_throws ArgumentError QC._apply_prepared!(
                     tab, QC._prepare(SUM(1, 5), d, jit, true))
 
-                @test tab.stab == before
+                @test stabilizer_matrix(tab) == before
             end
         end
     end
 
     # Phase-free tableaux reject a phase-carrying preparation symmetrically.
     tab = StabilizerTableau(3, 3; state = :product, storephase = false)
-    before = copy(tab.stab)
+    before = copy(stabilizer_matrix(tab))
     @test_throws ArgumentError QC._apply_prepared!(
         tab, QC._prepare(Fourier(1), 3, jit, true))
-    @test tab.stab == before
+    @test stabilizer_matrix(tab) == before
 end
 
 @testset "_validate_targets rejects repeated indices" begin
@@ -605,12 +605,12 @@ end
         for g in (Fourier(3), Phase(3), Multiplier(3, 2), SUM(1, 3), Multiplier(1, 3))
             @test_throws ArgumentError apply!(tab, g)
             @test counter.calls[] == 0
-            @test tab.stab == before.stab
+            @test stabilizer_matrix(tab) == stabilizer_matrix(before)
             @test tab.xdotz_cache == before.xdotz_cache
             @test tab.iscanonical == before.iscanonical
             @test tab.m == before.m
             if TT === DestabilizerTableau
-                @test tab.destab == before.destab
+                @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
         end
     end
@@ -679,8 +679,8 @@ end
                 for j in 1:base.m, shift in (0, 1)
                     # A stabilizer generator has expectation 1. Adding a
                     # scalar phase gives a known nonzero complex expectation.
-                    P = GeneralPauli(copy(base.stab[1:6, j]),
-                                     base.stab[7, j] + shift)
+                    P = GeneralPauli(copy(stabilizer_matrix(base)[1:6, j]),
+                                     stabilizer_matrix(base)[7, j] + shift)
                     expected = oracle_ζ(d)^shift
                     Pc = conjugate(g, P; d = d)
                     explicit = conjugate(g, P, 3; d = d)
@@ -762,32 +762,32 @@ end
                 # Each of these is the identity conjugation, so the tableau must
                 # return to itself exactly -- phase row included, since a global
                 # phase is not stored.
-                tab = fresh(); ref = copy(tab.stab)
+                tab = fresh(); ref = copy(stabilizer_matrix(tab))
                 for _ in 1:4
                     apply!(tab, Fourier(1))
                 end
-                @test tab.stab == ref
+                @test stabilizer_matrix(tab) == ref
 
-                tab = fresh(); ref = copy(tab.stab)
+                tab = fresh(); ref = copy(stabilizer_matrix(tab))
                 apply!(tab, SWAP(1, 3)); apply!(tab, SWAP(1, 3))
-                @test tab.stab == ref
+                @test stabilizer_matrix(tab) == ref
 
                 # Phase has order d at odd primes and order 4 at d = 2.
-                tab = fresh(); ref = copy(tab.stab)
+                tab = fresh(); ref = copy(stabilizer_matrix(tab))
                 for _ in 1:(d == 2 ? 4 : d)
                     apply!(tab, Phase(2))
                 end
-                @test tab.stab == ref
+                @test stabilizer_matrix(tab) == ref
 
                 # SUM and CPhase coefficients add; Multiplier coefficients multiply.
                 for a in 0:d-1, b in 0:d-1
                     t1 = fresh(); apply!(t1, SUM(1, 2, a)); apply!(t1, SUM(1, 2, b))
                     t2 = fresh(); apply!(t2, SUM(1, 2, mod(a + b, d)))
-                    @test t1.stab == t2.stab
+                    @test stabilizer_matrix(t1) == stabilizer_matrix(t2)
 
                     t1 = fresh(); apply!(t1, CPhase(1, 2, a)); apply!(t1, CPhase(1, 2, b))
                     t2 = fresh(); apply!(t2, CPhase(1, 2, mod(a + b, d)))
-                    @test t1.stab == t2.stab
+                    @test stabilizer_matrix(t1) == stabilizer_matrix(t2)
                 end
 
                 if d > 2
@@ -795,7 +795,7 @@ end
                         t1 = fresh()
                         apply!(t1, Multiplier(1, a)); apply!(t1, Multiplier(1, b))
                         t2 = fresh(); apply!(t2, Multiplier(1, mod(a * b, d)))
-                        @test t1.stab == t2.stab
+                        @test stabilizer_matrix(t1) == stabilizer_matrix(t2)
                     end
                 end
             end
@@ -950,7 +950,7 @@ end
 
                 base = TT(d, 1; state = :product, basis = :X)
                 for shift in (0, 1)
-                    P = GeneralPauli(copy(base.stab[1:2, 1]), base.stab[3, 1] + shift)
+                    P = GeneralPauli(copy(stabilizer_matrix(base)[1:2, 1]), stabilizer_matrix(base)[3, 1] + shift)
                     Pc = conjugate(g, P; d = d)
                     expected = oracle_ζ(d)^shift
                     @test isapprox(expect!(deepcopy(base), P), expected; atol = 1e-8)
