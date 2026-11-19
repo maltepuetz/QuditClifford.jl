@@ -776,6 +776,15 @@ function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
         "PreparedClifford for this tableau before applying it."))
     length(prep.targets) == 0 && return tab
     _validate_clifford_targets(prep, tab.n)
+    return _apply_columns!(tab, prep)
+end
+
+# The column loop of `_apply_prepared!`, for a `prep` already checked against
+# `tab`. It is a separate, non-inlined function on purpose: compiled into the
+# same body as the entry checks, the loop ran about 1.3x slower (two-qudit
+# brickwork gates on a `DestabilizerTableau`, n = 511, M3 Pro), and the
+# function barrier costs one call per gate.
+@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford)
     stab = _stab(tab)
     phase = _phase(tab)
     @inbounds for j in 1:tab.m
