@@ -446,35 +446,62 @@ end
     @turbo for j in eachindex(genws)
         genws[j] = 0
     end
-    if res[q] != 0
+    zq = res[q] != 0
+    if zq
         genws[n+q] = 1  # Z_q
     else
         genws[q] = 1    # X_q
     end
     v = view(genws, 1:(2n))
 
-    # Project v to commute with old stabilizers.
+    # Project v = e - Σ_j t_j D_j to commute with the old stabilizers, where e
+    # is the unit vector above and t_j = <v, S_j> at the time D_j is
+    # subtracted. Duality makes <D_i, S_j> = δ_ij, so subtracting earlier
+    # duals leaves <v, S_j> = <e, S_j>: one entry of S_j, -x_q for e = Z_q and
+    # z_q for e = X_q. Reading it costs one load per generator instead of a
+    # 2n-term pairing.
+    stab = tab.stab
     @inbounds for j in 1:m
-        t = mod(_symplectic_vec_col(v, tab.stab, j, n), d)
-        t == 0 && continue
+        traw = zq ? stab[q, j] : stab[n+q, j]
+        traw == 0 && continue
+        t = zq ? d - traw : traw
         # v views generator_workspace, a different array from destab.
         submul_mod!(v, view(tab.destab, 1:(2n), j), t, d)
     end
 
-    # β = <v, op>, read from the new column, which holds op with reduced exponents.
-    β = mod(_symplectic_vec_col(v, tab.stab, newcol, n), d)
+    # The new column holds op with reduced exponents. Every pairing against it
+    # vanishes outside op's qudit support, so collect that support once.
+    supp = tab.support_workspace
+    nsupp = _column_support!(supp, stab, newcol, n)
+
+    # β = <v, op>
+    β = mod(_symplectic_vec_col_support(v, stab, newcol, n, supp, nsupp), d)
     β == 0 && throw(ArgumentError("Failed to construct destabilizer: β = 0."))
     invβ = tab.inversemod(β, d)
 
     # D_new = invβ * v
     mulcopy_mod!(view(tab.destab, 1:(2n), newcol), v, invβ, d)
 
-    # Orthogonalize old destabilizers to the new stabilizer.
+    # Orthogonalize old destabilizers to the new stabilizer. D_new vanishes
+    # wherever v does, so when it is local the update runs over its sites,
+    # collected in zacc_workspace, which the append branch does not otherwise
+    # use; a dense D_new keeps the SIMD loop (see `_pivot_support_is_sparse`).
+    sites = tab.zacc_workspace
+    ndsupp = _column_support!(sites, tab.destab, newcol, n)
+    dsparse = _pivot_support_is_sparse(ndsupp, n)
     @inbounds for j in 1:m
-        t = mod(_symplectic_col_col(tab.destab, j, tab.stab, newcol, n), d)
+        traw = _symplectic_col_col_support(tab.destab, j, stab, newcol, n, supp, nsupp)
+        traw == 0 && continue
+        t = mod(traw, d)
         t == 0 && continue
         # m == newcol - 1, so j < newcol: disjoint columns of destab.
-        submul_mod!(view(tab.destab, 1:(2n), j), view(tab.destab, 1:(2n), newcol), t, d)
+        dst = view(tab.destab, 1:(2n), j)
+        src = view(tab.destab, 1:(2n), newcol)
+        if dsparse
+            submul_mod_sites!(dst, src, sites, ndsupp, n, t, d)
+        else
+            submul_mod!(dst, src, t, d)
+        end
     end
 
     _update_xdotz_cache!(tab, newcol)
@@ -570,10 +597,16 @@ julia> measure!(ghz, DoublePauli(1, 0, 1, 2, 0, 2))           # Z₁ Z₂², fix
 - For a pure tableau (`m == n`) with `storephase=false`, a commuting `op` is settled by
   the commutation check alone and the tableau, including its generator basis, is left
   as it was. This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a
-  dense Pauli. Otherwise a deterministic outcome needs `op`'s decomposition over the
-  generators: a `StabilizerTableau` canonicalizes for it unless it is already canonical,
-  at `O(n²m)`, while a [`DestabilizerTableau`](@ref) reads it off its dual basis. Prefer
-  the latter for measurement-heavy circuits with phases.
+  dense Pauli. Otherwise a commuting `op` needs its decomposition over the generators.
+  A [`DestabilizerTableau`](@ref) reads it off its dual basis in `O(km)`. A canonical
+  `StabilizerTableau` reads it off its pivot rows in `O(n)`; one that is not canonical
+  solves for it by elimination on a copy of its generators, one bit per entry for
+  `d=2` and one byte up to `d=255`, at up to `O(nm²)` operations on those. Neither changes the
+  generator basis or `iscanonical`: a fixed outcome leaves the tableau as it was, and
+  an appended generator goes after the existing ones. Prefer a `DestabilizerTableau`
+  for measurement-heavy circuits with phases, and call [`canonicalize!`](@ref) first
+  when measuring many commuting operators on a `StabilizerTableau` whose generators
+  do not change in between.
 """
 function measure!(rng::Random.AbstractRNG, tab::AbstractTableau,
     op::AbstractVector{<:Integer};
@@ -708,8 +741,10 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     # Need to check if op is in the stabilizer span or not. #
     #########################################################
 
-    # check whether op is in the stabilizer span and set coeffs in c_workspace
-    in_span = in_span_and_coeffs!(tab, op)
+    # check whether op is in the stabilizer span and set coeffs in c_workspace;
+    # the generator basis stays as it is
+    _span_coeffs_keep_basis!(tab, op)
+    in_span = _in_span_from_coeffs!(tab, op)
     res = tab.res_workspace
 
     if in_span

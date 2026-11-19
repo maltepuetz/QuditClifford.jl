@@ -115,6 +115,11 @@ register_monitored_measure_group!(SUITE, TYPES, (2, 3, 31),
                                   PROFILE == "smoke" ? (8,) :
                                   PROFILE == "ci" ? (254,) : (254, 1022))
 
+# Appending measurements on a young mixed state, which dominate its layers.
+register_purifying_measure_group!(SUITE, TYPES, (2, 3, 31),
+                                  PROFILE == "smoke" ? (8,) :
+                                  PROFILE == "ci" ? (254,) : (254, 1022))
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in

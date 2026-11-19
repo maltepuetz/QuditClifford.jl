@@ -14,6 +14,7 @@ using Aqua
     include("operators.jl")
     include("measurements.jl")
     include("measurement_kernel.jl")
+    include("commuting_measurement.jl")
     include("channels.jl")
     include("expectation_values.jl")
     include("destabilizers.jl")

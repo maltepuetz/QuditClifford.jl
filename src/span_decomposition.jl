@@ -162,6 +162,11 @@ and return whether `op` is in the span of active stabilizer generators.
 """
 @inline function in_span_and_coeffs!(tab::AbstractTableau, op)
     coeffs_from_generators!(tab, op)
+    return _in_span_from_coeffs!(tab, op)
+end
+
+# The residual and in-span test for coefficients already in `c_workspace`.
+@inline function _in_span_from_coeffs!(tab::AbstractTableau, op)
     residual_from_coeffs!(tab, op)
 
     n = tab.n
@@ -171,6 +176,11 @@ and return whether `op` is in the span of active stabilizer generators.
     end
     return true
 end
+
+# A `DestabilizerTableau` keeps `xdotz_cache` current through every update; a
+# `StabilizerTableau` fills it only when it canonicalizes.
+@inline _xdotz_cache_valid(::DestabilizerTableau) = true
+@inline _xdotz_cache_valid(tab::StabilizerTableau) = tab.iscanonical
 
 """
     phase_exponent_from_coeffs!(tab::AbstractTableau)
@@ -216,12 +226,13 @@ where `g_j` are active stabilizer generators.
     else
         inv2 = tab.inversemod(2, d)
         xdotz_cache = tab.xdotz_cache
+        cached = _xdotz_cache_valid(tab)
 
         @inbounds for j in 1:m
             aj = mod(cvec[j], d)
             aj == 0 && continue
 
-            xdotz_j = xdotz_cache[j]
+            xdotz_j = cached ? xdotz_cache[j] : dot_xz_col(stab, n, j, d)
             kpow = mod(aj * stab[prow, j] + binom2_mod_oddprime(aj, d, inv2) * xdotz_j, d_phase)
 
             cross_base = dot_xz_col_vs_zacc(stab, n, j, zacc, d)
@@ -234,4 +245,317 @@ where `g_j` are active stabilizer generators.
         end
         return kacc
     end
+end
+
+#############################################################
+# Coefficient solve on a site-major copy of the stabilizers #
+#############################################################
+#
+# A `StabilizerTableau` reads coefficients off pivot rows, which needs the
+# canonical form. Canonicalizing in place costs O(n²m) on Int entries with
+# phase updates, and every random measurement or gate undoes it. When the
+# tableau is not canonical, `measure!` instead solves G c = op on a copy that
+# holds only the exponents mod d:
+#
+#   1. `_copy_generator_rows!` writes the rows of G, one per qudit and Pauli
+#      half, into a workspace: the X row of site q (its exponent in every
+#      generator) into column q, the Z row after it at half the column
+#      height. This is the only step that knows the tableau layout; a tableau
+#      that stores qudit rows already needs only a block copy.
+#   2. `_solve_generator_rows!` inserts the rows one at a time into an echelon
+#      basis and back-substitutes. It reads and writes rows only.
+#
+# Row `r` of G is the X row of site r for r <= n and the Z row of site r - n
+# above, the order of `set_operator!`, so the reduced right-hand side lives in
+# a vector laid out like `res_workspace`.
+
+# Rows of G as entries mod d, one byte (3 <= d <= 255) or one Int (d > 255)
+# each: X row of site q in ws[1:m, q], Z row in ws[h+1:h+m, q], with h half
+# the column height. The tableau is reduced, so the narrowing is exact.
+#
+# A transpose, in tiles of 64 generators by 8 sites: within a tile the 64
+# generator columns are read as short sequential runs, and only 8 workspace
+# columns are written, which keeps them in L1 even when n is a power of two
+# and the workspace's column stride maps them to a few cache sets. Measured on
+# an M3 Pro, reading one cache line of each of the m columns per block of
+# sites instead took twice as long at n = 2000; wider site tiles were faster
+# there but 2.6x slower at n = 2048.
+function _copy_generator_rows!(
+    ws::AbstractMatrix{T},
+    stab::AbstractMatrix{Int},
+    n::Int,
+    m::Int,
+) where T<:Union{UInt8,Int}
+    h = size(ws, 1) >> 1
+    (m <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
+        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
+    @inbounds for j0 in 1:64:m
+        j1 = min(j0 + 63, m)
+        for q0 in 1:8:n
+            q1 = min(q0 + 7, n)
+            for j in j0:j1
+                @simd for q in q0:q1
+                    ws[j, q] = stab[q, j] % T
+                    ws[h + j, q] = stab[n + q, j] % T
+                end
+            end
+        end
+    end
+    return ws
+end
+
+# Rows of G as bits for d = 2, generator j at bit (j - 1) & 63 of word
+# (j - 1) >> 6 + 1: X row of site q in words 1:cld(m, 64) of column q, Z row
+# in words h+1:h+cld(m, 64). Bits past m are zero. Tiled like the byte copy:
+# the 64 generators of one word, 128 sites at a time.
+function _copy_generator_rows!(
+    ws::AbstractMatrix{UInt64},
+    stab::AbstractMatrix{Int},
+    n::Int,
+    m::Int,
+)
+    h = size(ws, 1) >> 1
+    nw = cld(m, 64)
+    (nw <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
+        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
+    @inbounds for w in 1:nw
+        j0 = 64 * (w - 1)
+        for q0 in 1:128:n
+            q1 = min(q0 + 127, n)
+            @simd for q in q0:q1
+                ws[w, q] = zero(UInt64)
+                ws[h + w, q] = zero(UInt64)
+            end
+            for t in 1:min(64, m - j0)
+                j = j0 + t
+                @simd for q in q0:q1
+                    ws[w, q] |= (stab[q, j] % UInt64) << (t - 1)
+                    ws[h + w, q] |= (stab[n + q, j] % UInt64) << (t - 1)
+                end
+            end
+        end
+    end
+    return ws
+end
+
+# Row r of G sits in workspace column `q` from row `off + 1` on.
+@inline _generator_row_slot(r::Int, n::Int, h::Int) = r <= n ? (r, 0) : (r - n, h)
+
+# The first k in ℓ:m with ws[off + k, q] != 0, or m + 1 if there is none.
+@inline function _next_nonzero_entry(ws::AbstractMatrix, off::Int, q::Int, ℓ::Int, m::Int)
+    @inbounds while ℓ <= m && iszero(ws[off + ℓ, q])
+        ℓ += 1
+    end
+    return ℓ
+end
+
+# On bytes, eight at a time: every row is scanned once from its start, and
+# reduced rows are mostly zero bytes. A little-endian word's lowest set byte
+# is the first in memory.
+@inline function _next_nonzero_entry(ws::Matrix{UInt8}, off::Int, q::Int, ℓ::Int, m::Int)
+    ℓ > m && return ℓ
+    if Base.ENDIAN_BOM == 0x04030201
+        checkbounds(ws, off + ℓ, q)
+        checkbounds(ws, off + m, q)
+        # ws[off + k, q] is byte base + k of the array, counting from 1.
+        base = (q - 1) * size(ws, 1) + off
+        GC.@preserve ws begin
+            p = pointer(ws)
+            while ℓ + 7 <= m
+                x = unsafe_load(Ptr{UInt64}(p + base + ℓ - 1))
+                iszero(x) || return ℓ + (trailing_zeros(x) >> 3)
+                ℓ += 8
+            end
+        end
+    end
+    @inbounds while ℓ <= m && iszero(ws[off + ℓ, q])
+        ℓ += 1
+    end
+    return ℓ
+end
+
+# Solve G c = op for the rows that `_copy_generator_rows!` left in `ws`.
+#
+# `opv[1:2n]` holds op's exponents mod d in the row order above. Rows are
+# inserted site by site (X, then Z): each is reduced by the pivot rows whose
+# lead (first nonzero generator index) it hits, in increasing lead order, and
+# a row that survives becomes the pivot of its first nonzero entry. `opv[r]`
+# follows the same row operations. Pivot rows are zero before their lead, so
+# a reduction clears that entry without touching earlier ones. Once all m
+# leads are taken the remaining rows add nothing, and the coefficients follow
+# by back-substitution, lead m first, into `c[1:m]`.
+#
+# `lead[ℓ]` is the row holding the pivot of generator ℓ. Independent
+# generators give m pivots; a lead without one (generators that were not
+# independent) gets coefficient 0. Whether G c actually equals op is left to
+# `residual_from_coeffs!`: when op is outside the span, c is some vector and
+# the residual is nonzero. Returns the number of pivots.
+function _solve_generator_rows!(
+    ws::AbstractMatrix{T},
+    opv::AbstractVector{Int},
+    lead::AbstractVector{Int},
+    c::AbstractVector{Int},
+    n::Int,
+    m::Int,
+    d::Int,
+    inversemod::InverseMod,
+) where T<:Union{UInt8,Int}
+    h = size(ws, 1) >> 1
+    @inbounds for ℓ in 1:m
+        lead[ℓ] = 0
+    end
+    rank = 0
+    @inbounds for q in 1:n, half in 0:1
+        rank == m && break
+        r = q + half * n
+        off = half * h
+        o = opv[r]
+        ℓ = 1
+        while true
+            ℓ = _next_nonzero_entry(ws, off, q, ℓ, m)
+            ℓ > m && break
+            p = lead[ℓ]
+            if p == 0
+                lead[ℓ] = r
+                rank += 1
+                break
+            end
+            pq, poff = _generator_row_slot(p, n, h)
+            β = mod(Int(ws[off + ℓ, q]) * inversemod(Int(ws[poff + ℓ, pq]), d), d)
+            # Rows of different sites sit in different columns, and the X and
+            # Z rows of one site in disjoint halves of its column (m <= h).
+            _submul_col!(view(ws, (off + ℓ):(off + m), q), view(ws, (poff + ℓ):(poff + m), pq), β, d)
+            o = mod(o - β * opv[p], d)
+            ℓ += 1
+        end
+        opv[r] = o
+    end
+
+    @inbounds for ℓ in m:-1:1
+        p = lead[ℓ]
+        if p == 0
+            c[ℓ] = 0
+            continue
+        end
+        pq, poff = _generator_row_slot(p, n, h)
+        s = 0
+        @simd for k in (ℓ + 1):m
+            s += Int(ws[poff + k, pq]) * c[k]
+        end
+        rhs = mod(opv[p] - s, d)
+        c[ℓ] = mod(rhs * inversemod(Int(ws[poff + ℓ, pq]), d), d)
+    end
+    return rank
+end
+
+# The GF(2) version on packed rows. Every nonzero entry is 1, so a reduction
+# is an XOR of the words from the lead's word on, and back-substitution is the
+# parity of a pivot row ANDed with the coefficients found so far, which are
+# packed into `cw[1:cld(m, 64)]` as they appear.
+function _solve_generator_rows!(
+    ws::AbstractMatrix{UInt64},
+    opv::AbstractVector{Int},
+    lead::AbstractVector{Int},
+    c::AbstractVector{Int},
+    cw::AbstractVector{Int},
+    n::Int,
+    m::Int,
+)
+    h = size(ws, 1) >> 1
+    nw = cld(m, 64)
+    @inbounds for ℓ in 1:m
+        lead[ℓ] = 0
+    end
+    rank = 0
+    @inbounds for q in 1:n, half in 0:1
+        rank == m && break
+        r = q + half * n
+        off = half * h
+        o = opv[r]
+        w = 1
+        while w <= nw
+            x = ws[off + w, q]
+            if iszero(x)
+                w += 1
+                continue
+            end
+            ℓ = 64 * (w - 1) + trailing_zeros(x) + 1
+            p = lead[ℓ]
+            if p == 0
+                lead[ℓ] = r
+                rank += 1
+                break
+            end
+            pq, poff = _generator_row_slot(p, n, h)
+            @simd for l in w:nw
+                ws[off + l, q] = xor(ws[off + l, q], ws[poff + l, pq])
+            end
+            o = xor(o, opv[p])
+        end
+        opv[r] = o
+    end
+
+    @inbounds for w in 1:nw
+        cw[w] = 0
+    end
+    @inbounds for ℓ in m:-1:1
+        p = lead[ℓ]
+        if p == 0
+            c[ℓ] = 0
+            continue
+        end
+        pq, poff = _generator_row_slot(p, n, h)
+        w0 = (ℓ - 1) >> 6 + 1
+        acc = zero(UInt64)
+        for w in w0:nw
+            acc = xor(acc, ws[poff + w, pq] & (cw[w] % UInt64))
+        end
+        bit = (opv[p] + count_ones(acc)) & 1
+        c[ℓ] = bit
+        bit == 1 && (cw[w0] |= 1 << ((ℓ - 1) & 63))
+    end
+    return rank
+end
+
+"""
+    _span_coeffs_keep_basis!(tab, op)
+
+`coeffs_from_generators!` without changing the generator basis: a
+`StabilizerTableau` that is not canonical solves for the coefficients on a
+copy in its rank workspace for `d` (see `src/rank_workspaces.jl`) instead of
+canonicalizing in place. The coefficients of an in-span `op` are unique, so
+they agree with the canonicalizing path's; `tab.stab` and `iscanonical` are
+left as they were. Writes `c_workspace`, `res_workspace`, `zacc_workspace`
+and, at `d = 2`, `generator_workspace`.
+"""
+@inline _span_coeffs_keep_basis!(tab::DestabilizerTableau, op) = coeffs_from_generators!(tab, op)
+
+function _span_coeffs_keep_basis!(tab::StabilizerTableau, op)
+    tab.iscanonical && return coeffs_from_generators!(tab, op)
+    n = tab.n
+    m = tab.m
+    d = tab.d
+
+    cvec = tab.c_workspace
+    @turbo for j in eachindex(cvec)
+        cvec[j] = 0
+    end
+    opv = tab.res_workspace
+    set_operator!(opv, tab, op)
+    lead = tab.zacc_workspace
+
+    if d == 2
+        ws = tab.bit_workspace
+        _copy_generator_rows!(ws, tab.stab, n, m)
+        _solve_generator_rows!(ws, opv, lead, cvec, tab.generator_workspace, n, m)
+    elseif _uses_narrow_rank(d)
+        ws = tab.narrow_workspace
+        _copy_generator_rows!(ws, tab.stab, n, m)
+        _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
+    else
+        ws = tab.workspace
+        _copy_generator_rows!(ws, tab.stab, n, m)
+        _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
+    end
+    return cvec
 end

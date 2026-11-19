@@ -562,6 +562,23 @@ when the `B` entry it pairs with is nonzero.
     return s
 end
 
+"""
+`_symplectic_vec_col` restricted to the qudit indices in `supp[1:nsupp]`,
+which must cover the support of column `colB` of `B`.
+"""
+@inline function _symplectic_vec_col_support(
+    vec::AbstractVector{<:Integer},
+    B::AbstractMatrix{<:Integer}, colB::Int,
+    n::Int, supp::Vector{Int}, nsupp::Int,
+)
+    s = 0
+    @inbounds for k in 1:nsupp
+        q = supp[k]
+        s += vec[q] * B[n+q, colB] - vec[n+q] * B[q, colB]
+    end
+    return s
+end
+
 @inline function _symplectic_vec_col(vec::AbstractVector{<:Integer}, B::AbstractMatrix{<:Integer}, colB::Int, n::Int)
     s = 0
     @turbo for q in 1:n

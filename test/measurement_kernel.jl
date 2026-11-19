@@ -104,7 +104,8 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
         return t
     end
     tab.m == n && !tab.storephase && return 0
-    in_span = MK.in_span_and_coeffs!(tab, op)
+    MK._span_coeffs_keep_basis!(tab, op)
+    in_span = MK._in_span_from_coeffs!(tab, op)
     res = tab.res_workspace
     if in_span
         tab.storephase || return 0

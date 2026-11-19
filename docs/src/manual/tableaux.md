@@ -23,7 +23,8 @@ QuditClifford exposes two representations with the same high-level API:
 - [`StabilizerTableau`](@ref) stores only the stabilizer generators plus its
   workspaces. It uses less memory and can be suitable when tableaux are mainly
   stored, imported, canonicalized once, or queried only occasionally. Repeated
-  span-dependent operations can require additional canonicalization work. A
+  span-dependent operations can require additional canonicalization work, or,
+  in [`measure!`](@ref), an elimination on a copy of the generators. A
   pure state with `storephase=false` is the exception: there a commuting Pauli
   is always in the span, so deterministic measurements and expectation values
   need only a commutation check: ``O(km)`` for a sparse Pauli on `k` qudits, or
@@ -151,7 +152,8 @@ form, `reset!(tab, sites)`, is a channel and is described in
 Functions ending in `!` reuse tableau workspaces and may change the tableau or
 its canonical representation. In particular, [`measure!`](@ref) updates the
 represented state, [`canonicalize!`](@ref) changes the generator basis, and
-[`expect!`](@ref) and the deterministic branch of [`measure!`](@ref) may
-canonicalize a plain stabilizer tableau as part of their span calculation,
-unless the tableau is pure and stores no phases. The represented quantum state
-is unchanged by canonicalization.
+[`expect!`](@ref) may canonicalize a plain stabilizer tableau as part of its
+span calculation, unless the tableau is pure and stores no phases. The
+represented quantum state is unchanged by canonicalization. A deterministic
+[`measure!`](@ref) never changes the generator basis: a plain stabilizer
+tableau that is not canonical solves for the span on a copy of its generators.

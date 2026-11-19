@@ -88,7 +88,7 @@ const TIER_COUNTS = zeros(Int, 2)
               Set(["$(nameof(T))/d=$d/n=16" for T in types, d in (2, 31)])
         for (_, group) in suite["monitored"]
             @test Set(keys(group)) == Set(["measure!/Z", "measure!/X", "measure!/ZZ",
-                                           "measure!/XX", "layer"])
+                                           "measure!/XX", "measure!/fixed-Z", "layer"])
         end
         for (_, group) in suite["monitored"], (key, leaf) in group
             trial = run(leaf; samples = 3, evals = 1, seconds = 0.05)
@@ -103,6 +103,53 @@ const TIER_COUNTS = zeros(Int, 2)
         @test D.m == 16
         op = first_anticommuting(D, [SinglePauli(q, 0, 1) for q in 1:16])
         @test !QuditClifford._commutes_with_generators(S, op)
+        # The fixed-Z leaf commutes and leaves both tableau types as they were.
+        fixed = first_in_branch(D, [SinglePauli(q, 0, 1) for q in 1:16], :fixed)
+        for tab in (copy(D), copy(S))
+            before = copy(tab.stab)
+            measure!(tab, fixed)
+            @test tab.m == 16 && tab.stab == before
+        end
+        @test_throws ErrorException first_in_branch(D, [op], :fixed)
+        @test_throws ArgumentError first_in_branch(D, [fixed], :other)
+    end
+
+    @testset "Purifying measurement leaves append a generator" begin
+        empty_suite = BenchmarkGroup()
+        register_purifying_measure_group!(empty_suite, (StabilizerTableau,), (3,), (8,);
+                                          api = Module(:NoRandomCliffordAPI))
+        @test isempty(empty_suite)
+
+        types = (StabilizerTableau, DestabilizerTableau)
+        suite = BenchmarkGroup()
+        # Every smoke-profile state has an appending Z and ZZ.
+        register_purifying_measure_group!(BenchmarkGroup(), types, (2, 3, 31), (8,))
+        register_purifying_measure_group!(suite, types, (2, 31), (16,))
+        @test Set(keys(suite["purifying"])) ==
+              Set(["$(nameof(T))/d=$d/n=16" for T in types, d in (2, 31)])
+        for (_, group) in suite["purifying"]
+            @test Set(keys(group)) == Set(["measure!/append-Z", "measure!/append-ZZ", "layer"])
+        end
+        for (_, group) in suite["purifying"], (key, leaf) in group
+            trial = run(leaf; samples = 3, evals = 1, seconds = 0.05)
+            @test !isempty(trial.times)
+            key == "layer" || @test trial.allocs == 0
+        end
+        # The state is mixed, and each leaf's operator appends a generator on
+        # both tableau types.
+        _, bonds, rng = monitored_setup(; d = 3, n = 16, seed = 20261119)
+        D = DestabilizerTableau(3, 16; state = :mixed)
+        monitored_layers!(D, bonds, rng, 4; p = 0.15)
+        S = StabilizerTableau(3, copy(D.stab); m = D.m, check = false)
+        @test 0 < D.m < 16
+        for candidates in ([SinglePauli(q, 0, 1) for q in 1:16],
+                           [DoublePauli(q, 0, 1, mod1(q + r, 16), 0, 1) for r in 1:8 for q in 1:16])
+            op = first_in_branch(D, candidates, :append)
+            for tab in (copy(D), copy(S))
+                measure!(tab, op; outcome = 0)
+                @test tab.m == D.m + 1
+            end
+        end
     end
 
     @testset "Purification is deterministic and reaches full rank" begin
