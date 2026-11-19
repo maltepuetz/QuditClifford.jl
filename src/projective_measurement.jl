@@ -222,11 +222,6 @@ end
 # random state's pivot covers about three quarters and stays dense.
 @inline _pivot_support_is_sparse(nsupp::Int, n::Int) = 2 * nsupp <= n
 
-# Whether the tableau keeps `xdotz_cache` valid for every active generator,
-# so that an update must patch it.
-@inline _maintains_xdotz(::AbstractTableau) = false
-@inline _maintains_xdotz(::DestabilizerTableau) = true
-
 # Copy generator `pivot` into generator_workspace and record its support in
 # zacc_workspace, which nothing else touches during a measurement. Must run
 # before the pivot column is overwritten.
@@ -267,7 +262,8 @@ end
     genws = tab.generator_workspace
     n = tab.n
     d = tab.d
-    track = _maintains_xdotz(tab)
+    # Only a DestabilizerTableau keeps `xdotz_cache` valid, so only it patches it.
+    track = tab isa DestabilizerTableau
     sites = tab.zacc_workspace
 
     # cb = x_p·z_col and cz = x_col·z_p, both on the old column.
