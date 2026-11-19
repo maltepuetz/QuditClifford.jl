@@ -26,6 +26,12 @@ const READONLY_EVALS = 100
 # place.
 _wl_stab(tab) = isdefined(QuditClifford, :stabilizer_matrix) ? stabilizer_matrix(tab) : tab.stab
 _wl_destab(tab) = isdefined(QuditClifford, :destabilizer_matrix) ? destabilizer_matrix(tab) : tab.destab
+_wl_comm(tab, j, op) = isdefined(QuditClifford, :_stab) ?
+    QuditClifford.commutation_col(QuditClifford._stab(tab), j, op) :
+    QuditClifford.commutation_col(tab.stab, j, op)
+_wl_comm_destab(tab, j, op) = isdefined(QuditClifford, :_stab) ?
+    QuditClifford.commutation_col(QuditClifford._destab(tab), j, op) :
+    QuditClifford.commutation_col(tab.destab, j, op)
 _wl_load_stab!(tab, S) = isdefined(QuditClifford, :_load_stabilizer_matrix!) ?
     QuditClifford._load_stabilizer_matrix!(tab, S) : copyto!(tab.stab, S)
 _wl_load_destab!(tab, D) = isdefined(QuditClifford, :_load_destabilizer_matrix!) ?
@@ -959,7 +965,7 @@ assume a hardcoded operator still anticommutes after the state was scrambled.
 function first_anticommuting(tab, candidates)
     for op in candidates
         for j in 1:tab.m
-            if mod(QuditClifford.commutation_col(_wl_stab(tab), j, op), tab.d) != 0
+            if mod(_wl_comm(tab, j, op), tab.d) != 0
                 return op
             end
         end
@@ -1099,8 +1105,8 @@ function commuting_out_of_span(D::DestabilizerTableau; seed::Int = DENSE_SEED)
     w = rand(rng, 0:(d - 1), 2n)
     for j in 1:m
         t = _wl_destab(D)[1:(2n), j]
-        c = mod(QuditClifford.commutation_col(_wl_stab(D), j, GeneralPauli(w, 0)), d)
-        λ = mod(QuditClifford.commutation_col(_wl_stab(D), j, GeneralPauli(t, 0)), d)
+        c = mod(_wl_comm(D, j, GeneralPauli(w, 0)), d)
+        λ = mod(_wl_comm(D, j, GeneralPauli(t, 0)), d)
         w .= mod.(w .- c * invmod(λ, d) .* t, d)
     end
     return GeneralPauli(w, 0)

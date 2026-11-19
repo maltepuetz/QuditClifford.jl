@@ -84,7 +84,7 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
     pivot = 0
     opc = MK._commutation_operand!(tab, op)
     for i in 1:m
-        commutator = mod(MK.commutation_col(stabilizer_matrix(tab), i, opc), d)
+        commutator = mod(MK.commutation_col(MK._stab(tab), i, opc), d)
         commutator == 0 && continue
         if comm0 == 0
             t = MK._random_outcome(rng, outcome, d)
@@ -224,7 +224,7 @@ function mkref_fuzz(TT, d, n, flavor, storephase, nsteps, seed)
         # generator takes (the pivot alone never reaches the update).
         if tab.m > 0 && all(q -> 1 <= q <= n, MK._few_qudit_pauli_data(op isa GeneralPauli ? SinglePauli(1, 0, 0) : op)[1])
             opc = MK._commutation_operand!(tab, op)
-            anti = [i for i in 1:tab.m if mod(MK.commutation_col(stabilizer_matrix(tab), i, opc), d) != 0]
+            anti = [i for i in 1:tab.m if mod(MK.commutation_col(MK._stab(tab), i, opc), d) != 0]
             if length(anti) >= 2
                 p = anti[1]
                 nsupp = count(q -> stabilizer_matrix(tab)[q, p] != 0 || stabilizer_matrix(tab)[n+q, p] != 0, 1:n)

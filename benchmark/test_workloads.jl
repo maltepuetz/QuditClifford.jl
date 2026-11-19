@@ -289,7 +289,7 @@ const TIER_COUNTS = zeros(Int, 2)
             tab = DestabilizerTableau(d, n; state = :product)
 
             # noncommuting: X on a Z-basis site anticommutes with its stabilizer
-            @test any(mod(QuditClifford.commutation_col(_wl_stab(tab), k, spread_x(n)), d) != 0
+            @test any(mod(_wl_comm(tab, k, spread_x(n)), d) != 0
                       for k in 1:tab.m)
             # deterministic: Z*Z is a product of two generators, so in span
             @test expect_int!(tab, spread_z(n)) != -1
@@ -327,7 +327,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # first_anticommuting must genuinely anticommute, or measure! takes
             # the commuting branch and throws once m == n.
             anti = first_anticommuting(tab, [SinglePauli(i, 1, 0) for i in 1:16])
-            @test any(mod(QuditClifford.commutation_col(_wl_stab(tab), j, anti), d) != 0
+            @test any(mod(_wl_comm(tab, j, anti), d) != 0
                       for j in 1:tab.m)
             @test_throws ErrorException first_anticommuting(tab, SinglePauli[])
         end
@@ -882,7 +882,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # update rewrites a large share of the columns
             op = first_anticommuting(pure, [spread_x(n)])
             @test op == spread_x(n)
-            anti = count(j -> mod(QuditClifford.commutation_col(_wl_stab(pure), j, op), d) != 0,
+            anti = count(j -> mod(_wl_comm(pure, j, op), d) != 0,
                          1:pure.m)
             @test anti >= n ÷ 4
             t = copy(pure)
@@ -893,7 +893,7 @@ const TIER_COUNTS = zeros(Int, 2)
             # generators, read off the dual basis
             inspan = span_product(pure)
             @test inspan.xz == span_product(D).xz
-            coeffs = count(j -> mod(QuditClifford.commutation_col(_wl_destab(D), j, inspan), d) != 0,
+            coeffs = count(j -> mod(_wl_comm_destab(D, j, inspan), d) != 0,
                            1:n)
             @test coeffs == cld(n, 2)
             @test expect_int!(copy(pure), inspan) != -1
@@ -906,7 +906,7 @@ const TIER_COUNTS = zeros(Int, 2)
             mixed = dense_state(T, d, n; m = n ÷ 2)
             w = commuting_out_of_span(dense_state(DestabilizerTableau, d, n; m = n ÷ 2))
             @test any(!iszero, w.xz)
-            @test all(j -> mod(QuditClifford.commutation_col(_wl_stab(mixed), j, w), d) == 0,
+            @test all(j -> mod(_wl_comm(mixed, j, w), d) == 0,
                       1:mixed.m)
             @test expect_int!(copy(mixed), w) == -1
             t = copy(mixed)

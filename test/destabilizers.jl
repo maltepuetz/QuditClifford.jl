@@ -418,8 +418,8 @@ end
         tab = TT(d, n; state=:product, basis=:Z)
 
         if want_mult !== nothing
-            c1 = mod(QuditClifford.commutation_col(stabilizer_matrix(tab), 1, op), d)
-            c2 = mod(QuditClifford.commutation_col(stabilizer_matrix(tab), 2, op), d)
+            c1 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 1, op), d)
+            c2 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 2, op), d)
             @test mod(-c2 * invmod(c1, d), d) == want_mult
         end
 
@@ -429,7 +429,7 @@ end
 
         # generators stay mutually commuting
         for i in 1:tab.m, j in 1:tab.m
-            @test mod(QuditClifford.commutation_col(stabilizer_matrix(tab), i, stabilizer_matrix(tab)[:, j]), d) == 0
+            @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, stabilizer_matrix(tab)[:, j]), d) == 0
         end
         # inactive capacity stays zeroed
         @test all(stabilizer_matrix(tab)[:, (tab.m + 1):end] .== 0)

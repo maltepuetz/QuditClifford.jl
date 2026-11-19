@@ -210,7 +210,7 @@ end
     v = Int[1, 2, 0, 2, 1, 1]
     xz = Int[2, 0, 1, 1, 2, 2]
     expected = QuditClifford.commutation(v, xz)
-    matrix = hcat(v, reverse(v))
+    block = QuditClifford._stacked_views(hcat(v, reverse(v)), 3, false)[1]
 
     operators = (
         xz,
@@ -222,7 +222,7 @@ end
     # Sparse specializations must preserve the dense symplectic convention.
     for op in operators
         @test QuditClifford.commutation_vec_op(v, op) == expected
-        @test QuditClifford.commutation_col(matrix, 1, op) == expected
+        @test QuditClifford.commutation_col(block, 1, op) == expected
     end
 end
 
@@ -461,7 +461,7 @@ end
             end
 
             xz = rand(rng, 0:(d - 1), 2n)
-            while all(i -> mod(QuditClifford.commutation_col(stabilizer_matrix(tab), i, xz), d) == 0, 1:n)
+            while all(i -> mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, xz), d) == 0, 1:n)
                 xz = rand(rng, 0:(d - 1), 2n)
             end
             @test expect_int!(tab, GeneralPauli(xz, 0)) == -1

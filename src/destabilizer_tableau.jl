@@ -366,8 +366,8 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     n = tab.n
     m = tab.m
     d = tab.d
-    stab = tab.stab
-    destab = tab.destab
+    stab = _stab(tab)
+    destab = _destab(tab)
 
     _zero!(destab)
     m == 0 && return destab
@@ -387,8 +387,8 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     A = zeros(Int, n, 2n)
     @inbounds for k in 1:m
         for q in 1:n
-            A[k, q] = mod(stab[n+q, k], d)
-            A[k, n+q] = mod(-stab[q, k], d)
+            A[k, q] = mod(_zget(stab, q, k), d)
+            A[k, n+q] = mod(-_xget(stab, q, k), d)
         end
     end
 
@@ -419,8 +419,8 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
 
     @inbounds for i in 1:m
         p = pivots[i]
-        @turbo for j in 1:m
-            destab[p, j] = mod(A_inv[i, j], d)
+        for j in 1:m
+            _rset!(destab, mod(A_inv[i, j], d), p, j)
         end
     end
     return destab
@@ -442,7 +442,7 @@ has no active generators, so its dual block stays zero.
 function _preset_destabilizers!(tab::DestabilizerTableau, state::Symbol, basis_spec)
     n = tab.n
     d = tab.d
-    destab = tab.destab
+    destab = _destab(tab)
     cache = tab.xdotz_cache
 
     _zero!(destab)
@@ -452,18 +452,18 @@ function _preset_destabilizers!(tab::DestabilizerTableau, state::Symbol, basis_s
         return nothing
     elseif state === :ghz
         n == 0 && return nothing
-        destab[n+1, 1] = d - 1              # D_1 = Z_1^(d-1)
+        _zset!(destab, d - 1, 1, 1)         # D_1 = Z_1^(d-1)
         @inbounds for j in 2:n, q in 1:(j-1)
-            destab[q, j] = 1                # D_j = X_1 ... X_{j-1}
+            _xset!(destab, 1, q, j)           # D_j = X_1 ... X_{j-1}
         end
         return nothing                      # every GHZ generator has x.z = 0
     elseif state === :product
         @inbounds for j in 1:n
             b = _preset_basis_at(basis_spec, j)
             if b === :X
-                destab[n+j, j] = d - 1      # D_j = Z_j^(d-1)
+                _zset!(destab, d - 1, j, j)  # D_j = Z_j^(d-1)
             else
-                destab[j, j] = 1            # :Z and :Y both take D_j = X_j
+                _xset!(destab, 1, j, j)      # :Z and :Y both take D_j = X_j
                 b === :Y && (cache[j] = 1)  # x.z = 1 only in the Y basis
             end
         end
@@ -487,9 +487,9 @@ end
     m = tab.m
     d = tab.d
     xdotz_cache = tab.xdotz_cache
-    stab = tab.stab
+    stab = _stab(tab)
     @inbounds for j in 1:m
-        xdotz_cache[j] = dot_xz_col(stab, n, j, d)
+        xdotz_cache[j] = dot_xz_col(stab, j, d)
     end
     @inbounds for j in (m+1):n
         xdotz_cache[j] = 0
@@ -498,7 +498,7 @@ end
 end
 
 @inline function _update_xdotz_cache!(tab::DestabilizerTableau, col::Int)
-    tab.xdotz_cache[col] = dot_xz_col(tab.stab, tab.n, col, tab.d)
+    tab.xdotz_cache[col] = dot_xz_col(_stab(tab), col, tab.d)
     return nothing
 end
 
@@ -507,18 +507,18 @@ end
 #############################
 
 """
-Collect into `supp` the qudit indices where column `col` of `A` is nonzero in
+Collect into `supp` the qudit indices where generator `col` of `b` is nonzero in
 either its X or its Z half, returning how many were found.
 
 Every term of a symplectic pairing against that column carries a factor from
 one of those two halves, so all terms outside this index set vanish and a
 pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 """
-@inline function _column_support!(supp::Vector{Int}, A::AbstractMatrix{<:Integer}, col::Int, n::Int)
+@inline function _column_support!(supp::Vector{Int}, b::XZBlock, col::Int)
     nsupp = 0
     # Loop-carried counter, so neither @turbo nor @simd applies here.
-    @inbounds for q in 1:n
-        if A[q, col] != 0 || A[n+q, col] != 0
+    @inbounds for q in 1:_nq(b)
+        if _xget(b, q, col) != 0 || _zget(b, q, col) != 0
             nsupp += 1
             supp[nsupp] = q
         end
@@ -527,45 +527,46 @@ pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 end
 
 """
-The symplectic pairing `Σ_q A[q, colA] B[n+q, colB] - A[n+q, colA] B[q, colB]`
-of two columns, summed over the qudit indices in `supp[1:nsupp]`. Equal to
-the full pairing whenever `supp` covers the support of column `colB` of `B`
+The symplectic pairing `Σ_q x_A[q, colA] z_B[q, colB] - z_A[q, colA] x_B[q, colB]`
+of two generators, summed over the qudit indices in `supp[1:nsupp]`. Equal to
+the full pairing whenever `supp` covers the support of generator `colB` of `b`
 (see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
 
 Callers sweep `colA` over many columns with a fixed `colB`, so each `A` entry
-is a cache miss while `B[:, colB]` stays cached: an `A` entry is loaded only
-when the `B` entry it pairs with is nonzero.
+is a cache miss while generator `colB` of `b` stays cached: an entry of `a` is
+loaded only when the entry of `b` it pairs with is nonzero.
 """
 @inline function _symplectic_col_col_support(
-    A::AbstractMatrix{<:Integer}, colA::Int,
-    B::AbstractMatrix{<:Integer}, colB::Int,
-    n::Int, supp::Vector{Int}, nsupp::Int,
+    a::XZBlock, colA::Int,
+    b::XZBlock, colB::Int,
+    supp::Vector{Int}, nsupp::Int,
 )
     s = 0
     @inbounds for k in 1:nsupp
         q = supp[k]
-        bz = B[n+q, colB]
-        bx = B[q, colB]
-        bz == 0 || (s += A[q, colA] * bz)
-        bx == 0 || (s -= A[n+q, colA] * bx)
+        bz = _zget(b, q, colB)
+        bx = _xget(b, q, colB)
+        bz == 0 || (s += _xget(a, q, colA) * bz)
+        bx == 0 || (s -= _zget(a, q, colA) * bx)
     end
     return s
 end
 
 """
 The same pairing as `_symplectic_col_col_support` with a vector `vec` in
-place of column `colA`; `supp[1:nsupp]` must cover the support of column
-`colB` of `B`.
+place of generator `colA`; `supp[1:nsupp]` must cover the support of generator
+`colB` of `b`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
-    B::AbstractMatrix{<:Integer}, colB::Int,
-    n::Int, supp::Vector{Int}, nsupp::Int,
+    b::XZBlock, colB::Int,
+    supp::Vector{Int}, nsupp::Int,
 )
+    n = _nq(b)
     s = 0
     @inbounds for k in 1:nsupp
         q = supp[k]
-        s += vec[q] * B[n+q, colB] - vec[n+q] * B[q, colB]
+        s += vec[q] * _zget(b, q, colB) - vec[n+q] * _xget(b, q, colB)
     end
     return s
 end

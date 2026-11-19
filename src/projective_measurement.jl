@@ -46,55 +46,53 @@ end
     return comm
 end
 
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, s::AbstractVector{<:Integer})
-    N = length(s) ÷ 2
+@inline function commutation_col(b::_GMBlock, col::Int, s::AbstractVector{<:Integer})
+    N = _nq(b)
+    xg = _xgen(b, col)
+    zg = _zgen(b, col)
     comm = 0
 
     @turbo for i in 1:N
-        comm += A[i, col] * s[i+N]
+        comm += xg[i] * s[i+N]
     end
     @turbo for i in 1:N
-        comm -= A[i+N, col] * s[i]
+        comm -= zg[i] * s[i]
     end
     comm
 end
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::GeneralPauli)
-    return commutation_col(A, col, op.xz)
+@inline function commutation_col(b::_GMBlock, col::Int, op::GeneralPauli)
+    return commutation_col(b, col, op.xz)
 end
 
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::SinglePauli)
-    N = size(A, 1) ÷ 2
-    comm = A[op.qudit, col] * op.z - A[op.qudit+N, col] * op.x
+@inline function commutation_col(b::_GMBlock, col::Int, op::SinglePauli)
+    comm = _xget(b, op.qudit, col) * op.z - _zget(b, op.qudit, col) * op.x
     comm
 end
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::DoublePauli)
-    N = size(A, 1) ÷ 2
+@inline function commutation_col(b::_GMBlock, col::Int, op::DoublePauli)
     comm = 0
-    comm += A[op.qudit1, col] * op.z1 - A[op.qudit1+N, col] * op.x1
-    comm += A[op.qudit2, col] * op.z2 - A[op.qudit2+N, col] * op.x2
+    comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
+    comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
     comm
 end
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::TriplePauli)
-    N = size(A, 1) ÷ 2
+@inline function commutation_col(b::_GMBlock, col::Int, op::TriplePauli)
     comm = 0
-    comm += A[op.qudit1, col] * op.z1 - A[op.qudit1+N, col] * op.x1
-    comm += A[op.qudit2, col] * op.z2 - A[op.qudit2+N, col] * op.x2
-    comm += A[op.qudit3, col] * op.z3 - A[op.qudit3+N, col] * op.x3
+    comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
+    comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
+    comm += _xget(b, op.qudit3, col) * op.z3 - _zget(b, op.qudit3, col) * op.x3
     comm
 end
 # The measurement scan calls this once per generator column, and in the
 # generator-major layout each entry it reads sits in a different cache line. A
 # zero exponent skips its load, which halves the misses of a pure Z or X
 # operand. Callers validate the qudit indices before the scan.
-@inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::NPauli{D}) where D
-    N = size(A, 1) ÷ 2
+@inline function commutation_col(b::_GMBlock, col::Int, op::NPauli{D}) where D
     comm = 0
     @inbounds for i in 1:D
         q = op.qudits[i]
         z = op.zs[i]
         x = op.xs[i]
-        z == 0 || (comm += A[q, col] * z)
-        x == 0 || (comm -= A[q+N, col] * x)
+        z == 0 || (comm += _xget(b, q, col) * z)
+        x == 0 || (comm -= _zget(b, q, col) * x)
     end
     comm
 end
@@ -115,8 +113,9 @@ end
 function _commutes_with_generators(tab::AbstractTableau, op::AbstractPauli)
     normalized = _commutation_operand!(tab, op)
     d = tab.d
+    stab = _stab(tab)
     for i in 1:tab.m
-        mod(commutation_col(tab.stab, i, normalized), d) == 0 || return false
+        mod(commutation_col(stab, i, normalized), d) == 0 || return false
     end
     return true
 end
@@ -145,25 +144,24 @@ function mul_col_by_workspace_power!(
     col::Int,
     a::Int,
 )
-    stab = tab.stab
+    stab = _stab(tab)
     genws = tab.generator_workspace
     n = tab.n
     d = tab.d
 
     a == 0 && return nothing
 
-    nrows_block = 2n
-
     # If we store phase, compute cross term using the OLD target Z (before XZ update)
     if tab.storephase
+        phase = _phase(tab)
         phase_row = 2n + 1
         d_phase = phase_modulus(d)
 
         if d == 2
             # a ∈ {0,1} and a != 0, so a == 1
             # cross = x_ws · z_col_old   (mod 2)
-            cross = dot_xz_ws_vs_col(genws, stab, n, col, d)  # uses old tab Z entries
-            stab[phase_row, col] = mod(stab[phase_row, col] + genws[phase_row] + 2 * cross, d_phase)
+            cross = dot_xz_ws_vs_col(genws, stab, col, d)  # uses old tab Z entries
+            phase[col] = mod(phase[col] + genws[phase_row] + 2 * cross, d_phase)
         else
             inv2 = tab.inversemod(2, d)
 
@@ -173,17 +171,17 @@ function mul_col_by_workspace_power!(
             k_power = mod(a * genws[phase_row] + binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d_phase)
 
             # cross = a*(x_ws · z_col_old) (mod d)
-            cross_base = dot_xz_ws_vs_col(genws, stab, n, col, d)  # x_ws · z_col_old
+            cross_base = dot_xz_ws_vs_col(genws, stab, col, d)  # x_ws · z_col_old
             cross = mod(a * cross_base, d)
 
-            stab[phase_row, col] = mod(stab[phase_row, col] + k_power + cross, d_phase)
+            phase[col] = mod(phase[col] + k_power + cross, d_phase)
         end
     end
 
     # Now update XZ: col <- col + a*ws  (mod d)
-    # genws is a separate array from stab, and its contents were copied out of
+    # genws is a separate array from the block, and its contents were copied out of
     # a tableau column, so they are reduced.
-    addmul_mod!(view(stab, 1:nrows_block, col), view(genws, 1:nrows_block), a, d)
+    _gen_addmul!(stab, col, genws, a, d)
 
     return nothing
 end
@@ -226,15 +224,14 @@ end
 # zacc_workspace, which nothing else touches during a measurement. Must run
 # before the pivot column is overwritten.
 function _prepare_pivot_update(tab::AbstractTableau, pivot::Int, comm0::Int)
-    stab = tab.stab
+    stab = _stab(tab)
     genws = tab.generator_workspace
     n = tab.n
     d = tab.d
-    @turbo for j in eachindex(genws)
-        genws[j] = stab[j, pivot]
-    end
+    _copy_gen!(genws, stab, pivot)
+    tab.storephase && (genws[2n+1] = _phase(tab)[pivot])
     sites = tab.zacc_workspace
-    nsupp = _column_support!(sites, stab, pivot, n)
+    nsupp = _column_support!(sites, stab, pivot)
     sparse = _pivot_support_is_sparse(nsupp, n)
     if sparse
         s = 0
@@ -258,7 +255,9 @@ end
 #     (x + a x_p)·(z + a z_p) = x·z + a (x_p·z + x·z_p) + a² x_p·z_p.
 @inline function _absorb_pivot_power!(tab::AbstractTableau, col::Int, a::Int, pu::_PivotUpdate)
     a == 0 && return nothing
-    stab = tab.stab
+    stab = _stab(tab)
+    xg = _xgen(stab, col)
+    zg = _zgen(stab, col)
     genws = tab.generator_workspace
     n = tab.n
     d = tab.d
@@ -273,37 +272,37 @@ end
         if track
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * stab[n+q, col]
-                cz += stab[q, col] * genws[n+q]
+                cb += genws[q] * zg[q]
+                cz += xg[q] * genws[n+q]
             end
         elseif tab.storephase
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * stab[n+q, col]
+                cb += genws[q] * zg[q]
             end
         end
     else
         if track
             @turbo for q in 1:n
-                cb += genws[q] * stab[n+q, col]
-                cz += stab[q, col] * genws[n+q]
+                cb += genws[q] * zg[q]
+                cz += xg[q] * genws[n+q]
             end
         elseif tab.storephase
             @turbo for q in 1:n
-                cb += genws[q] * stab[n+q, col]
+                cb += genws[q] * zg[q]
             end
         end
     end
     cb = mod(cb, d)
 
     if tab.storephase
-        prow = 2n + 1
+        phase = _phase(tab)
         if d == 2
             # a == 1; the cross term enters i^k as 2·(x_p·z_col).
-            stab[prow, col] = mod(stab[prow, col] + pu.kws + 2 * cb, 4)
+            phase[col] = mod(phase[col] + pu.kws + 2 * cb, 4)
         else
             k_power = mod(a * pu.kws + binom2_mod_oddprime(a, d, pu.inv2) * pu.xzws, d)
-            stab[prow, col] = mod(stab[prow, col] + k_power + mod(a * cb, d), d)
+            phase[col] = mod(phase[col] + k_power + mod(a * cb, d), d)
         end
     end
 
@@ -314,15 +313,13 @@ end
         cache[col] = mod(cache[col] + lin + quad, d)
     end
 
-    # genws is a separate array from stab, and its contents were copied out of
-    # a tableau column, so they are reduced. Outside the pivot support genws is
-    # zero, so the site-restricted update gives the dense result.
-    dst = view(stab, 1:(2n), col)
-    src = view(genws, 1:(2n))
+    # genws is a separate array from the block, and its contents were copied out
+    # of a tableau column, so they are reduced. Outside the pivot support genws
+    # is zero, so the site-restricted update gives the dense result.
     if pu.sparse
-        addmul_mod_sites!(dst, src, sites, pu.nsupp, n, a, d)
+        _gen_addmul_sites!(stab, col, genws, sites, pu.nsupp, a, d)
     else
-        addmul_mod!(dst, src, a, d)
+        _gen_addmul!(stab, col, genws, a, d)
     end
     return nothing
 end
@@ -374,13 +371,13 @@ end
     m::Int,
     pu::_PivotUpdate,
 )
-    n = tab.n
     d = tab.d
+    stab = _stab(tab)
+    destab = _destab(tab)
 
     # noncommuting branch: update destabilizers
     inv_comm0 = tab.inversemod(comm0, d)
-    mulcopy_mod!(view(tab.destab, 1:(2n), pivot),
-                 view(tab.generator_workspace, 1:(2n)), inv_comm0, d)
+    _gen_mulcopy!(destab, pivot, tab.generator_workspace, inv_comm0, d)
 
     # Every dual must stay orthogonal to the newly written generator, which now
     # holds the measured operator. Pairing each dual against it over all 2n rows
@@ -390,11 +387,11 @@ end
     # O(nsupp) -- a handful of terms for a sparse Pauli. A dense operator has
     # full support and pays the full O(n*m); only zero terms go unvisited.
     supp = tab.support_workspace
-    nsupp = _column_support!(supp, tab.stab, pivot, n)
+    nsupp = _column_support!(supp, stab, pivot)
 
     @inbounds for j in 1:m
         j == pivot && continue
-        traw = _symplectic_col_col_support(tab.destab, j, tab.stab, pivot, n, supp, nsupp)
+        traw = _symplectic_col_col_support(destab, j, stab, pivot, supp, nsupp)
         traw == 0 && continue
         t = mod(traw, d)
         t == 0 && continue
@@ -402,12 +399,10 @@ end
         # The new pivot dual is a multiple of the old pivot generator, so it
         # vanishes outside that generator's sites, which `pu` recorded in
         # zacc_workspace.
-        dst = view(tab.destab, 1:(2n), j)
-        src = view(tab.destab, 1:(2n), pivot)
         if pu.sparse
-            submul_mod_sites!(dst, src, tab.zacc_workspace, pu.nsupp, n, t, d)
+            _gen_submul_sites!(destab, j, destab, pivot, tab.zacc_workspace, pu.nsupp, t, d)
         else
-            submul_mod!(dst, src, t, d)
+            _gen_submul!(destab, j, destab, pivot, t, d)
         end
     end
 
@@ -442,6 +437,8 @@ end
     end
     q == 0 && throw(ArgumentError("Failed to construct destabilizer: residual is zero."))
 
+    stab = _stab(tab)
+    destab = _destab(tab)
     genws = tab.generator_workspace
     @turbo for j in eachindex(genws)
         genws[j] = 0
@@ -452,7 +449,6 @@ end
     else
         genws[q] = 1    # X_q
     end
-    v = view(genws, 1:(2n))
 
     # Project v = e - Σ_j t_j D_j to commute with the old stabilizers, where e
     # is the unit vector above and t_j = <v, S_j> at the time D_j is
@@ -460,47 +456,44 @@ end
     # duals leaves <v, S_j> = <e, S_j>: one entry of S_j, -x_q for e = Z_q and
     # z_q for e = X_q. Reading it costs one load per generator instead of a
     # 2n-term pairing.
-    stab = tab.stab
     @inbounds for j in 1:m
-        traw = zq ? stab[q, j] : stab[n+q, j]
+        traw = zq ? _xget(stab, q, j) : _zget(stab, q, j)
         traw == 0 && continue
         t = zq ? d - traw : traw
-        # v views generator_workspace, a different array from destab.
-        submul_mod!(v, view(tab.destab, 1:(2n), j), t, d)
+        # genws is a separate array from the destabilizer block.
+        _vec_submul!(genws, destab, j, t, d)
     end
 
     # The new column holds op with reduced exponents. Every pairing against it
     # vanishes outside op's qudit support, so collect that support once.
     supp = tab.support_workspace
-    nsupp = _column_support!(supp, stab, newcol, n)
+    nsupp = _column_support!(supp, stab, newcol)
 
     # β = <v, op>
-    β = mod(_symplectic_vec_col_support(v, stab, newcol, n, supp, nsupp), d)
+    β = mod(_symplectic_vec_col_support(genws, stab, newcol, supp, nsupp), d)
     β == 0 && throw(ArgumentError("Failed to construct destabilizer: β = 0."))
     invβ = tab.inversemod(β, d)
 
     # D_new = invβ * v
-    mulcopy_mod!(view(tab.destab, 1:(2n), newcol), v, invβ, d)
+    _gen_mulcopy!(destab, newcol, genws, invβ, d)
 
     # Orthogonalize old destabilizers to the new stabilizer. D_new vanishes
     # wherever v does, so when it is local the update runs over its sites,
     # collected in zacc_workspace, which the append branch does not otherwise
     # use; a dense D_new keeps the SIMD loop (see `_pivot_support_is_sparse`).
     sites = tab.zacc_workspace
-    ndsupp = _column_support!(sites, tab.destab, newcol, n)
+    ndsupp = _column_support!(sites, destab, newcol)
     dsparse = _pivot_support_is_sparse(ndsupp, n)
     @inbounds for j in 1:m
-        traw = _symplectic_col_col_support(tab.destab, j, stab, newcol, n, supp, nsupp)
+        traw = _symplectic_col_col_support(destab, j, stab, newcol, supp, nsupp)
         traw == 0 && continue
         t = mod(traw, d)
         t == 0 && continue
         # m == newcol - 1, so j < newcol: disjoint columns of destab.
-        dst = view(tab.destab, 1:(2n), j)
-        src = view(tab.destab, 1:(2n), newcol)
         if dsparse
-            submul_mod_sites!(dst, src, sites, ndsupp, n, t, d)
+            _gen_submul_sites!(destab, j, destab, newcol, sites, ndsupp, t, d)
         else
-            submul_mod!(dst, src, t, d)
+            _gen_submul!(destab, j, destab, newcol, t, d)
         end
     end
 
@@ -671,13 +664,14 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     # in res_workspace, which nothing in this loop writes; the commuting branch
     # below overwrites it from `op` again.
     opc = _commutation_operand!(tab, op)
+    stab = _stab(tab)
 
     for i in 1:m
 
         # commutator of generator i with the operator; most generators of a
         # local state miss the operator's support entirely, and a zero dot
         # needs no reduction
-        craw = commutation_col(tab.stab, i, opc)
+        craw = commutation_col(stab, i, opc)
         craw == 0 && continue
         commutator = mod(craw, d)
 
@@ -704,7 +698,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
             # we override the phase row so that the new generator stabilizes the post-measurement state,
             # dependent on the sampled outcome, and the phase of the input operator.
             if tab.storephase
-                tab.stab[2n+1, i] = _measured_generator_phase(t, kop, d)
+                _phase(tab)[i] = _measured_generator_phase(t, kop, d)
             end
 
             comm0 = commutator
@@ -776,7 +770,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     tab.m = newcol
     set_operator!(tab, newcol, op)
     if tab.storephase
-        tab.stab[2n+1, newcol] = _measured_generator_phase(t, kop, d)
+        _phase(tab)[newcol] = _measured_generator_phase(t, kop, d)
     end
     _after_append_measurement!(tab, newcol, res)
 

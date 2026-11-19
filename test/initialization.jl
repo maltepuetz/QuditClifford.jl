@@ -226,7 +226,7 @@ end
             tab = mk(TT, tbl; state=:product, basis=:X)
             @test measure!(tab, op; outcome=0) == 0
             for i in 1:tab.m, j in 1:tab.m
-                @test mod(QuditClifford.commutation_col(stabilizer_matrix(tab), i, stabilizer_matrix(tab)[:, j]), tab.d) == 0
+                @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, stabilizer_matrix(tab)[:, j]), tab.d) == 0
             end
             @test stabilizer_matrix(tab) == stabilizer_matrix(ctrl)
             @test tab.m == ctrl.m

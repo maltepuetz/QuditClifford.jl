@@ -98,7 +98,7 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
     pivot = 0
     comm0 = 0
     for i in 1:m
-        c = mod(commutation_col(tab.stab, i, opc), d)
+        c = mod(commutation_col(_stab(tab), i, opc), d)
         c == 0 && continue
         if pivot == 0
             # The pivot is kept in the workspace and removed afterwards; the
