@@ -294,7 +294,7 @@ qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.Precompute
 
 @testset "rank_fp_cols! pivot count" begin
     # The signature names the element types that have an inner loop: Int
-    # through src/modular.jl, UInt8 through `_submul_u8!`. Pin that any other
+    # and UInt8, both through src/modular.jl. Pin that any other
     # one is rejected at the signature rather than deep inside a primitive,
     # which would report a MethodError naming a function the caller never
     # mentioned.

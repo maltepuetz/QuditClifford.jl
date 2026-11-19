@@ -494,8 +494,8 @@ end
 # run over rows `r:end` only.
 #
 # The element type is the contract: `Int` entries go through the primitives in
-# src/modular.jl, and `UInt8` entries (for `d <= 255`) through `_submul_u8!`.
-# Any other element type is a MethodError at the call.
+# src/modular.jl, and `UInt8` entries (for `d <= 255`) through the `UInt8`
+# methods there. Any other element type is a MethodError at the call.
 function rank_fp_cols!(
     A::AbstractMatrix{T},
     d::Int,

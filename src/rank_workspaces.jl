@@ -37,76 +37,9 @@ _bit_rank_workspace(d::Int, n::Int) =
     return Base.unalias(tab.workspace, v)
 end
 
-#############################################
-# dst .= mod.(dst .- a .* src, d) on UInt8  #
-#############################################
-#
-# Entries of `dst` and `src` lie in [0, d), d <= 255 and 1 <= a <= d - 1.
-# Tiers, resolved once per call:
-#   d == 2    XOR
-#   a == 1    subtract, then add d back on borrow
-#   a == d-1  add, written as dst - (d - src) so that it cannot carry out of
-#             UInt8 for d > 128
-#   otherwise Shoup multiplication: with q = floor(256 a / d), floor(s q / 256)
-#             is floor(a s / d) or one less for every s < 256, so
-#             p = a s - floor(s q / 256) d lies in [0, 2d). Only s q needs 16
-#             bits. For d <= 127, p < 256, so everything else runs in UInt8
-#             lanes and wraps harmlessly; above that, in UInt16 lanes, where
-#             both products stay below 255 * 255 < 2^16.
-# The Shoup tier's final reductions use unsigned wraparound instead of a
-# compare: for 0 <= u < 2d, min(u, u - d) is u mod d, and for x, p in [0, d),
-# with t = x - p, min(t, t + d) is (x - p) mod d. Both need 2d to fit the lane.
-# `dst` and `src` must not alias.
-@inline function _submul_u8!(dst::AbstractVector{UInt8}, src::AbstractVector{UInt8}, a::Int, d::Int)
-    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("_submul_u8!", dst, src)
-    dd = d % UInt8
-    if d == 2
-        @inbounds @simd for i in eachindex(dst)
-            dst[i] = xor(dst[i], src[i])
-        end
-    elseif a == 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            s = src[i]
-            dst[i] = (x - s) + ifelse(x < s, dd, 0x00)
-        end
-    elseif a == d - 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            t = dd - src[i]                  # in [1, d]
-            dst[i] = (x - t) + ifelse(x < t, dd, 0x00)
-        end
-    elseif d <= 127
-        a8 = a % UInt8
-        q16 = ((a << 8) ÷ d) % UInt16
-        @inbounds @simd for i in eachindex(dst)
-            s = src[i]
-            h = ((UInt16(s) * q16) >> 8) % UInt8
-            p = a8 * s - h * dd
-            p = min(p, p - dd)
-            t = dst[i] - p
-            dst[i] = min(t, t + dd)
-        end
-    else
-        a16 = a % UInt16
-        q16 = ((a << 8) ÷ d) % UInt16
-        d16 = d % UInt16
-        @inbounds @simd for i in eachindex(dst)
-            s = UInt16(src[i])
-            p = a16 * s - ((s * q16) >> 8) * d16
-            p = min(p, p - d16)
-            t = UInt16(dst[i]) - p
-            dst[i] = min(t, t + d16) % UInt8
-        end
-    end
-    return dst
-end
-
 # `dst .= mod.(dst .- a .* src, d)` for either workspace element type.
-@inline _submul_col!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int) =
+@inline _submul_col!(dst::AbstractVector, src::AbstractVector, a::Int, d::Int) =
     submul_mod!(dst, src, a, d)
-@inline _submul_col!(dst::AbstractVector{UInt8}, src::AbstractVector{UInt8}, a::Int, d::Int) =
-    _submul_u8!(dst, src, a, d)
 
 # Exchange columns `c` and `j` of `A` on `rows`.
 @inline function _swap_cols!(A::AbstractMatrix, rows::UnitRange{Int}, c::Int, j::Int)

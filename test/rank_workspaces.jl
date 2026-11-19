@@ -148,7 +148,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             for a in 1:(d - 1)
                 x = rand(rng, UInt8(0):UInt8(d - 1), length(s))
                 expected = UInt8.(mod.(Int.(x) .- a .* Int.(s), d))
-                @test RW._submul_u8!(copy(x), s, a, d) == expected
+                @test RW.submul_mod!(copy(x), s, a, d) == expected
             end
         end
     end
