@@ -86,11 +86,10 @@ A tableau stores generators in **columns**. For `n` qudits,
 phase exponents. `layout = :qudit` returns the transpose, with one row per
 generator. [`destabilizer_matrix`](@ref) returns the same layout for the
 destabilizers of a `DestabilizerTableau`. Both return a fresh copy; writing to
-it does not change the tableau. The first `m` columns
-are the active generators, with ``0 \leq m \leq n``. The remaining columns are
-zeroed capacity for measurements that raise `m`. A pure state has `m = n`; a
-mixed state has `m < n`. [Tableaux](tableaux.md) covers construction from
-a raw matrix.
+it does not change the tableau. The first `m` columns are the active
+generators, with ``0 \leq m \leq n``. The remaining columns are zeroed capacity
+for measurements that raise `m`. A pure state has `m = n`; a mixed state has
+`m < n`. [Tableaux](tableaux.md) covers construction from a raw matrix.
 
 ## The symplectic form
 

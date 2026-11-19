@@ -16,7 +16,7 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
 # Keyword Arguments
 - `state::Symbol=:mixed`: Preset state (`:mixed`, `:product`, `:ghz`). Aliases `:X/:Y/:Z` map to `:product` in that basis.
 - `basis=:Z`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit vector/tuple of Symbols).
-- `storephase::Bool=true`: Whether to store the phase row (for the `(d, n)` constructor). When
+- `storephase::Bool=true`: Whether to store the generator phases (for the `(d, n)` constructor). When
   constructing from a `tableau`, `storephase` is inferred from the matrix shape if not provided.
 - `m::Union{Int,Nothing}=nothing`: Number of active generator columns (for the `(d, tableau)` constructor).
 - `inversemod::InverseMod=PrecomputedInvMod(d)`: Inversion strategy used for phase calculations.
@@ -448,16 +448,20 @@ end
 
 function _preset_tableau(d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     b = XZBlock{GeneratorMajor}(_stab_blocks(n)...)
-    phase = Vector{Int}(undef, storephase ? n : 0)
+    phase = zeros(Int, storephase ? n : 0)
 
-    m = _preset_tableau!(b, phase, d, n, state, basis_spec, storephase)
+    m = _fill_preset!(b, phase, d, n, state, basis_spec, storephase)
     return b, phase, m
 end
 
 function _preset_tableau!(b::_GMBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     _zero!(b)
     _zero!(phase)
+    return _fill_preset!(b, phase, d, n, state, basis_spec, storephase)
+end
 
+# Write the preset state into zeroed storage and return the number of active generators.
+function _fill_preset!(b::_GMBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     if state === :mixed
         return 0
     elseif state === :product

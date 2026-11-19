@@ -26,10 +26,10 @@ without first canonicalizing the stabilizer generators.
   `:X/:Y/:Z` map to `:product` in that basis.
 - `basis=:Z`: Basis for product states (`:X`, `:Y`, `:Z`, or a per-qudit
   vector/tuple of Symbols).
-- `storephase::Bool=true`: Whether to store the stabilizer phase row (for the
-  `(d, n)` constructor). When constructing from a `tableau`, `storephase` is
+- `storephase::Bool=true`: Whether to store the stabilizer generator phases (for
+  the `(d, n)` constructor). When constructing from a `tableau`, `storephase` is
   inferred from the matrix shape if not provided. Destabilizers never carry a
-  phase row.
+  phase.
 - `m::Union{Int,Nothing}=nothing`: Number of active stabilizer-generator columns
   (for the `(d, tableau)` constructor).
 - `inversemod::InverseMod=PrecomputedInvMod(d)`: Inversion strategy used for
@@ -495,12 +495,13 @@ pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 end
 
 """
-The symplectic pairing `Σ_q x_A[q, colA] z_B[q, colB] - z_A[q, colA] x_B[q, colB]`
-of two generators, summed over the qudit indices in `supp[1:nsupp]`. Equal to
-the full pairing whenever `supp` covers the support of generator `colB` of `b`
-(see `_column_support!`), at `O(nsupp)` instead of `O(n)`.
+The symplectic pairing `Σ_q a.x[q, colA] b.z[q, colB] - a.z[q, colA] b.x[q, colB]`
+of generator `colA` of `a` and generator `colB` of `b`, summed over the qudit
+indices in `supp[1:nsupp]`. Equal to the full pairing whenever `supp` covers the
+support of generator `colB` of `b` (see `_column_support!`), at `O(nsupp)`
+instead of `O(n)`.
 
-Callers sweep `colA` over many columns with a fixed `colB`, so each `A` entry
+Callers sweep `colA` over many columns with a fixed `colB`, so each entry of `a`
 is a cache miss while generator `colB` of `b` stays cached: an entry of `a` is
 loaded only when the entry of `b` it pairs with is nonzero.
 """

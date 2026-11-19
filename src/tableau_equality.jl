@@ -121,8 +121,9 @@ end
 
 function Base.hash(tab::AbstractTableau, h::UInt)
     h = hash(tab.storephase, hash(tab.m, hash(tab.n, hash(tab.d, hash(:AbstractTableau, h)))))
-    # The canonical tableau is hashed in place; only a copy needs the
-    # canonicalizing path, which returns a different block type.
+    # A canonical tableau is hashed in place. Any other is hashed through a
+    # canonical copy, which `_canonical_stab` returns with a different block
+    # type, so returning here keeps this path free of allocation.
     tab.iscanonical && return _hash_active(h, _stab(tab), _phase(tab), tab.m, tab.storephase)
     S, phase = _canonical_stab(tab)
     return _hash_active(h, S, phase, tab.m, tab.storephase)

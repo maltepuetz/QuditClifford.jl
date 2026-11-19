@@ -377,8 +377,8 @@ function set_operator! end
 # Throw an `ArgumentError` unless `op` is a Pauli on a register of `n` qudits:
 # every qudit index in `1:n` and none repeated, or a dense vector of length `2n`.
 # Callers run it before touching any state, since the kernels index under
-# `@turbo`/`@inbounds` and a sparse index of `n + 1` lands in the Z block or
-# phase row without tripping a bounds check. O(k²) for a k-qudit sparse Pauli,
+# `@turbo`/`@inbounds` and a sparse index of `n + 1` lands in a padding row or
+# a neighbouring column of the same block without tripping a bounds check. O(k²) for a k-qudit sparse Pauli,
 # O(1) for a dense one, and allocation-free.
 function _check_pauli_support(op::FewQuditPauli, n::Int)
     qudits = _few_qudit_pauli_data(op)[1]

@@ -288,6 +288,8 @@ ts_slot(A) = Int(UInt(pointer(A)) % 4096 ÷ 128 * 128)
         end
     end
     @test Int === Int32 || ts_QC._padded_rows(512, sizeof(Int)) == 528
+    @test_throws ArgumentError ts_QC._padded_rows(100, 3)
+    @test_throws ArgumentError ts_QC._padded_rows(100, 256)
 end
 
 @testset "padded block layout" begin

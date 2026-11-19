@@ -42,8 +42,9 @@ XZBlock{L}(x::M, z::M) where {L, M} = XZBlock{L, M}(x, z)
 #   are page-aligned, so unshifted blocks would put them in the same set for
 #   every `j`.
 #
-# Columns shorter than `_PAD_MIN_COL_BYTES` are neither padded nor shifted:
-# such a tableau fits in L1.
+# Columns shorter than `_PAD_MIN_COL_BYTES` are neither padded nor shifted: a
+# column stride under 256 bytes already spreads consecutive generators over
+# distinct cache sets, so padding buys nothing there.
 
 const _BlockMatrix{T} = SubArray{T, 2, Matrix{T}, Tuple{Base.OneTo{Int}, UnitRange{Int}}, false}
 
@@ -55,6 +56,8 @@ const _PAD_MIN_COL_BYTES = 256
 # count `≥ n` whose stride `rows · sz` is an odd multiple of `_LINE_BYTES`, or
 # `n` for short columns. `sz` must divide `_LINE_BYTES`.
 function _padded_rows(n::Int, sz::Int)
+    (sz > 0 && _LINE_BYTES % sz == 0) || throw(ArgumentError(
+        "element size $sz must divide the $_LINE_BYTES-byte line unit"))
     n * sz < _PAD_MIN_COL_BYTES && return n
     u = _LINE_BYTES ÷ sz
     return n + mod(u - n, 2u)
@@ -122,7 +125,7 @@ end
 # Views into a stacked `(2n + storephase) × n'` matrix: X rows `1:n`, Z rows
 # `n+1:2n`, and the phase row `2n+1` when `storephase`. Without a phase row the
 # phase is an empty view of the same type.
-function _stacked_views(S::AbstractMatrix{Int}, n::Int, storephase::Bool)
+function _stacked_views(S::Matrix{Int}, n::Int, storephase::Bool)
     nc = size(S, 2)
     b = XZBlock{GeneratorMajor}(view(S, 1:n, :), view(S, n+1:2n, :))
     # The empty view must also exist for a matrix with no rows, so it is built

@@ -56,8 +56,8 @@ All `n` columns are returned, including the zeroed capacity columns `m+1:n`.
 With `layout = :qudit` the result is the `permutedims` of that matrix, with
 generator `j` in row `j`.
 
-The result is a copy; changing it does not change `tab`. Any other `layout`
-throws an `ArgumentError`.
+The result is a copy; changing it does not change `tab`. Any other symbol for
+`layout` throws an `ArgumentError`.
 """
 function stabilizer_matrix(tab::AbstractTableau; layout::Symbol = :generator)
     _check_layout(layout)
@@ -81,8 +81,8 @@ With `layout = :generator` (the default) the matrix is `2n × n`: destabilizer
 exponents. Destabilizers carry no phase row. With `layout = :qudit` the result
 is the `permutedims` of that matrix.
 
-The result is a copy; changing it does not change `tab`. Any other `layout`
-throws an `ArgumentError`.
+The result is a copy; changing it does not change `tab`. Any other symbol for
+`layout` throws an `ArgumentError`.
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
