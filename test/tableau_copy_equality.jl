@@ -98,8 +98,10 @@ end
                             src = tce_scrambled(TT, rng, d, n; m = 3, storephase = storephase)
                             dst = TT(d, n, :ghz; storephase = storephase)
                             before = tce_snapshot(src)
+                            arrays = [f => getfield(dst, f) for f in fieldnames(typeof(dst))
+                                      if getfield(dst, f) isa Array]
                             @test copy!(dst, src) === dst
-                            @test stabilizer_matrix(dst) == stabilizer_matrix(src)
+                            @test all(getfield(dst, f) === arr for (f, arr) in arrays)
                             @test tce_snapshot(src) == before
                             @test dst == src
                             @test (dst.m, dst.iscanonical) == (src.m, src.iscanonical)

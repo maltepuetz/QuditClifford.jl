@@ -668,7 +668,7 @@ end
     # add I8 (n + 1) 2^n bytes -- 90 KB here, far past the slack.
     plus = StabilizerTableau(2, 10; state=:product, basis=:X)
     @test dense_net_allocated(() -> state_vector(plus),
-                        () -> copy(stabilizer_matrix(plus)), () -> zeros(ComplexF64, 2^10)) < small(10)
+                        () -> stabilizer_matrix(plus), () -> zeros(ComplexF64, 2^10)) < small(10)
 
     # maximally mixed: the output and O(n + m) scratch
     mm = StabilizerTableau(2, 6; state=:mixed)
