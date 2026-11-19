@@ -27,6 +27,9 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- `stabilizer_matrix(tab; layout)` and `destabilizer_matrix(tab; layout)` return a
+  tableau's generators as a fresh `Int` matrix, generator-major (generators in
+  columns) or qudit-major.
 - `measure!(rng, tab, op; outcome, phase_policy)` draws the outcome of a
   random measurement from `rng`, for both a Pauli and a raw exponent vector, so
   one seeded RNG reproduces a monitored-circuit trajectory. It follows the
