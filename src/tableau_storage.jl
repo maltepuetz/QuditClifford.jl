@@ -11,6 +11,10 @@ _stab(tab::AbstractTableau) = XZBlock{GeneratorMajor}(tab.stab_x, tab.stab_z)
 _destab(tab::DestabilizerTableau) = XZBlock{GeneratorMajor}(tab.destab_x, tab.destab_z)
 _phase(tab::AbstractTableau) = tab.phase
 
+# Bytes of the arrays behind the generator blocks of `tab`, padding included.
+_generator_bytes(tab::AbstractTableau) = _block_bytes(_stab(tab))
+_generator_bytes(tab::DestabilizerTableau) = _block_bytes(_stab(tab)) + _block_bytes(_destab(tab))
+
 @noinline _throw_removed_field(s::Symbol, accessor::Symbol) =
     throw(ArgumentError("tab.$s was removed; use $accessor(tab)."))
 

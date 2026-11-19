@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+using Random
 
 const QC = QuditClifford
 
@@ -581,6 +582,30 @@ end
     @test_throws ArgumentError QC._apply_prepared!(
         tab, QC._prepare(Fourier(1), 3, jit, true))
     @test stabilizer_matrix(tab) == before
+end
+
+@testset "prefetching column loop matches the plain one" begin
+    # `_apply_prepared!` prefetches only for tableaux past `_PREFETCH_MIN_BYTES`;
+    # both loop variants are driven here directly, on enough generators that
+    # the prefetch runs ahead of the loop.
+    @test !QC._prefetches(QC._generator_bytes(StabilizerTableau(2, 40)))
+    @test QC._prefetches(QC._PREFETCH_MIN_BYTES + 1)
+    rng = Xoshiro(2027)
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), k in (1, 2, 3, 4)
+        n = QC._PREFETCH_COLS + 9
+        a = TT(d, n; state = :product)
+        random_state!(rng, a)
+        b = copy(a)
+        for _ in 1:5
+            U = random_clifford(rng, d, randperm(rng, n)[1:k])
+            prep = k <= 3 ? QC._prepare_tuple(U, true, Val(k)) : QC._prepare(U, d, a.inversemod, true)
+            QC._apply_columns!(a, prep, Val(true))
+            QC._apply_columns!(b, prep, Val(false))
+        end
+        @test stabilizer_matrix(a) == stabilizer_matrix(b)
+        @test a.xdotz_cache == b.xdotz_cache
+        TT === DestabilizerTableau && @test destabilizer_matrix(a) == destabilizer_matrix(b)
+    end
 end
 
 @testset "_validate_targets rejects repeated indices" begin

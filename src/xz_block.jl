@@ -121,6 +121,55 @@ end
 
 const _GMBlock = XZBlock{GeneratorMajor}
 
+##### software prefetch #####
+#
+# A gate touches the same few qudits of every generator, one cache line per
+# generator and block, at a column stride the hardware prefetchers do not
+# follow once the blocks spill out of the last private cache. `apply!` then
+# prefetches the lines `_PREFETCH_COLS` generators ahead, but only for tableaux
+# whose blocks exceed `_PREFETCH_MIN_BYTES`: below that the lines are cache
+# hits and the prefetch instructions cost 5-15% per gate. Both constants are
+# measured on an M3 Pro (16 MiB L2 per cluster).
+
+const _PREFETCH_COLS = 32
+const _PREFETCH_MIN_BYTES = 16 * 2^20
+
+# Read prefetch with high temporal locality; a hint that never faults.
+@static if VERSION >= v"1.11"
+    @inline _prefetch(p::Ptr{Int}) =
+        ccall("llvm.prefetch.p0", llvmcall, Cvoid, (Ptr{Int}, Int32, Int32, Int32),
+              p, Int32(0), Int32(3), Int32(1))
+else
+    @inline _prefetch(p::Ptr{Int}) = Base.llvmcall(("""
+        declare void @llvm.prefetch(i8*, i32, i32, i32)
+        define void @entry(i64 %a) #0 {
+          %p = inttoptr i64 %a to i8*
+          call void @llvm.prefetch(i8* %p, i32 0, i32 3, i32 1)
+          ret void
+        }
+        attributes #0 = { alwaysinline }
+        """, "entry"), Cvoid, Tuple{Ptr{Int}}, p)
+end
+
+# Whether blocks of `nbytes` in all are large enough to prefetch.
+@inline _prefetches(nbytes::Int) = nbytes > _PREFETCH_MIN_BYTES
+
+# Bytes of the parent matrices behind the given blocks; blocks sharing a parent count once.
+_block_bytes(b::_GMBlock) = parent(b.x) === parent(b.z) ? sizeof(parent(b.x)) :
+                                                        sizeof(parent(b.x)) + sizeof(parent(b.z))
+
+# Prefetch the lines holding qudits `targets` of generator `j` in both blocks.
+# The caller keeps the block's arrays alive.
+@inline function _prefetch_gen(b::XZBlock{GeneratorMajor, _BlockMatrix},
+                               targets::NTuple{K,Int}, j::Int) where {K}
+    x, z = b.x, b.z
+    for i in 1:K
+        _prefetch(pointer(x, CartesianIndex(targets[i], j)))
+        _prefetch(pointer(z, CartesianIndex(targets[i], j)))
+    end
+    return nothing
+end
+
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)
 
