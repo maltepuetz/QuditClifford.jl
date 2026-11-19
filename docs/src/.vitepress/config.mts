@@ -1,12 +1,12 @@
 // VENDORED from DocumenterVitepress (template/src/.vitepress/config.mts).
 //
 // DocumenterVitepress substitutes its own copy only when this file is absent, so
-// this copy is frozen at the version it was taken from. There are four local
+// this copy is frozen at the version it was taken from. There are five local
 // changes, all marked below: the favicon links (DocumenterVitepress emits a
 // single hardcoded favicon.ico link and offers no hook for a second, so it
 // cannot follow the reader's light/dark browser theme), the navbar logo, the
 // style rule that switches the light and dark figures (docs/figure_theme.jl),
-// and the sitemap.
+// the sitemap, and the canonical link on every page.
 //
 // On a DocumenterVitepress upgrade: diff this against the new template and
 // re-apply that one line. Every placeholder token in this file must stay intact
@@ -58,6 +58,22 @@ export default defineConfig({
   // Google Search Console.
   sitemap: {
     hostname: 'https://maltepuetz.github.io/QuditClifford.jl/stable/',
+  },
+  // LOCAL CHANGE: a self-referencing canonical link on every page. GitHub Pages
+  // serves each page both at its clean URL and with `.html` appended (and the
+  // home page also as `index.html`), so without it Google reports the variants
+  // as "Duplicate without user-selected canonical". The link names the clean
+  // URL under this build's own base, so the stable build points at /stable/
+  // and the noindex builds (dev, versions, previews) at themselves.
+  transformPageData(pageData) {
+    const page = pageData.relativePath
+      .replace(/(^|\/)index\.md$/, '$1')
+      .replace(/\.md$/, '')
+    pageData.frontmatter.head ??= []
+    pageData.frontmatter.head.push([
+      'link',
+      { rel: 'canonical', href: `https://maltepuetz.github.io${baseTemp.base}${page}` },
+    ])
   },
   head: [
     // Dark-mode favicon, shipped as two .ico files rather than SVG. Safari ranks
