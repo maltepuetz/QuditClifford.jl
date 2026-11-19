@@ -66,7 +66,8 @@ end
     end
 
     kernel(stab, n, m, d) = QuditClifford._first_noncommuting_pair(
-        stab, n, m, d, zeros(Int, max(m, 1), max(m, 1)))
+        QuditClifford._stacked_views(stab, n, false)[1], m, d,
+        zeros(Int, max(m, 1), max(m, 1)))
 
     @testset "agrees with the definition on random tableaux" begin
         rng = MersenneTwister(20260915)

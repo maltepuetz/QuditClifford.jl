@@ -150,7 +150,8 @@ end
         G = stabilizer_matrix(tab)
         gens = [ref_pauli(d, G[1:n, j], G[(n+1):(2n), j], G[2n+1, j]) for j in 1:m]
         seen = Matrix{ComplexF64}[]
-        QC._walk_group(G, n, m, d, zeros(Int, 2n), zeros(Int, m)) do xz, a
+        Gb, Gp = QC._stacked_views(G, n, true)
+        QC._walk_group(Gb, Gp, m, d, zeros(Int, 2n), zeros(Int, m)) do xz, a
             push!(seen, ref_pauli(d, xz[1:n], xz[(n+1):(2n)], a))
         end
         # exponent vectors in lexicographic order, last one fastest; d = 3,
@@ -162,7 +163,8 @@ end
     end
     # no generators: the identity, once
     visits = Ref(0)
-    QC._walk_group(zeros(Int, 5, 2), 2, 0, 3, zeros(Int, 4), Int[]) do xz, a
+    Gb, Gp = QC._stacked_views(zeros(Int, 5, 2), 2, true)
+    QC._walk_group(Gb, Gp, 0, 3, zeros(Int, 4), Int[]) do xz, a
         visits[] += 1
         @test all(iszero, xz) && a == 0
     end
@@ -173,14 +175,14 @@ end
     for trial in 1:6
         tab = dense_random_tableau(TT, d, 3, Xoshiro(100d + trial))
         before = dense_snapshot(tab)
-        G, k, cstar = QC._prepare_support(tab)
+        G, Gphase, k, cstar = QC._prepare_support(tab)
         n = tab.n
         @test dense_unchanged(tab, before)
-        G .+= d
+        G.x .+= d; G.z .+= d; Gphase .+= d
         @test dense_unchanged(tab, before)       # G is not the tableau's storage
-        G .-= d
-        @test all(any(!iszero, G[1:n, j]) for j in 1:k)
-        @test all(all(iszero, G[1:n, j]) for j in (k+1):n)
+        G.x .-= d; G.z .-= d; Gphase .-= d
+        @test all(any(!iszero, G.x[:, j]) for j in 1:k)
+        @test all(all(iszero, G.x[:, j]) for j in (k+1):n)
         # the support is exactly d^k labels, and cstar is the smallest
         Π = ref_projector(tab)
         support = [ref_digits(i, d, n) for i in 1:d^n if real(Π[i, i]) > 1e-9]

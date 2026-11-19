@@ -130,13 +130,13 @@ end
 # on the caller's original columns, so the reported index is theirs, and
 # computed locally rather than read from `xdotz_cache`.
 function _check_qubit_hermitian(tab::AbstractTableau, fname::String)
-    n, stab = tab.n, tab.stab
+    b, phase = _stab(tab), _phase(tab)
     for j in 1:tab.m
-        xz = dot_xz_col(stab, n, j, 2)
-        mod(stab[2n+1, j], 2) == xz && continue
+        xz = dot_xz_col(b, j, 2)
+        mod(phase[j], 2) == xz && continue
         throw(ArgumentError(
             "$fname needs Hermitian qubit generators, but active column $j has " *
-            "phase exponent $(stab[2n+1, j]) while x·z = $xz (mod 2), so it squares " *
+            "phase exponent $(phase[j]) while x·z = $xz (mod 2), so it squares " *
             "to -I. measure! with phase_policy=2 or a raw-matrix constructor can " *
             "produce such a generator; phase_policy=1 repairs it at measurement."))
     end
@@ -211,7 +211,7 @@ function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     # which are not exercised on empty ranges.
     n == 0 && return StabilizerKet(_TrustedKet(), d, 0, zeros(Int, 0, 1), [0])
 
-    G, k, cstar = _prepare_support(tab)
+    G, Gphase, k, cstar = _prepare_support(tab)
     limit = maxentries ÷ per_term
     T = limit == 0 ? -1 : _bounded_pow(d, k, limit)
     T < 0 && throw(_size_error("ket", "($n+1)·$d^$k", maxentries))
@@ -220,7 +220,7 @@ function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     labels = Matrix{Int}(undef, n, T)
     phases = Vector{Int}(undef, T)
     t = Ref(0)
-    _emit_support(G, n, k, d, cstar) do label, phase
+    _emit_support(G, Gphase, k, d, cstar) do label, phase
         i = (t[] += 1)
         for q in 1:n
             labels[q, i] = label[q]
@@ -329,11 +329,11 @@ function state_vector(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_bytes(D, sizeof(ComplexF64), "state_vector")
     n == 0 && return ComplexF64[1]
 
-    G, k, cstar = _prepare_support(tab)
+    G, Gphase, k, cstar = _prepare_support(tab)
     psi = zeros(ComplexF64, D)
     strides = _kron_strides(d, n)
     amp = 1 / sqrt(Float64(_bounded_pow(d, k, D)))   # d^k <= d^n = D
-    _emit_support(G, n, k, d, cstar) do label, phase
+    _emit_support(G, Gphase, k, d, cstar) do label, phase
         _scatter_term!(psi, label, phase, strides, d, amp)
     end
     return psi
@@ -435,7 +435,7 @@ function density_matrix(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIE
     xz = zeros(Int, 2n)
     u = zeros(Int, m)
     invD = 1 / D
-    _walk_group(tab.stab, n, m, d, xz, u) do xz, a
+    _walk_group(_stab(tab), _phase(tab), m, d, xz, u) do xz, a
         _add_pauli!(rho, xz, a, n, d, p, s, strides, c, r, invD)
     end
     return rho
