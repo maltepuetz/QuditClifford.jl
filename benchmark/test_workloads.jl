@@ -75,6 +75,36 @@ const TIER_COUNTS = zeros(Int, 2)
         end
     end
 
+    @testset "Monitored measurement leaves take the random branch" begin
+        empty_suite = BenchmarkGroup()
+        register_monitored_measure_group!(empty_suite, (StabilizerTableau,), (3,), (8,);
+                                          api = Module(:NoRandomCliffordAPI))
+        @test isempty(empty_suite)
+
+        types = (StabilizerTableau, DestabilizerTableau)
+        suite = BenchmarkGroup()
+        register_monitored_measure_group!(suite, types, (2, 31), (16,))
+        @test Set(keys(suite["monitored"])) ==
+              Set(["$(nameof(T))/d=$d/n=16" for T in types, d in (2, 31)])
+        for (_, group) in suite["monitored"]
+            @test Set(keys(group)) == Set(["measure!/Z", "measure!/X", "measure!/ZZ",
+                                           "measure!/XX", "layer"])
+        end
+        for (_, group) in suite["monitored"], (key, leaf) in group
+            trial = run(leaf; samples = 3, evals = 1, seconds = 0.05)
+            @test !isempty(trial.times)
+            key == "layer" || @test trial.allocs == 0
+        end
+        # The operator each measurement leaf times anticommutes with the state,
+        # and both tableau types measure the same state.
+        D, bonds, rng = monitored_setup(; d = 3, n = 16, seed = 20261119)
+        monitored_layers!(D, bonds, rng, 64; p = 0.15)
+        S = StabilizerTableau(3, copy(D.stab); m = D.m, check = false)
+        @test D.m == 16
+        op = first_anticommuting(D, [SinglePauli(q, 0, 1) for q in 1:16])
+        @test !QuditClifford._commutes_with_generators(S, op)
+    end
+
     @testset "Purification is deterministic and reaches full rank" begin
         h1, l1 = purification_trajectory(d = 2, n = 8, seed = 42)
         h2, l2 = purification_trajectory(d = 2, n = 8, seed = 42)

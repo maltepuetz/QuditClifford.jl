@@ -38,6 +38,25 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- A random-outcome `measure!` is faster, with identical tableaux, outcomes,
+  RNG draws and no allocations. Each generator that anticommutes with the
+  measured operator absorbs a power of the replaced generator. That update
+  runs only over the replaced generator's own sites when they are at most half
+  of the register, which is the usual case in monitored circuits.
+  Everything that depends only on the replaced generator is computed once per
+  measurement. A `DestabilizerTableau` updates its cached `x·z` values and
+  re-orthogonalizes its duals on the same sites, and the commutation scan
+  skips the entries a pure `Z` or `X` operator does not need. This holds for
+  every Pauli type. On states after a monitored circuit (`p = 0.05` and
+  `0.15`), single-site `Z` and `X` and two-site `ZZ` and `XX` measurements are
+  1.7–7× faster at `n = 250`–`2000`; at `n = 2000` a `Z` measurement takes
+  23 µs instead of 63 µs at `d = 2` and 0.46 ms instead of 2.1 ms at `d = 31`
+  (`StabilizerTableau`, `p = 0.15`). One whole monitored layer of a
+  `DestabilizerTableau` runs 1.2–4.4× faster. A `StabilizerTableau` layer
+  gains 2–4× at `d = 31`, but at `d = 2` and `3` it is dominated by its
+  deterministic measurements, which canonicalize and are unchanged. On random
+  states, where the replaced generator covers most sites, the gain is up to
+  1.5×, and otherwise within noise.
 - `measure!` draws its outcome only when the measurement is random: when `op`
   anticommutes with a generator, or commutes with all of them without lying in
   their span. A deterministic measurement no longer advances the RNG, so code

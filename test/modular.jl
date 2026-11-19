@@ -409,4 +409,34 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
         QC.scale_mod!(view(A, 3, :), 4, d)
         @test collect(view(A, 3, :)) == want
     end
+
+    @testset "Site-restricted addmul/submul on a column" begin
+        # Rows q and n + q for each listed site; every other row untouched.
+        # 131 is rejected by the Barrett guard, 1031 lies above its table, so
+        # all four tiers run.
+        rng = Xoshiro(20261119)
+        for d in (2, 3, 5, 31, 131, 1031), n in (1, 4, 9), trial in 1:20
+            dst0 = rand(rng, 0:(d - 1), 2n)
+            src = rand(rng, 0:(d - 1), 2n)
+            k = rand(rng, 0:n)
+            sites = vcat(randperm(rng, n)[1:k], rand(rng, 1:n, 3))  # padding past nsites
+            a = rand(rng, (0, 1, d - 1, rand(rng, 0:(d - 1))))
+            rows = vcat(sites[1:k], n .+ sites[1:k])
+            want_add = copy(dst0)
+            want_sub = copy(dst0)
+            want_add[rows] = _ref_addmul(dst0[rows], src[rows], a, d)
+            want_sub[rows] = _ref_submul(dst0[rows], src[rows], a, d)
+            @test QC.addmul_mod_sites!(copy(dst0), src, sites, k, n, a, d) == want_add
+            @test QC.submul_mod_sites!(copy(dst0), src, sites, k, n, a, d) == want_sub
+            # On a column view, against the full primitive with src zero
+            # outside the sites.
+            M = zeros(Int, 2n + 1, 2)
+            M[1:(2n), 1] = dst0
+            srcz = zeros(Int, 2n)
+            srcz[rows] = src[rows]
+            QC.addmul_mod_sites!(view(M, 1:(2n), 1), srcz, sites, k, n, a, d)
+            @test M[1:(2n), 1] == QC.addmul_mod!(copy(dst0), srcz, a, d)
+            @test M[2n + 1, 1] == 0
+        end
+    end
 end

@@ -13,6 +13,7 @@ using Aqua
     include("modular.jl")
     include("operators.jl")
     include("measurements.jl")
+    include("measurement_kernel.jl")
     include("channels.jl")
     include("expectation_values.jl")
     include("destabilizers.jl")

@@ -82,11 +82,19 @@ end
     comm += A[op.qudit3, col] * op.z3 - A[op.qudit3+N, col] * op.x3
     comm
 end
+# The measurement scan calls this once per generator column, and in the
+# generator-major layout each entry it reads sits in a different cache line. A
+# zero exponent skips its load, which halves the misses of a pure Z or X
+# operand. Callers validate the qudit indices before the scan.
 @inline function commutation_col(A::AbstractMatrix{<:Integer}, col::Int, op::NPauli{D}) where D
     N = size(A, 1) ÷ 2
     comm = 0
-    @turbo for i in 1:D
-        comm += A[op.qudits[i], col] * op.zs[i] - A[op.qudits[i]+N, col] * op.xs[i]
+    @inbounds for i in 1:D
+        q = op.qudits[i]
+        z = op.zs[i]
+        x = op.xs[i]
+        z == 0 || (comm += A[q, col] * z)
+        x == 0 || (comm -= A[q+N, col] * x)
     end
     comm
 end
@@ -180,6 +188,145 @@ function mul_col_by_workspace_power!(
     return nothing
 end
 
+##############################################################
+# Noncommuting-branch update, restricted to the pivot support #
+##############################################################
+
+# In the noncommuting branch every later anticommuting generator absorbs a
+# power of the pivot generator g_p, held in generator_workspace:
+#     g_i <- g_i * g_p^a,   a = -c_i / c_p (mod d).
+# Everything that depends on g_p alone -- its phase, x_p·z_p, -1/c_p, 1/2 -- is
+# fixed for the whole measurement, so `_PivotUpdate` holds it and each
+# generator pays only for its own terms.
+#
+# g_p vanishes outside its qudit support, so the XZ update of g_i, its cross
+# term x_p·z_i and (for a `DestabilizerTableau`) the change of x_i·z_i all live
+# on that support. In monitored circuits the pivot is local, a handful of sites
+# while dozens of generators anticommute, and the restricted update turns
+# O(k·n) into O(n + k·|supp|). A pivot with a large support (a random state)
+# keeps the dense SIMD loops, which win once the gathered loop would visit more
+# than about half of the `n` sites.
+struct _PivotUpdate
+    nsupp::Int      # sites of g_p, stored in tab.zacc_workspace[1:nsupp]
+    sparse::Bool    # whether updates run over those sites or over all rows
+    ninv::Int       # -1/c_p mod d
+    kws::Int        # phase exponent of g_p (0 without a phase row)
+    xzws::Int       # x_p·z_p mod d
+    inv2::Int       # 1/2 mod d for odd d, 0 for d = 2
+end
+
+# Dense loops stream 2n entries per generator with SIMD; the gathered loop
+# costs more per visited site but skips the rest. Measured on an M3 Pro, the
+# gathered update is 1.7-3.4x faster with a pivot on a quarter of the sites and
+# breaks even at about half of them for d = 2 and 3 (still 1.9x at d = 31). A
+# random state's pivot covers about three quarters and stays dense.
+@inline _pivot_support_is_sparse(nsupp::Int, n::Int) = 2 * nsupp <= n
+
+# Copy generator `pivot` into generator_workspace and record its support in
+# zacc_workspace, which nothing else touches during a measurement. Must run
+# before the pivot column is overwritten.
+function _prepare_pivot_update(tab::AbstractTableau, pivot::Int, comm0::Int)
+    stab = tab.stab
+    genws = tab.generator_workspace
+    n = tab.n
+    d = tab.d
+    @turbo for j in eachindex(genws)
+        genws[j] = stab[j, pivot]
+    end
+    sites = tab.zacc_workspace
+    nsupp = _column_support!(sites, stab, pivot, n)
+    sparse = _pivot_support_is_sparse(nsupp, n)
+    if sparse
+        s = 0
+        @inbounds for k in 1:nsupp
+            q = sites[k]
+            s += genws[q] * genws[n+q]
+        end
+        xzws = mod(s, d)
+    else
+        xzws = dot_xz_ws(genws, n, d)
+    end
+    kws = tab.storephase ? genws[2n+1] : 0
+    inv2 = d == 2 ? 0 : tab.inversemod(2, d)
+    ninv = mod(-tab.inversemod(comm0, d), d)
+    return _PivotUpdate(nsupp, sparse, ninv, kws, xzws, inv2)
+end
+
+# g_col <- g_col * g_p^a for the prepared pivot. Same phase arithmetic as
+# `mul_col_by_workspace_power!`, with the pivot terms read from `pu`; for a
+# `DestabilizerTableau` it also patches `xdotz_cache[col]` from
+#     (x + a x_p)·(z + a z_p) = x·z + a (x_p·z + x·z_p) + a² x_p·z_p.
+@inline function _absorb_pivot_power!(tab::AbstractTableau, col::Int, a::Int, pu::_PivotUpdate)
+    a == 0 && return nothing
+    stab = tab.stab
+    genws = tab.generator_workspace
+    n = tab.n
+    d = tab.d
+    # Only a DestabilizerTableau keeps `xdotz_cache` valid, so only it patches it.
+    track = tab isa DestabilizerTableau
+    sites = tab.zacc_workspace
+
+    # cb = x_p·z_col and cz = x_col·z_p, both on the old column.
+    cb = 0
+    cz = 0
+    if pu.sparse
+        if track
+            @inbounds for k in 1:pu.nsupp
+                q = sites[k]
+                cb += genws[q] * stab[n+q, col]
+                cz += stab[q, col] * genws[n+q]
+            end
+        elseif tab.storephase
+            @inbounds for k in 1:pu.nsupp
+                q = sites[k]
+                cb += genws[q] * stab[n+q, col]
+            end
+        end
+    else
+        if track
+            @turbo for q in 1:n
+                cb += genws[q] * stab[n+q, col]
+                cz += stab[q, col] * genws[n+q]
+            end
+        elseif tab.storephase
+            @turbo for q in 1:n
+                cb += genws[q] * stab[n+q, col]
+            end
+        end
+    end
+    cb = mod(cb, d)
+
+    if tab.storephase
+        prow = 2n + 1
+        if d == 2
+            # a == 1; the cross term enters i^k as 2·(x_p·z_col).
+            stab[prow, col] = mod(stab[prow, col] + pu.kws + 2 * cb, 4)
+        else
+            k_power = mod(a * pu.kws + binom2_mod_oddprime(a, d, pu.inv2) * pu.xzws, d)
+            stab[prow, col] = mod(stab[prow, col] + k_power + mod(a * cb, d), d)
+        end
+    end
+
+    if track
+        cache = tab.xdotz_cache
+        lin = mod(a * mod(cb + mod(cz, d), d), d)
+        quad = mod(mod(a * a, d) * pu.xzws, d)
+        cache[col] = mod(cache[col] + lin + quad, d)
+    end
+
+    # genws is a separate array from stab, and its contents were copied out of
+    # a tableau column, so they are reduced. Outside the pivot support genws is
+    # zero, so the site-restricted update gives the dense result.
+    dst = view(stab, 1:(2n), col)
+    src = view(genws, 1:(2n))
+    if pu.sparse
+        addmul_mod_sites!(dst, src, sites, pu.nsupp, n, a, d)
+    else
+        addmul_mod!(dst, src, a, d)
+    end
+    return nothing
+end
+
 
 ############################################
 # Projective measurement (mixed-state)     #
@@ -215,6 +362,7 @@ end
     _pivot::Int,
     _comm0::Int,
     _m::Int,
+    _pu::_PivotUpdate,
 )
     return nothing
 end
@@ -224,6 +372,7 @@ end
     pivot::Int,
     comm0::Int,
     m::Int,
+    pu::_PivotUpdate,
 )
     n = tab.n
     d = tab.d
@@ -245,10 +394,21 @@ end
 
     @inbounds for j in 1:m
         j == pivot && continue
-        t = mod(_symplectic_col_col_support(tab.destab, j, tab.stab, pivot, n, supp, nsupp), d)
+        traw = _symplectic_col_col_support(tab.destab, j, tab.stab, pivot, n, supp, nsupp)
+        traw == 0 && continue
+        t = mod(traw, d)
         t == 0 && continue
         # j != pivot (guarded above), so these are disjoint columns of destab.
-        submul_mod!(view(tab.destab, 1:(2n), j), view(tab.destab, 1:(2n), pivot), t, d)
+        # The new pivot dual is a multiple of the old pivot generator, so it
+        # vanishes outside that generator's sites, which `pu` recorded in
+        # zacc_workspace.
+        dst = view(tab.destab, 1:(2n), j)
+        src = view(tab.destab, 1:(2n), pivot)
+        if pu.sparse
+            submul_mod_sites!(dst, src, tab.zacc_workspace, pu.nsupp, n, t, d)
+        else
+            submul_mod!(dst, src, t, d)
+        end
     end
 
     return nothing
@@ -472,6 +632,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
     comm0 = 0  # commutation with the first non-commuting generator
     pivot = 0
+    pu = _PivotUpdate(0, false, 0, 0, 0, 0)
 
     # Dot products with unreduced exponents can overflow. A dense operand lives
     # in res_workspace, which nothing in this loop writes; the commuting branch
@@ -480,8 +641,12 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
     for i in 1:m
 
-        # commutator of generator i with the operator
-        commutator = mod(commutation_col(tab.stab, i, opc), d)
+        # commutator of generator i with the operator; most generators of a
+        # local state miss the operator's support entirely, and a zero dot
+        # needs no reduction
+        craw = commutation_col(tab.stab, i, opc)
+        craw == 0 && continue
+        commutator = mod(craw, d)
 
         ### case a: if they commute we continue
         commutator == 0 && continue
@@ -495,10 +660,9 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
             # The outcome is random; draw it before anything in tab changes.
             t = _random_outcome(rng, outcome, d)
 
-            # store generator i in workspace and then replace it by the operator
-            @turbo for j in eachindex(tab.generator_workspace)
-                tab.generator_workspace[j] = tab.stab[j, i]
-            end
+            # store generator i in workspace, with everything the later
+            # generators need from it, and then replace it by the operator
+            pu = _prepare_pivot_update(tab, i, commutator)
 
             # replace generator i by op (phase-aware if storephase=true)
             set_operator!(tab, i, op)
@@ -516,10 +680,10 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
         else
             # multiply generator i by the (generator that we replaced)^(a)
             # where a = mod(-commutator * invmod(comm0, d), d)
-            # this ensures that the new generator commutes with the operator
-            a = mod(-commutator * tab.inversemod(comm0, d), d)
-            mul_col_by_workspace_power!(tab, i, a)
-            _on_noncommuting_col_updated!(tab, i)
+            # this ensures that the new generator commutes with the operator;
+            # the update also keeps xdotz_cache[i] current.
+            a = mod(commutator * pu.ninv, d)
+            _absorb_pivot_power!(tab, i, a, pu)
         end
     end
 
@@ -529,7 +693,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     # and `t` is the returned measurement result.        #
     ######################################################
     if comm0 != 0
-        _after_noncommuting_measurement!(tab, pivot, comm0, m)
+        _after_noncommuting_measurement!(tab, pivot, comm0, m, pu)
         tab.iscanonical = false
         return t
     end

@@ -107,6 +107,14 @@ register_rank_group!(SUITE, (2, 3, 31),
                      PROFILE == "smoke" ? (8,) :
                      PROFILE == "ci" ? (256,) : (256, 1024, 2048))
 
+# Random-outcome measurements on a monitored-circuit state. The sizes sit next
+# to powers of two rather than on them: a column stride that is a multiple of
+# 4 KiB adds a cache-aliasing penalty of its own (see CLAUDE.md), which would
+# mix into a comparison of the measurement kernel.
+register_monitored_measure_group!(SUITE, TYPES, (2, 3, 31),
+                                  PROFILE == "smoke" ? (8,) :
+                                  PROFILE == "ci" ? (254,) : (254, 1022))
+
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own
 # regression tracker; comparing probe rows against the matching spine row in
