@@ -313,7 +313,7 @@ end
         xz = mod.(stabilizer_matrix(D)[1:(2n), :] * rand(rng, 0:1, n), 2)
         CM.coeffs_from_generators!(D, GeneralPauli(xz, 0))
         for T in (Int32, Int64)
-            CM._copy_generator_rows!(S.bit_workspace, stabilizer_matrix(S), n, n)
+            CM._copy_generator_rows!(S.bit_workspace, CM._stab(S), n)
             c = zeros(Int, n)
             rank = CM._solve_generator_rows!(S.bit_workspace, copy(xz), zeros(Int, n), c,
                                              zeros(T, 2n), n, n)
@@ -356,7 +356,7 @@ end
             m < 0 && continue
             S.m = m
             ws = ws_of(S)
-            CM._copy_generator_rows!(ws, stabilizer_matrix(S), n, m)
+            CM._copy_generator_rows!(ws, CM._stab(S), m)
             h = size(ws, 1) >> 1
             for q in 1:n, j in 1:m
                 if d == 2

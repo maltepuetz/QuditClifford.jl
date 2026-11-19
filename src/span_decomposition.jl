@@ -40,7 +40,7 @@ end
     n = tab.n
     m = tab.m
     d = tab.d
-    destab = tab.destab
+    destab = _destab(tab)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -52,12 +52,14 @@ end
     set_operator!(opvec, tab, op)
 
     @inbounds for j in 1:m
+        dx = _xgen(destab, j)
+        dz = _zgen(destab, j)
         coeff = 0
         @turbo for q in 1:n
-            coeff += destab[q, j] * opvec[n + q]
+            coeff += dx[q] * opvec[n + q]
         end
         @turbo for q in 1:n
-            coeff -= destab[n + q, j] * opvec[q]
+            coeff -= dz[q] * opvec[q]
         end
         cvec[j] = mod(coeff, d)
     end
@@ -72,9 +74,8 @@ end
     zs::NTuple{D,Int},
 ) where D
     m = tab.m
-    n = tab.n
     d = tab.d
-    destab = tab.destab
+    destab = _destab(tab)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -85,8 +86,8 @@ end
         coeff = 0
         @simd for i in 1:D
             q = qudits[i]
-            coeff += destab[q, j] * zs[i]
-            coeff -= destab[n + q, j] * xs[i]
+            coeff += _xget(destab, q, j) * zs[i]
+            coeff -= _zget(destab, q, j) * xs[i]
         end
         cvec[j] = mod(coeff, d)
     end
@@ -142,14 +143,13 @@ where `c_j` are taken from `tab.c_workspace` and `g_j` are active stabilizer gen
 
     d = tab.d
     m = tab.m
-    n = tab.n
     cvec = tab.c_workspace
-    stab = tab.stab
+    stab = _stab(tab)
 
     @inbounds for j in 1:m
         aj = cvec[j]
         aj == 0 && continue
-        submul_mod!(view(res, 1:(2n)), view(stab, 1:(2n), j), aj, d)
+        _vec_submul!(res, stab, j, aj, d)
     end
     return res
 end
@@ -187,10 +187,10 @@ where `g_j` are active stabilizer generators.
     n = tab.n
     m = tab.m
     d = tab.d
-    stab = tab.stab
+    stab = _stab(tab)
     tab.storephase || return 0
 
-    prow = 2n + 1
+    phase = _phase(tab)
     d_phase = phase_modulus(d)
 
     cvec = tab.c_workspace
@@ -205,16 +205,13 @@ where `g_j` are active stabilizer generators.
             aj = cvec[j]
             aj == 0 && continue
 
-            cross = 0
-            @turbo for q in 1:n
-                cross += stab[q, j] * zacc[q]
-            end
-            cross = cross & 1
+            cross = dot_xz_col_vs_zacc(stab, j, zacc, d)
 
-            kacc = mod(kacc + stab[prow, j] + 2 * cross, d_phase)
+            kacc = mod(kacc + phase[j] + 2 * cross, d_phase)
 
+            zj = _zgen(stab, j)
             @inbounds @simd for q in 1:n
-                zacc[q] = (zacc[q] + stab[n+q, j]) & 1
+                zacc[q] = (zacc[q] + zj[q]) & 1
             end
         end
         return kacc
@@ -229,16 +226,18 @@ where `g_j` are active stabilizer generators.
             aj = mod(cvec[j], d)
             aj == 0 && continue
 
-            xdotz_j = cached ? xdotz_cache[j] : dot_xz_col(stab, n, j, d)
-            kpow = mod(aj * stab[prow, j] + binom2_mod_oddprime(aj, d, inv2) * xdotz_j, d_phase)
+            xdotz_j = cached ? xdotz_cache[j] : dot_xz_col(stab, j, d)
+            kpow = mod(aj * phase[j] + binom2_mod_oddprime(aj, d, inv2) * xdotz_j, d_phase)
 
-            cross_base = dot_xz_col_vs_zacc(stab, n, j, zacc, d)
+            cross_base = dot_xz_col_vs_zacc(stab, j, zacc, d)
             cross = mod(aj * cross_base, d)
 
             kacc = mod(kacc + kpow + cross, d_phase)
 
-            # zacc[1:n] accumulates the Z half of column j, i.e. stab rows n+1:2n.
-            addmul_mod!(view(zacc, 1:n), view(stab, (n+1):(2n), j), aj, d)
+            # zacc is a separate vector from the generator block, so the
+            # destination and source cannot alias.
+            # zacc[1:n] accumulates the Z half of generator j.
+            addmul_mod!(view(zacc, 1:n), _zgen(stab, j), aj, d)
         end
         return kacc
     end
@@ -279,10 +278,12 @@ end
 # there but 2.6x slower at n = 2048.
 function _copy_generator_rows!(
     ws::AbstractMatrix{T},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
 ) where T<:Union{UInt8,Int}
+    n = _nq(b)
+    sx = b.x
+    sz = b.z
     h = size(ws, 1) >> 1
     (m <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
         "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
@@ -292,8 +293,8 @@ function _copy_generator_rows!(
             q1 = min(q0 + 7, n)
             for j in j0:j1
                 @simd for q in q0:q1
-                    ws[j, q] = stab[q, j] % T
-                    ws[h + j, q] = stab[n + q, j] % T
+                    ws[j, q] = sx[q, j] % T
+                    ws[h + j, q] = sz[q, j] % T
                 end
             end
         end
@@ -307,10 +308,12 @@ end
 # the 64 generators of one word, 128 sites at a time.
 function _copy_generator_rows!(
     ws::AbstractMatrix{UInt64},
-    stab::AbstractMatrix{Int},
-    n::Int,
+    b::_GMBlock,
     m::Int,
 )
+    n = _nq(b)
+    sx = b.x
+    sz = b.z
     h = size(ws, 1) >> 1
     nw = cld(m, 64)
     (nw <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
@@ -326,8 +329,8 @@ function _copy_generator_rows!(
             for t in 1:min(64, m - j0)
                 j = j0 + t
                 @simd for q in q0:q1
-                    ws[w, q] |= (stab[q, j] % UInt64) << (t - 1)
-                    ws[h + w, q] |= (stab[n + q, j] % UInt64) << (t - 1)
+                    ws[w, q] |= (sx[q, j] % UInt64) << (t - 1)
+                    ws[h + w, q] |= (sz[q, j] % UInt64) << (t - 1)
                 end
             end
         end
@@ -541,7 +544,7 @@ end
 `StabilizerTableau` that is not canonical solves for the coefficients on a
 copy in its rank workspace for `d` (see `src/rank_workspaces.jl`) instead of
 canonicalizing in place. The coefficients of an in-span `op` are unique, so
-they agree with the canonicalizing path's; `tab.stab` and `iscanonical` are
+they agree with the canonicalizing path's; the stabilizer generators and `iscanonical` are
 left as they were. Writes `c_workspace`, `res_workspace`, `zacc_workspace`
 and, at `d = 2`, `generator_workspace`, whose `2n + storephase` entries hold
 the `cld(m, 64) * 8 ÷ sizeof(Int) <= 2n` coefficient bit words.
@@ -553,6 +556,7 @@ function _span_coeffs_keep_basis!(tab::StabilizerTableau, op)
     n = tab.n
     m = tab.m
     d = tab.d
+    stab = _stab(tab)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -564,15 +568,15 @@ function _span_coeffs_keep_basis!(tab::StabilizerTableau, op)
 
     if d == 2
         ws = tab.bit_workspace
-        _copy_generator_rows!(ws, tab.stab, n, m)
+        _copy_generator_rows!(ws, stab, m)
         _solve_generator_rows!(ws, opv, lead, cvec, tab.generator_workspace, n, m)
     elseif _uses_narrow_rank(d)
         ws = tab.narrow_workspace
-        _copy_generator_rows!(ws, tab.stab, n, m)
+        _copy_generator_rows!(ws, stab, m)
         _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
     else
         ws = tab.workspace
-        _copy_generator_rows!(ws, tab.stab, n, m)
+        _copy_generator_rows!(ws, stab, m)
         _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
     end
     return cvec
