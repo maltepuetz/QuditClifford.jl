@@ -100,27 +100,33 @@ and `n = 256` in `ci`. The `monitored` and `purifying` groups run the same
 three `d` at `n = 8` in `smoke` and `n = 254` in `ci`.
 
 `d = 5` is in `ci` rather than only in `full` because it is the smallest prime
-that reaches the Barrett tier in `src/modular.jl`; `d = 2` and `d = 3` take the
-multiply-free tiers exclusively. Without a `d = 5` row, no pull-request
-benchmark exercises that tier, and a Barrett guard that began rejecting every
-`d` would show up as no change rather than as a regression.
+whose dense leaves take a general multiplier in `src/modular.jl`: Shoup
+multiplication in `UInt8` lanes for the generator updates of the default
+`UInt8` storage, and the Barrett tier for the residual that `expect!` and a
+deterministic `measure!` compute against an `Int` workspace. `d = 2` and
+`d = 3` take the multiply-free tiers exclusively, so without a `d = 5` row no
+pull-request benchmark exercises those tiers.
 
 Only leaves built on a state with general residues reach it. Every `micro` leaf
 starts from a constructor, whose tableau entries are just `0`, `1` and `d-1`, so
 its multipliers are always `1` or `d-1` and take the multiply-free tiers at every
-`d` -- the `:ghz` `canonicalize!` rows make zero Barrett calls even at `d = 131`.
-The `midcircuit` and `dense` leaves at `d = 5` and the `modulus` leaves at
-`d = 443` hold general residues and do reach it.
+`d` -- the `:ghz` `canonicalize!` rows make no general-multiplier calls even at
+`d = 131`. The `midcircuit` and `dense` leaves at `d = 5` and the `modulus`
+leaves hold general residues and do reach them.
 
-The divide-twice fallback is reached by the `probe/fallback-prime` rows and by
-the `modulus` leaves at `d = 131` and `d = 1031`, except `entropy/half` at
-`d = 131`: every rank elimination with `d <= 255` runs in a UInt8 workspace
-outside `src/modular.jl`. `d = 131` is rejected by the
-Barrett guard and `d = 1031` lies above its table; either is necessary but not
-sufficient, for the same reason as above. `n = 16` in the fallback probe is
-there because the fallback's per-call tier dispatch is a fixed cost that only
-shows on short columns. `test_workloads.jl` counts the tier every `dense` and
-`modulus` leaf reaches, and replays the fallback probe's elimination.
+Shoup multiplication in widened (`UInt16`) lanes, for `UInt8` entries above
+`d = 128`, is reached by the `probe/fallback-prime` rows and the `modulus`
+leaves at `d = 131`; `UInt16` lanes by the `modulus` leaves at `d = 443` and
+`d = 1031`. The divide-twice fallback for the `Int` residual is reached by the
+`expect!` and deterministic `measure!` leaves at `d = 131` and `d = 1031`
+(`d = 131` is rejected by the Barrett guard and `d = 1031` lies above its
+table), and the Barrett tier by the same leaves at `d = 5` and `d = 443`. No
+leaf stores `Int` entries and reaches the `Int` primitives: the only `d` that
+stores `Int` by default is the overflow-safe group's, whose Clifford leaves
+make no calls into `src/modular.jl`. `n = 16` in the fallback probe is there
+because the per-call tier dispatch is a fixed cost that only shows on short
+columns. `test_workloads.jl` counts the tier every `dense` and `modulus` leaf
+reaches, and replays the fallback probe's elimination.
 
 ## Coverage
 

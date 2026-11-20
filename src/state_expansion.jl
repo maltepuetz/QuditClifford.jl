@@ -42,7 +42,7 @@ end
     gx = G.x
     acc = 0
     @turbo for q in 1:n
-        acc += xz[n+q] * gx[q, j]
+        acc += xz[n+q] * Int(gx[q, j])
     end
     return acc
 end

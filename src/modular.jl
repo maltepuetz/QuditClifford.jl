@@ -24,6 +24,12 @@
 # Phase rows use a different modulus (`phase_modulus`) and are deliberately not
 # handled here.
 
+# Element types of the X and Z blocks of a tableau (the second type parameter
+# of `StabilizerTableau` and `DestabilizerTableau`): `Int` for every d, and the
+# two unsigned types for the d they hold (see `_eltype_admissible`).
+const _NarrowEltype = Union{UInt8, UInt16}
+const _StorageEltype = Union{UInt8, UInt16, Int}
+
 ########################
 # Barrett reduction    #
 ########################
@@ -189,54 +195,58 @@ end
 # are distinct and lie in `1:n`, which is checked by nobody since the loop runs
 # under `@inbounds`. The gathered indices rule out `@turbo`, so the tier is
 # chosen once and the loop body is scalar.
-@inline function addmul_mod_sites!(dstx::AbstractVector{Int}, dstz::AbstractVector{Int},
-                                   srcx::AbstractVector{Int}, srcz::AbstractVector{Int},
+#
+# `dst` and `src` may be any storage element types `T` and `S`: entries are
+# read as `Int`, the tiers run in `Int` arithmetic, and results are stored as
+# `T`.
+@inline function addmul_mod_sites!(dstx::AbstractVector{T}, dstz::AbstractVector{T},
+                                   srcx::AbstractVector{S}, srcz::AbstractVector{S},
                                    sites::AbstractVector{Int}, nsites::Int,
-                                   a::Int, d::Int)
+                                   a::Int, d::Int) where {T<:_StorageEltype, S<:_StorageEltype}
     a == 0 && return nothing
     if a == 1
         @inbounds for k in 1:nsites
             q = sites[k]
-            r = dstx[q] + srcx[q]
-            dstx[q] = r - ifelse(r >= d, d, 0)
-            r = dstz[q] + srcz[q]
-            dstz[q] = r - ifelse(r >= d, d, 0)
+            r = Int(dstx[q]) + Int(srcx[q])
+            dstx[q] = (r - ifelse(r >= d, d, 0)) % T
+            r = Int(dstz[q]) + Int(srcz[q])
+            dstz[q] = (r - ifelse(r >= d, d, 0)) % T
         end
     elseif a == d - 1
         @inbounds for k in 1:nsites
             q = sites[k]
-            r = dstx[q] - srcx[q]
-            dstx[q] = r + ifelse(r < 0, d, 0)
-            r = dstz[q] - srcz[q]
-            dstz[q] = r + ifelse(r < 0, d, 0)
+            r = Int(dstx[q]) - Int(srcx[q])
+            dstx[q] = (r + ifelse(r < 0, d, 0)) % T
+            r = Int(dstz[q]) - Int(srcz[q])
+            dstz[q] = (r + ifelse(r < 0, d, 0)) % T
         end
     elseif _barrett_valid(d)
         M = _barrett_mul(d)
         @inbounds for k in 1:nsites
             q = sites[k]
-            t = a * srcx[q]
+            t = a * Int(srcx[q])
             t = t - ((t * M) >> _BARRETT_K) * d
-            r = dstx[q] + t
-            dstx[q] = r - ifelse(r >= d, d, 0)
-            t = a * srcz[q]
+            r = Int(dstx[q]) + t
+            dstx[q] = (r - ifelse(r >= d, d, 0)) % T
+            t = a * Int(srcz[q])
             t = t - ((t * M) >> _BARRETT_K) * d
-            r = dstz[q] + t
-            dstz[q] = r - ifelse(r >= d, d, 0)
+            r = Int(dstz[q]) + t
+            dstz[q] = (r - ifelse(r >= d, d, 0)) % T
         end
     else
         @inbounds for k in 1:nsites
             q = sites[k]
-            dstx[q] = mod(dstx[q] + mod(a * srcx[q], d), d)
-            dstz[q] = mod(dstz[q] + mod(a * srcz[q], d), d)
+            dstx[q] = mod(Int(dstx[q]) + mod(a * Int(srcx[q]), d), d) % T
+            dstz[q] = mod(Int(dstz[q]) + mod(a * Int(srcz[q]), d), d) % T
         end
     end
     return nothing
 end
 
-@inline function submul_mod_sites!(dstx::AbstractVector{Int}, dstz::AbstractVector{Int},
-                                   srcx::AbstractVector{Int}, srcz::AbstractVector{Int},
+@inline function submul_mod_sites!(dstx::AbstractVector{T}, dstz::AbstractVector{T},
+                                   srcx::AbstractVector{S}, srcz::AbstractVector{S},
                                    sites::AbstractVector{Int}, nsites::Int,
-                                   a::Int, d::Int)
+                                   a::Int, d::Int) where {T<:_StorageEltype, S<:_StorageEltype}
     a == 0 && return nothing
     # dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d.
     return addmul_mod_sites!(dstx, dstz, srcx, srcz, sites, nsites, d - a, d)
@@ -306,6 +316,272 @@ end
             @inbounds @simd for i in eachindex(dst)
                 dst[i] = mod(a * dst[i], d)
             end
+        end
+    end
+    return dst
+end
+
+##########################################################
+# UInt8 and UInt16 vectors: the same four primitives     #
+##########################################################
+#
+# Same contract as the `Int` methods above: reduced entries and multiplier,
+# `d <= typemax(E)`, non-aliasing `dst` and `src` with identical axes (a
+# `@boundscheck`). Tiers, resolved once per call:
+#   a == 0    nothing to do (the writers write zeros)
+#   d == 2    XOR for the accumulating pair (a is then 1)
+#   a == 1    one add or subtract with a correction by d
+#   a == d-1  the mirrored form: -s == d - s (mod d), and d - s lies in [1, d]
+#   otherwise Shoup multiplication
+# The `a == 1` and `a == d-1` tiers never form x + s: an add is written as
+# x - (d - s), so no tier carries out of `E` even for d close to typemax(E).
+#
+# Shoup multiplication, with B = 8 sizeof(E) and q = floor(a 2^B / d)
+# (`_shoup_q`): for every s < 2^B, floor(s q / 2^B) is floor(a s / d) or one
+# less, so p = a s - floor(s q / 2^B) d lies in [0, 2d). s q < 2^(2B) is formed
+# in widen(E). The rest runs in lane type L: `E` itself when 2d <= 2^B, where
+# a s and floor(s q / 2^B) d wrap in `E` but their difference p < 2^B is exact;
+# otherwise widen(E), where both products stay below 2^(2B).
+# The final reductions use unsigned wraparound instead of a compare: for
+# 0 <= u < 2d, min(u, u - d) is u mod d, and for x, p in [0, d), with
+# t = x - p, min(t, t + d) is (x - p) mod d. Both need 2d <= 2^B in L.
+
+# floor(a 2^B / d) for B = 8 sizeof(E), formed in UInt64 so that no word size
+# overflows. Requires 0 <= a < d <= typemax(E), so the quotient is below 2^B.
+@inline _shoup_q(::Type{E}, a::Int, d::Int) where {E<:_NarrowEltype} =
+    ((UInt64(a) << (8 * sizeof(E))) ÷ UInt64(d)) % widen(E)
+
+# The lane type of the Shoup tier: `E` when 2d <= 2^B, else widen(E).
+@inline _shoup_in_eltype(::Type{E}, d::Int) where {E<:_NarrowEltype} =
+    2d <= Int(typemax(E)) + 1
+
+# p = a s mod d for one entry s < 2^B, in lane type L; see the Shoup notes.
+# Before the final min, p lies in [0, 2d).
+@inline function _shoup_mod(s::E, aL::L, q, dL::L) where {E<:_NarrowEltype, L}
+    h = ((widen(E)(s) * q) >> (8 * sizeof(E))) % L
+    p = aL * L(s) - h * dL
+    return min(p, p - dL)
+end
+
+@inline function _submul_shoup!(dst::AbstractVector{E}, src::AbstractVector{E},
+                                a::Int, d::Int, ::Type{L}) where {E<:_NarrowEltype, L}
+    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
+    @inbounds @simd for i in eachindex(dst)
+        p = _shoup_mod(src[i], aL, q, dL)       # in [0, d)
+        t = L(dst[i]) - p                       # x - p, wrapped around when x < p
+        dst[i] = min(t, t + dL) % E
+    end
+    return dst
+end
+
+@inline function _addmul_shoup!(dst::AbstractVector{E}, src::AbstractVector{E},
+                                a::Int, d::Int, ::Type{L}) where {E<:_NarrowEltype, L}
+    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
+    @inbounds @simd for i in eachindex(dst)
+        p = _shoup_mod(src[i], aL, q, dL)       # in [0, d)
+        u = L(dst[i]) + p                       # in [0, 2d)
+        dst[i] = min(u, u - dL) % E
+    end
+    return dst
+end
+
+@inline function _mulcopy_shoup!(dst::AbstractVector{E}, src::AbstractVector{E},
+                                 a::Int, d::Int, ::Type{L}) where {E<:_NarrowEltype, L}
+    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = _shoup_mod(src[i], aL, q, dL) % E
+    end
+    return dst
+end
+
+@inline function _scale_shoup!(dst::AbstractVector{E}, a::Int, d::Int,
+                               ::Type{L}) where {E<:_NarrowEltype, L}
+    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
+    @inbounds @simd for i in eachindex(dst)
+        dst[i] = _shoup_mod(dst[i], aL, q, dL) % E
+    end
+    return dst
+end
+
+@inline function submul_mod!(dst::AbstractVector{E}, src::AbstractVector{E},
+                             a::Int, d::Int) where {E<:_NarrowEltype}
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
+    a == 0 && return dst
+    dd = d % E
+    if d == 2
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = xor(dst[i], src[i])
+        end
+    elseif a == 1
+        @inbounds @simd for i in eachindex(dst)
+            x = dst[i]
+            s = src[i]
+            dst[i] = (x - s) + ifelse(x < s, dd, zero(E))
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            x = dst[i]
+            t = dd - src[i]                     # in [1, d]
+            dst[i] = (x - t) + ifelse(x < t, dd, zero(E))
+        end
+    elseif _shoup_in_eltype(E, d)
+        _submul_shoup!(dst, src, a, d, E)
+    else
+        _submul_shoup!(dst, src, a, d, widen(E))
+    end
+    return dst
+end
+
+@inline function addmul_mod!(dst::AbstractVector{E}, src::AbstractVector{E},
+                             a::Int, d::Int) where {E<:_NarrowEltype}
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("addmul_mod!", dst, src)
+    a == 0 && return dst
+    dd = d % E
+    if d == 2
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = xor(dst[i], src[i])
+        end
+    elseif a == 1
+        @inbounds @simd for i in eachindex(dst)
+            x = dst[i]
+            t = dd - src[i]                     # in [1, d]
+            dst[i] = (x - t) + ifelse(x < t, dd, zero(E))
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            x = dst[i]
+            s = src[i]
+            dst[i] = (x - s) + ifelse(x < s, dd, zero(E))
+        end
+    elseif _shoup_in_eltype(E, d)
+        _addmul_shoup!(dst, src, a, d, E)
+    else
+        _addmul_shoup!(dst, src, a, d, widen(E))
+    end
+    return dst
+end
+
+@inline function mulcopy_mod!(dst::AbstractVector{E}, src::AbstractVector{E},
+                              a::Int, d::Int) where {E<:_NarrowEltype}
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("mulcopy_mod!", dst, src)
+    dd = d % E
+    if a == 0
+        fill!(dst, zero(E))
+    elseif a == 1
+        copyto!(dst, src)
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            s = src[i]
+            dst[i] = ifelse(s == zero(E), zero(E), dd - s)
+        end
+    elseif _shoup_in_eltype(E, d)
+        _mulcopy_shoup!(dst, src, a, d, E)
+    else
+        _mulcopy_shoup!(dst, src, a, d, widen(E))
+    end
+    return dst
+end
+
+@inline function scale_mod!(dst::AbstractVector{E}, a::Int, d::Int) where {E<:_NarrowEltype}
+    a == 1 && return dst
+    dd = d % E
+    if a == 0
+        fill!(dst, zero(E))
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            s = dst[i]
+            dst[i] = ifelse(s == zero(E), zero(E), dd - s)
+        end
+    elseif _shoup_in_eltype(E, d)
+        _scale_shoup!(dst, a, d, E)
+    else
+        _scale_shoup!(dst, a, d, widen(E))
+    end
+    return dst
+end
+
+##############################################
+# dst and src of different storage types     #
+##############################################
+# Chosen only when the element types differ; equal types take the methods
+# above. Entries are read as `Int`, every tier runs in `Int` arithmetic, and
+# results are stored as `eltype(dst)`. Tiers, resolved once per call, as for
+# the `Int` methods: a == 0, a == 1 and a == d-1 (no multiply; sums and
+# differences of two reduced entries lie in (-d, 2d)), Barrett where
+# `_barrett_valid(d)` (a*s <= (d-1)^2, the range the constant is validated
+# for), and otherwise one `mod` of a value within (d-1) + (d-1)^2 of zero,
+# inside `Int` under the package-wide envelope
+# `max(n, 2) * (d-1)^2 <= typemax(Int)`. `residual_from_coeffs!` subtracts
+# narrow generators from the `Int` `res_workspace` through `submul_mod!`.
+
+# dst .= mod.(dst .+ a .* src, d) for 0 < a < d.
+@inline function _addmul_mixed!(dst::AbstractVector{<:_StorageEltype},
+                                src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+    T = eltype(dst)
+    if a == 1
+        @inbounds @simd for i in eachindex(dst)
+            u = Int(dst[i]) + Int(src[i])               # in [0, 2d - 2]
+            dst[i] = (u - ifelse(u >= d, d, 0)) % T
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            u = Int(dst[i]) - Int(src[i])               # in [-(d - 1), d - 1]
+            dst[i] = (u + ifelse(u < 0, d, 0)) % T
+        end
+    elseif _barrett_valid(d)
+        M = _barrett_mul(d)
+        @inbounds @simd for i in eachindex(dst)
+            t = a * Int(src[i])                         # in [0, (d - 1)^2]
+            u = Int(dst[i]) + (t - ((t * M) >> _BARRETT_K) * d)   # in [0, 2d - 2]
+            dst[i] = (u - ifelse(u >= d, d, 0)) % T
+        end
+    else
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = mod(Int(dst[i]) + a * Int(src[i]), d) % T
+        end
+    end
+    return dst
+end
+
+@inline function addmul_mod!(dst::AbstractVector{<:_StorageEltype},
+                             src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("addmul_mod!", dst, src)
+    a == 0 && return dst
+    return _addmul_mixed!(dst, src, a, d)
+end
+
+# dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d.
+@inline function submul_mod!(dst::AbstractVector{<:_StorageEltype},
+                             src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
+    a == 0 && return dst
+    return _addmul_mixed!(dst, src, d - a, d)
+end
+
+@inline function mulcopy_mod!(dst::AbstractVector{<:_StorageEltype},
+                              src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("mulcopy_mod!", dst, src)
+    T = eltype(dst)
+    if a == 0
+        fill!(dst, zero(T))
+    elseif a == 1
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = Int(src[i]) % T
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            s = Int(src[i])
+            dst[i] = ifelse(s == 0, 0, d - s) % T
+        end
+    elseif _barrett_valid(d)
+        M = _barrett_mul(d)
+        @inbounds @simd for i in eachindex(dst)
+            t = a * Int(src[i])                         # in [0, (d - 1)^2]
+            dst[i] = (t - ((t * M) >> _BARRETT_K) * d) % T
+        end
+    else
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = mod(a * Int(src[i]), d) % T
         end
     end
     return dst

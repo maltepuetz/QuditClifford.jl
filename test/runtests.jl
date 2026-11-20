@@ -12,6 +12,7 @@ using Aqua
     # Functional tests split by topic for clarity.
     include("modular.jl")
     include("tableau_storage.jl")
+    include("storage_types.jl")
     include("operators.jl")
     include("measurements.jl")
     include("measurement_kernel.jl")

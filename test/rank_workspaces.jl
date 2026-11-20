@@ -2,8 +2,8 @@ using QuditClifford
 using Test
 using Random
 
-# The rank-based quantities eliminate in a UInt8 workspace for d <= 255 and on
-# bit-packed words for d = 2, and fall back to the Int workspace above 255.
+# The rank-based quantities eliminate on bit-packed words for d = 2 and, for
+# d >= 3, in a workspace of the tableau's storage element type.
 # Everything here compares them with a plain reference that reduces with `mod`
 # after every operation and never touches the tableau's workspaces.
 
@@ -119,24 +119,31 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                              sort(randperm(rng, n)[1:rand(rng, 0:n)]),
                              sort(randperm(rng, n)[1:rand(rng, 0:n)])])
 
+rw_types(d) = filter(E -> RW._eltype_admissible(E, d), (UInt8, UInt16, Int))
+
 @testset "Narrow and bit-packed rank workspaces" begin
     @testset "Workspace shapes" begin
         for TT in (StabilizerTableau, DestabilizerTableau), n in (1, 5, 64, 65)
-            t2 = TT(2, n)
-            @test size(t2.narrow_workspace) == (0, 0)
-            @test size(t2.bit_workspace) == (cld(2n, 64) + 2, n)
-            t3 = TT(251, n)
-            @test size(t3.narrow_workspace) == (2n, n)
-            @test size(t3.bit_workspace) == (0, 0)
-            t4 = TT(257, n)
-            @test size(t4.narrow_workspace) == (0, 0)
-            @test size(t4.bit_workspace) == (0, 0)
-            c2 = copy(t2)
-            @test size(c2.bit_workspace) == size(t2.bit_workspace)
-            @test c2.bit_workspace !== t2.bit_workspace
-            c3 = copy(t3)
-            @test size(c3.narrow_workspace) == size(t3.narrow_workspace)
-            @test c3.narrow_workspace !== t3.narrow_workspace
+            for E in rw_types(2)
+                t2 = TT(2, n; eltype = E)
+                @test t2.rank_workspace isa Matrix{E}
+                @test size(t2.rank_workspace) == (0, 0)
+                @test size(t2.bit_workspace) == (cld(2n, 64) + 2, n)
+                @test RW._rank_workspace(t2) === t2.bit_workspace
+                c2 = copy(t2)
+                @test size(c2.bit_workspace) == size(t2.bit_workspace)
+                @test c2.bit_workspace !== t2.bit_workspace
+            end
+            for d in (251, 257), E in rw_types(d)
+                t3 = TT(d, n; eltype = E)
+                @test t3.rank_workspace isa Matrix{E}
+                @test size(t3.rank_workspace) == (2n, n)
+                @test size(t3.bit_workspace) == (0, 0)
+                @test RW._rank_workspace(t3) === t3.rank_workspace
+                c3 = copy(t3)
+                @test size(c3.rank_workspace) == size(t3.rank_workspace)
+                @test c3.rank_workspace !== t3.rank_workspace
+            end
         end
     end
 
@@ -148,14 +155,14 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             for a in 1:(d - 1)
                 x = rand(rng, UInt8(0):UInt8(d - 1), length(s))
                 expected = UInt8.(mod.(Int.(x) .- a .* Int.(s), d))
-                @test RW._submul_u8!(copy(x), s, a, d) == expected
+                @test RW.submul_mod!(copy(x), s, a, d) == expected
             end
         end
     end
 
     @testset "rank_fp_cols! agrees across element types, echelon form included" begin
         rng = Xoshiro(7)
-        for d in (2, 3, 5, 7, 31, 127, 131, 251), (rows, cols) in ((1, 1), (6, 4), (9, 13), (40, 33))
+        for d in (2, 3, 5, 7, 31, 127, 131, 251, 257), (rows, cols) in ((1, 1), (6, 4), (9, 13), (40, 33))
             for trial in 1:6
                 inner = rand(rng, 1:min(rows, cols))
                 A = trial <= 3 ? rand(rng, 0:(d - 1), rows, cols) :
@@ -163,13 +170,16 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
                 for pivot_rows in unique((rows, rows ÷ 2, 0))
                     ref, R = rw_colreduce(A, d, pivot_rows)
                     AI = copy(A)
-                    A8 = UInt8.(A)
                     inv = RW.PrecomputedInvMod(d)
                     @test RW.rank_fp_cols!(AI, d, inv, pivot_rows) == ref
-                    @test RW.rank_fp_cols!(A8, d, inv, pivot_rows) == ref
-                    # The columns the callers keep reading are the same for both
-                    # element types and for the reference.
-                    @test AI[:, (ref + 1):end] == Int.(A8[:, (ref + 1):end]) == R[:, (ref + 1):end]
+                    # The columns the callers keep reading are the same for
+                    # every element type and for the reference.
+                    @test AI[:, (ref + 1):end] == R[:, (ref + 1):end]
+                    for E in filter(!=(Int), rw_types(d))
+                        AE = E.(A)
+                        @test RW.rank_fp_cols!(AE, d, inv, pivot_rows) == ref
+                        @test Int.(AE[:, (ref + 1):end]) == R[:, (ref + 1):end]
+                    end
                 end
             end
         end
@@ -375,7 +385,7 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
             expected = entanglement_entropy(tab, [1, 2])
             # A 2-element view into the rank workspace for d, filled with
             # sites 1, 2.
-            ws = d == 2 ? tab.bit_workspace : tab.narrow_workspace
+            ws = RW._rank_workspace(tab)
             ws[1] = 1
             ws[2] = 2
             @test entanglement_entropy(tab, view(ws, 1:2)) == expected
@@ -399,9 +409,9 @@ rw_subsets(rng, n) = unique([Int[], collect(1:n), [1], [n], collect(1:(n ÷ 2)),
         )
         # n = 70 at d = 2 puts the bit-packed row blocks across several words.
         for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31, 257),
-            n in (8, 70), m in (n ÷ 2, n)
+            E in rw_types(d), n in (8, 70), m in (n ÷ 2, n)
             d != 2 && n > 8 && continue
-            tab = TT(d, n)
+            tab = TT(d, n; eltype = E)
             random_state!(Xoshiro(5), tab; m)
             A = [1, 3, 4]
             B = collect(5:2:n)

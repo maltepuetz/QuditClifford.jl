@@ -30,6 +30,27 @@ dependency bump — carries the `skip-changelog` label instead.
   `destabilizer_matrix(tab)`, which return the same generator-major matrices as
   copies. Code that wrote into `tab.stab` should build the tableau from a matrix
   with `StabilizerTableau(d, S)` or `DestabilizerTableau(d, S)` instead.
+- `StabilizerTableau` and `DestabilizerTableau` take a second type parameter,
+  the element type of their stored X and Z exponents
+  (`StabilizerTableau{IM, E}`). `StabilizerTableau{PrecomputedInvMod}` now
+  means `StabilizerTableau{PrecomputedInvMod, E} where E`, which is not a
+  concrete type: a struct field or container declared with it, such as
+  `Vector{StabilizerTableau{PrecomputedInvMod}}`, still accepts every tableau
+  but is no longer concretely typed. Name the element type, as in
+  `StabilizerTableau{PrecomputedInvMod, UInt8}`, where that matters.
+- Tableaux store their generators in `UInt8` for `d ≤ 251` and `UInt16` for
+  `d ≤ 65521` by default, and in `Int` above. Every result is the same `Int`
+  value as before; `eltype = Int` restores the previous storage, but not its
+  speed everywhere: rank-based functions and the deterministic `measure!` on
+  a non-canonical `StabilizerTableau` eliminate in the storage element type,
+  so with `eltype = Int` they are slower than before at `d ≤ 251` (measured
+  at `d = 3` and `31`: entropies 4.6–8.9×, the deterministic `measure!`
+  2.3–6.1×). `copy!` between tableaux of different element types throws an
+  `ArgumentError`.
+- `show` of a tableau prints a `Storage:` line with the layout and element
+  type after the generator count.
+- The internal fields `workspace` and `narrow_workspace` are gone; a tableau
+  holds one rank workspace of its storage element type instead.
 
 ### Added
 
@@ -44,6 +65,12 @@ dependency bump — carries the `skip-changelog` label instead.
   leaves the state as it was. `measure!(tab, op)` forwards with
   `Random.default_rng()`. `dephase!`, `traceout!` and `reset!` draw no random
   numbers and take no RNG.
+- The `eltype` keyword of every `StabilizerTableau` and `DestabilizerTableau`
+  constructor selects the element type of the stored X and Z exponents:
+  `UInt8` (`d ≤ 251`), `UInt16` (`d ≤ 65521`) or `Int` (any `d`). A type too
+  narrow for `d`, or any other type, throws an `ArgumentError`. The precompile
+  workload covers the default types, so the first calls on a tableau built
+  with `eltype = Int` compile.
 
 ### Changed
 
@@ -70,10 +97,11 @@ dependency bump — carries the `skip-changelog` label instead.
   identical outcomes, errors and RNG draws and no allocations. On a
   `StabilizerTableau` that is not canonical it no longer canonicalizes: it
   solves for the operator's coefficients over the generators by elimination on
-  a copy, one bit per entry at `d = 2` and one byte up to `d = 255`, and
-  leaves the generator basis and `iscanonical` as they were. A fixed outcome
-  therefore leaves the tableau unchanged, and an appended generator goes after
-  the existing ones instead of after their canonical form. A canonical tableau
+  a copy, one bit per entry at `d = 2` and one entry of the storage element
+  type otherwise, and leaves the generator basis and `iscanonical` as they
+  were. A fixed outcome therefore leaves the tableau unchanged, and an
+  appended generator goes after the existing ones instead of after their
+  canonical form. A canonical tableau
   still reads the coefficients off its pivot rows, and `expect!` and
   `expect_int!` still canonicalize. On states after 64 monitored layers
   (`p = 0.05` and `0.15`) a fixed-outcome measurement takes 1.5 ms instead of
@@ -123,23 +151,37 @@ dependency bump — carries the `skip-changelog` label instead.
 - The rank eliminations behind `entanglement_entropy`, `entanglement_profile`,
   `entanglement_profile!`, `mutual_information`, `tripartite_information`,
   `conditional_mutual_information`, `entanglement_negativity` and
-  `is_pure(tab; verify = true)` copy the generator rows into a narrow
-  workspace and eliminate there, with identical results and no new
-  allocations. All of them use bit-packed `UInt64` words at `d = 2` and one
-  byte per entry at other `d ≤ 255`. Above 255 the `Int` workspace remains,
-  and its elimination skips the rows that are already zero. At `n = 2048`,
-  the half-chain entropy of a random pure state is 40× faster at `d = 2`, 11×
-  at `d = 3` and 16× at `d = 31`, and its profile 48×, 8× and 11× faster; on
-  a monitored-circuit state with little entanglement the gains are 2.5–12×.
+  `is_pure(tab; verify = true)` copy the generator rows into a workspace and
+  eliminate there, with identical results and no new allocations: bit-packed
+  `UInt64` words at `d = 2`, and entries of the tableau's storage element type
+  otherwise, one byte each for `d ≤ 251` by default. At `n = 2048`, the
+  half-chain entropy of a random pure state is 40× faster at `d = 2`, 11× at
+  `d = 3` and 16× at `d = 31`, and its profile 48×, 8× and 11× faster; on a
+  monitored-circuit state with little entanglement the gains are 2.5–12×.
   At `d = 2` the mutual, tripartite and conditional mutual information of
   random pure and mixed states are 7–18× faster at `n = 512` and 26–40× at
   `n = 2048`, and the negativity 14–19× and 34–63×. At `n = 512` these
-  measures are 4–13× faster for other `d ≤ 255` and 1.1–1.5× at `d = 257`,
-  and `is_pure(tab; verify = true)`, which also checks commutation, is
-  1.2–3.8× faster. Each tableau with `3 ≤ d ≤ 255` holds a new `2n × n` byte
-  workspace, 6 % more memory for a `StabilizerTableau` and 4 % for a
-  `DestabilizerTableau`. One with `d = 2` holds `2n × n` bits plus two words
-  per column instead, 0.8–1.6 % and 0.5–1.1 % more for `n` from 64 to 2048.
+  measures are 4–13× faster for other `d ≤ 251`, and
+  `is_pure(tab; verify = true)`, which also checks commutation, is
+  1.2–3.8× faster. Each tableau holds one rank workspace: `2n × n` entries of
+  its storage element type for `d ≥ 3`, or `2n × n` bits plus two words per
+  column at `d = 2`.
+- Tableau operations run on the narrow storage that is the default:
+  generator updates in `apply!`, `measure!`, `dephase!` and `canonicalize!`
+  operate on `UInt8` or `UInt16` entries. At `n ≥ 1024` a tableau with its
+  workspaces takes about twice the bytes of its generators or less: at
+  `n = 1024`–`4096` a `StabilizerTableau` takes 2.0–2.2× at `d = 3` and
+  1.2–1.35× at `d = 2`, a `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. At
+  small `n` the padding of the generator blocks adds more (a
+  `StabilizerTableau` at `d = 3` takes 3.7× at `n = 32`). A
+  `StabilizerTableau` at `d = 3` and `n = 1024` takes 4.4 bytes per `n²`
+  instead of 32.8 with `Int` storage. Against `main` before the split and
+  narrow storage (the state after the commuting-measurement change above), at
+  `n = 511`–`1025` and `d = 2, 3, 31`, one-qudit random gates run 1.3–7×
+  faster, two-qudit random gates 1.1–4.4×, random-outcome measurements
+  1.2–2.3× and `canonicalize!` 1.4–4.3×; at `d = 257` (`UInt16`) the
+  half-chain entropy is 10× faster.
+  Full timings are in the pull request description.
 
 ### Documentation
 

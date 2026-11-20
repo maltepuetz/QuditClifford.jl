@@ -293,11 +293,12 @@ ts_slot(A) = Int(UInt(pointer(A)) % 4096 ÷ 128 * 128)
 end
 
 @testset "padded block layout" begin
-    for (label, TT) in ts_TYPES, n in (1, 31, 32, 33, 64, 511, 512, 513, 1024)
-        tab = TT(2, n; state = :ghz)
+    for (label, TT) in ts_TYPES, E in (UInt8, UInt16, Int),
+        n in (1, 31, 32, 33, 64, 511, 512, 513, 1024)
+        tab = TT(2, n; state = :ghz, eltype = E)
         fields = TT === DestabilizerTableau ?
             (tab.stab_x, tab.stab_z, tab.destab_x, tab.destab_z) : (tab.stab_x, tab.stab_z)
-        L = ts_QC._padded_rows(n, sizeof(Int))
+        L = ts_QC._padded_rows(n, sizeof(E))
         @test allunique(map(b -> objectid(parent(b)), fields))
         @test all(b -> size(b) == (n, n) && size(parent(b), 1) == L, fields)
         L != n && @test map(ts_slot, fields) == (0, 2048, 1024, 3072)[1:length(fields)]

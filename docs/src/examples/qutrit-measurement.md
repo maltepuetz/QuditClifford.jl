@@ -15,6 +15,7 @@ Destabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 2
     Generators:       m = 2
+    Storage:          generator-major, UInt8
     Tableau:
      Stabilizers:
       X     Z
@@ -48,6 +49,7 @@ Destabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 2
     Generators:       m = 2
+    Storage:          generator-major, UInt8
     Tableau:
      Stabilizers:
       X     Z

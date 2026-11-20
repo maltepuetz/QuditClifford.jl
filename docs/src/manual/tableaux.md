@@ -8,8 +8,8 @@ DocTestSetup = :(using QuditClifford)
 A tableau represents a stabilizer state, pure or mixed, on `n` qudits of prime
 dimension `d`. This page covers the choice between the two tableau types, how
 to build a tableau from preset states or from a raw matrix, the contract its
-generators satisfy, and copying, comparing and resetting. The storage layout is
-defined in [Tableau layout](@ref).
+generators satisfy, copying, comparing and resetting, and the storage element
+type. The storage layout is defined in [Tableau layout](@ref).
 
 ## Choosing a tableau type
 
@@ -48,6 +48,7 @@ Stabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 3
     Generators:       m = 3
+    Storage:          generator-major, UInt8
     Tableau:
      - X -   - Z -
      1 1 1 | 0 0 0 | 0
@@ -59,6 +60,7 @@ Stabilizer Tableau:
     Qudit dimension:  d = 3
     Number of Qudits: n = 3
     Generators:       m = 3
+    Storage:          generator-major, UInt8
     Tableau:
      - X -   - Z -
      1 0 0 | 0 0 0 | 0
@@ -146,6 +148,61 @@ false
 state, keeping its `d`, `n`, `storephase` and inversion strategy. The per-site
 form, `reset!(tab, sites)`, is a channel and is described in
 [Forgetting outcomes, discarding and resetting](@ref).
+
+## Storage
+
+A tableau stores its X and Z exponents in an integer type chosen from `d`,
+set by the `eltype` keyword of both constructors. The default is the narrowest
+type that holds every entry:
+
+| `d`                  | default `eltype` |
+|:---------------------|:-----------------|
+| `d ≤ 251`            | `UInt8`          |
+| `251 < d ≤ 65521`    | `UInt16`         |
+| `d > 65521`          | `Int`            |
+
+`eltype = Int` is accepted for every `d` and is the reference the narrow types
+are tested against; `UInt16` may also be chosen for `d ≤ 251`. Every result is
+identical in each element type: outcomes, expectation values, entropies and
+the matrices returned by [`stabilizer_matrix`](@ref) and
+[`destabilizer_matrix`](@ref) are the same `Int` values, phases are always
+stored as `Int`, and `==` and `hash` compare tableaux across element types.
+`copy!` needs both tableaux to have the same element type. The element type is
+the second type parameter, as in `StabilizerTableau{IM, UInt8}`, and `show`
+prints it on its `Storage` line:
+
+```jldoctest storage
+julia> tab = StabilizerTableau(257, 2)
+Stabilizer Tableau:
+    Qudit dimension:  d = 257
+    Number of Qudits: n = 2
+    Generators:       m = 0
+    Storage:          generator-major, UInt16
+    Mixed tableau (m < n generators):
+     (no generators; maximally mixed on the full space)
+
+julia> tab == StabilizerTableau(257, 2; eltype = Int)
+true
+```
+
+The `2n × n` rank workspace behind the entanglement measures (bits at
+`d = 2`) uses the same element type, so a narrow element type shrinks the
+whole tableau, not just its generators. Measured with `Base.summarysize` on a
+fresh tableau, in bytes per `n²`:
+
+| tableau                       | `n = 256` | `n = 1024` | `n = 4096` |
+|:------------------------------|----------:|-----------:|-----------:|
+| `StabilizerTableau`, `d = 2`   |      4.01 |       2.66 |       2.35 |
+| `StabilizerTableau`, `d = 3`   |      5.70 |       4.40 |       4.10 |
+| `DestabilizerTableau`, `d = 2` |      7.41 |       4.99 |       4.43 |
+| `DestabilizerTableau`, `d = 3` |      9.09 |       6.73 |       6.18 |
+| `StabilizerTableau`, `d = 3`, `eltype = Int`   | 35.45 | 32.84 | 32.21 |
+| `DestabilizerTableau`, `d = 3`, `eltype = Int` | 54.54 | 49.59 | 48.39 |
+
+The generators alone take 2 bytes per `n²` (4 with destabilizers) in `UInt8`.
+At `d ≥ 3` the rank workspace adds as much again for a `StabilizerTableau`,
+and the padding of the generator blocks adds the rest, most of it at small
+`n`.
 
 ## Mutating operations
 

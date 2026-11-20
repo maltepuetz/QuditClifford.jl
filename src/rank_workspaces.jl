@@ -1,25 +1,22 @@
-##### Narrow and bit-packed workspaces for rank elimination #####
+##### Rank workspaces #####
 #
-# The tableau stores Int entries, but a rank only needs the entries mod d. The
-# rank-based quantities (entropies, profiles, mutual information, negativity,
-# generator rank) therefore copy the rows they need into a workspace of a
-# narrower type and eliminate there:
+# The rank-based quantities (entropies, profiles, mutual information,
+# negativity, generator rank) copy the rows they need into a workspace and
+# eliminate there, leaving the tableau unchanged. Each tableau holds one
+# workspace for each case:
 #
 #   d == 2      bits packed into UInt64 words (`bit_workspace`)
-#   d <= 255    one UInt8 per entry (`narrow_workspace`), for d >= 3
-#   otherwise   the Int `workspace` and the primitives in src/modular.jl
+#   d >= 3      `rank_workspace`, 2n x n of the storage element type `E`,
+#               eliminated with the primitives in src/modular.jl
 #
-# Each elimination streams the remaining matrix once per pivot, so the cost at
-# large n is set by how many bytes an entry takes, not by the arithmetic.
+# Every entry point branches on `d == 2` and passes the selected workspace to
+# one routine. Each elimination streams the remaining matrix once per pivot,
+# so the cost at large n is set by how many bytes an entry takes, not by the
+# arithmetic.
 
-const _NARROW_RANK_MAX_D = 255
-
-@inline _uses_narrow_rank(d::Int) = d <= _NARROW_RANK_MAX_D
-
-# 2n x n UInt8 for 3 <= d <= 255, else empty: every caller takes the bit
-# workspace at d == 2 and the Int workspace above 255.
-_narrow_rank_workspace(d::Int, n::Int) =
-    d != 2 && _uses_narrow_rank(d) ? zeros(UInt8, 2n, n) : zeros(UInt8, 0, 0)
+# 2n x n of `E` for d >= 3, else empty.
+_storage_rank_workspace(::Type{E}, d::Int, n::Int) where {E} =
+    d != 2 ? zeros(E, 2n, n) : zeros(E, 0, 0)
 
 # For d == 2. A column holds the X and Z exponents of n sites as 2n bits, in
 # up to three row blocks that each start on a fresh word (see
@@ -29,84 +26,19 @@ _narrow_rank_workspace(d::Int, n::Int) =
 _bit_rank_workspace(d::Int, n::Int) =
     d == 2 ? zeros(UInt64, cld(2n, 64) + 2, n) : zeros(UInt64, 0, 0)
 
+# The rank workspace that `tab.d` selects.
+@inline _rank_workspace(tab) = tab.d == 2 ? tab.bit_workspace : tab.rank_workspace
+
 # A caller's vector that shares memory with a rank workspace is copied before
 # the workspace is written.
 @inline function _unalias_rank_workspaces(tab, v)
     v = Base.unalias(tab.bit_workspace, v)
-    v = Base.unalias(tab.narrow_workspace, v)
-    return Base.unalias(tab.workspace, v)
+    return Base.unalias(tab.rank_workspace, v)
 end
 
-#############################################
-# dst .= mod.(dst .- a .* src, d) on UInt8  #
-#############################################
-#
-# Entries of `dst` and `src` lie in [0, d), d <= 255 and 1 <= a <= d - 1.
-# Tiers, resolved once per call:
-#   d == 2    XOR
-#   a == 1    subtract, then add d back on borrow
-#   a == d-1  add, written as dst - (d - src) so that it cannot carry out of
-#             UInt8 for d > 128
-#   otherwise Shoup multiplication: with q = floor(256 a / d), floor(s q / 256)
-#             is floor(a s / d) or one less for every s < 256, so
-#             p = a s - floor(s q / 256) d lies in [0, 2d). Only s q needs 16
-#             bits. For d <= 127, p < 256, so everything else runs in UInt8
-#             lanes and wraps harmlessly; above that, in UInt16 lanes, where
-#             both products stay below 255 * 255 < 2^16.
-# The Shoup tier's final reductions use unsigned wraparound instead of a
-# compare: for 0 <= u < 2d, min(u, u - d) is u mod d, and for x, p in [0, d),
-# with t = x - p, min(t, t + d) is (x - p) mod d. Both need 2d to fit the lane.
-# `dst` and `src` must not alias.
-@inline function _submul_u8!(dst::AbstractVector{UInt8}, src::AbstractVector{UInt8}, a::Int, d::Int)
-    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("_submul_u8!", dst, src)
-    dd = d % UInt8
-    if d == 2
-        @inbounds @simd for i in eachindex(dst)
-            dst[i] = xor(dst[i], src[i])
-        end
-    elseif a == 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            s = src[i]
-            dst[i] = (x - s) + ifelse(x < s, dd, 0x00)
-        end
-    elseif a == d - 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            t = dd - src[i]                  # in [1, d]
-            dst[i] = (x - t) + ifelse(x < t, dd, 0x00)
-        end
-    elseif d <= 127
-        a8 = a % UInt8
-        q16 = ((a << 8) ÷ d) % UInt16
-        @inbounds @simd for i in eachindex(dst)
-            s = src[i]
-            h = ((UInt16(s) * q16) >> 8) % UInt8
-            p = a8 * s - h * dd
-            p = min(p, p - dd)
-            t = dst[i] - p
-            dst[i] = min(t, t + dd)
-        end
-    else
-        a16 = a % UInt16
-        q16 = ((a << 8) ÷ d) % UInt16
-        d16 = d % UInt16
-        @inbounds @simd for i in eachindex(dst)
-            s = UInt16(src[i])
-            p = a16 * s - ((s * q16) >> 8) * d16
-            p = min(p, p - d16)
-            t = UInt16(dst[i]) - p
-            dst[i] = min(t, t + d16) % UInt8
-        end
-    end
-    return dst
-end
-
-# `dst .= mod.(dst .- a .* src, d)` for either workspace element type.
-@inline _submul_col!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int) =
+# `dst .= mod.(dst .- a .* src, d)` for any storage element type.
+@inline _submul_col!(dst::AbstractVector, src::AbstractVector, a::Int, d::Int) =
     submul_mod!(dst, src, a, d)
-@inline _submul_col!(dst::AbstractVector{UInt8}, src::AbstractVector{UInt8}, a::Int, d::Int) =
-    _submul_u8!(dst, src, a, d)
 
 # Exchange columns `c` and `j` of `A` on `rows`.
 @inline function _swap_cols!(A::AbstractMatrix, rows::UnitRange{Int}, c::Int, j::Int)
@@ -139,19 +71,19 @@ function _copy_sites!(
 end
 
 function _copy_sites!(
-    ws::AbstractMatrix{UInt8},
+    ws::AbstractMatrix{T},
     b::_GMBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
     offset::Int,
-)
+) where {T<:_NarrowEltype}
     X, Z = b.x, b.z
     @inbounds for j in 1:m
         @simd for r in 1:N
             q = sites[r]
-            ws[offset + r, j] = X[q, j] % UInt8
-            ws[offset + N + r, j] = Z[q, j] % UInt8
+            ws[offset + r, j] = X[q, j] % T
+            ws[offset + N + r, j] = Z[q, j] % T
         end
     end
     return offset + 2N
@@ -184,7 +116,7 @@ end
 # pivoting on rows r0+1:r0+pivot_rows. On a bit-packed workspace the rows are
 # bits, and r0 is a multiple of 64 as `_copy_sites!` leaves it.
 @inline _block_rank!(
-    ws::AbstractMatrix{<:Union{Int,UInt8}}, r0::Int, r1::Int, cols::UnitRange{Int},
+    ws::AbstractMatrix{<:_StorageEltype}, r0::Int, r1::Int, cols::UnitRange{Int},
     d::Int, inversemod::InverseMod, pivot_rows::Int=r1 - r0,
 ) = rank_fp_cols!(view(ws, (r0 + 1):r1, cols), d, inversemod, pivot_rows)
 

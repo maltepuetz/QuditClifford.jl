@@ -84,7 +84,8 @@ chain. The cost is the same as for the natural order.
 A single right-endpoint elimination computes the whole profile in
 `O(n*m^2 + n)` time (at most cubic in `n`), using one of the tableau's scratch
 workspaces and allocating only the result vector. The elimination runs on
-bit-packed words for `d = 2` and on one byte per entry for other `d ≤ 255`.
+bit-packed words for `d = 2` and on the tableau's storage element type for
+other `d`.
 Stabilizers, destabilizers, phases and canonicalization caches are preserved.
 Phase storage is not required. Use [`entanglement_profile!`](@ref) to reuse an
 existing output vector.
@@ -150,10 +151,9 @@ not that workspace. An `order` that shares memory with `tab.c_workspace` or
 a rank workspace is copied before either is written, which allocates.
 
 The method reuses the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
-`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
-`tab.c_workspace` to check `order`. It preserves generators and
-canonicalization caches, and allocates nothing once compiled for ordinary
-vectors and views of independent arrays.
+else `tab.rank_workspace`), and `tab.c_workspace` to check `order`. It
+preserves generators and canonicalization caches, and allocates nothing once
+compiled for ordinary vectors and views of independent arrays.
 
 # Examples
 ```jldoctest
@@ -294,10 +294,8 @@ function _entanglement_profile!(
     sites = order === nothing ? Base.OneTo(n) : order
     if d == 2
         _profile_pivots_gf2!(profile, tab, sites)
-    elseif _uses_narrow_rank(d)
-        _profile_pivots!(profile, tab, tab.narrow_workspace, sites)
     else
-        _profile_pivots!(profile, tab, tab.workspace, sites)
+        _profile_pivots!(profile, tab, tab.rank_workspace, sites)
     end
 
     contained = 0
@@ -323,23 +321,23 @@ function _copy_sites_interleaved!(ws::AbstractMatrix{Int}, b::_GMBlock,
     return ws
 end
 
-function _copy_sites_interleaved!(ws::AbstractMatrix{UInt8}, b::_GMBlock,
-                                  m::Int, sites::AbstractVector)
+function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_GMBlock,
+                                  m::Int, sites::AbstractVector) where {T<:_NarrowEltype}
     n = _nq(b)
     X, Z = b.x, b.z
     @inbounds for j in 1:m
         @simd for k in 1:n
             q = sites[k]
-            ws[2k - 1, j] = X[q, j] % UInt8
-            ws[2k, j] = Z[q, j] % UInt8
+            ws[2k - 1, j] = X[q, j] % T
+            ws[2k, j] = Z[q, j] % T
         end
     end
     return ws
 end
 
 # Bottom-up column elimination on the interleaved rows; `profile[l + 1]`
-# receives the number of pivots on the rows of site l. `ws` is the Int or the
-# UInt8 workspace.
+# receives the number of pivots on the rows of site l. `ws` is the rank
+# workspace for d >= 3.
 function _profile_pivots!(
     profile::AbstractVector{Int},
     tab::AbstractTableau,
@@ -459,15 +457,10 @@ function _rank_on_sites!(tab::AbstractTableau, sites::AbstractVector, N::Int, mc
         W = tab.bit_workspace
         nw = _pack_sites_gf2!(W, _stab(tab), mcols, sites, N)
         return _rank_gf2_cols!(view(W, 1:nw, 1:mcols), 2N)
-    elseif _uses_narrow_rank(d)
-        ws = tab.narrow_workspace
-        _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
-        return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
-    else
-        ws = tab.workspace
-        _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
-        return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
     end
+    ws = tab.rank_workspace
+    _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
+    return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
 end
 
 # Column-wise Gaussian elimination over F_d; returns the number of pivots.
@@ -493,17 +486,17 @@ end
 # current one on is already zero on rows `1:r-1`, so the swap and the updates
 # run over rows `r:end` only.
 #
-# The element type is the contract: `Int` entries go through the primitives in
-# src/modular.jl, and `UInt8` entries (for `d <= 255`) through `_submul_u8!`.
-# Any other element type is a MethodError at the call.
+# Entries of any storage element type `T` go through the primitives in
+# src/modular.jl for that type; `T` must hold every residue mod d. Any other
+# element type is a MethodError at the call.
 function rank_fp_cols!(
     A::AbstractMatrix{T},
     d::Int,
     inversemod::InverseMod,
     pivot_rows::Int=size(A, 1),
-) where {T<:Union{Int,UInt8}}
-    T === UInt8 && !_uses_narrow_rank(d) && throw(ArgumentError(
-        "UInt8 elimination needs d <= $_NARROW_RANK_MAX_D; got d = $d."))
+) where {T<:_StorageEltype}
+    _eltype_admissible(T, d) || throw(ArgumentError(
+        "rank_fp_cols!: element type $T cannot hold every residue mod d = $d."))
     nr, m = size(A)
     0 <= pivot_rows <= nr || throw(ArgumentError(
         "pivot_rows must lie in 0:$nr; got $pivot_rows."))

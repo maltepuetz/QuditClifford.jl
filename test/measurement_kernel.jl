@@ -341,9 +341,10 @@ function mkref_measure_allocs(rng, tab, op)
 end
 
 @testset "measure! allocates nothing in the noncommuting branch" begin
-    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31)
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int))
         n = 64
-        tab = TT(d, n; state = :Z)
+        tab = TT(d, n; state = :Z, eltype = E)
         rng = Xoshiro(3)
         for q in 1:2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
@@ -354,7 +355,7 @@ end
             @test mkref_measure_allocs(rng, tab, op) == 0
         end
         # A random state takes the dense pivot path.
-        r = TT(d, n; state = :Z)
+        r = TT(d, n; state = :Z, eltype = E)
         random_state!(rng, r)
         @test mkref_measure_allocs(rng, r, SinglePauli(5, 1, 0)) == 0
     end

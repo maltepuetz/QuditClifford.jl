@@ -16,7 +16,7 @@ using Random
             for d in (2, 3)
                 @testset "d=$d" begin
                     # Each tableau is rebuilt per assertion: `is_commuting` and
-                    # `is_independent` both consume `workspace`, so sharing one
+                    # `is_independent` both consume the rank workspace, so sharing one
                     # would make the tests depend on the order they run in.
                     mk(mat; kw...) = TT(d, mat; m=2, storephase=true, kw...)
 
@@ -116,6 +116,32 @@ end
             stab = rand(MersenneTwister(1), 0:(d-1), 2n, 1)
             @test kernel(stab, n, 0, d) == (0, 0)
             @test kernel(stab, n, 1, d) == (0, 0)
+        end
+    end
+
+    # The products go into a block of the storage element type, reduced; at
+    # d = 2 the bit-packed form reads the parities off packed columns instead.
+    @testset "narrow product blocks and the GF(2) form" begin
+        rng = MersenneTwister(20261120)
+        ds = Sys.WORD_SIZE == 64 ? (2, 3, 251, 257, 65521) : (2, 3, 251, 257)
+        for d in ds, n in (1, 3, 9, 33, 70), m in unique((0, 1, 2, n))
+            d > 3 && n > 33 && continue
+            for _ in 1:4
+                stab = rand(rng, 0:(d-1), 2n, max(m, 1))
+                ref = reference_pair(stab, n, m, d)
+                b = QuditClifford._stacked_views(stab, n, false)[1]
+                for E in (UInt8, UInt16, Int)
+                    QuditClifford._eltype_admissible(E, d) || continue
+                    bE = QuditClifford.XZBlock{QuditClifford.GeneratorMajor}(E.(b.x), E.(b.z))
+                    P = zeros(E, max(m, 1), max(m, 1))
+                    @test QuditClifford._first_noncommuting_pair(bE, m, d, P) == ref
+                end
+                if d == 2
+                    W = fill(typemax(UInt64), cld(2n, 64), max(m, 1))
+                    nw = QuditClifford._pack_sites_gf2!(W, b, m, 1:n, n)
+                    @test QuditClifford._first_noncommuting_pair_gf2(W, nw, m) == ref
+                end
+            end
         end
     end
 end

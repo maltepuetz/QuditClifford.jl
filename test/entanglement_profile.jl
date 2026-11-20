@@ -54,14 +54,14 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
                 @test_throws DimensionMismatch entanglement_profile!(dest, tab)
                 @test dest == fill(-1, len)
                 @test stabilizer_matrix(tab) == stabilizer_matrix(before)
-                @test tab.workspace == before.workspace
+                @test QuditClifford._rank_workspace(tab) == QuditClifford._rank_workspace(before)
                 TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
             offset = _ZeroBasedProfileVector(fill(-1, 5))
             @test_throws ArgumentError entanglement_profile!(offset, tab)
             @test offset.data == fill(-1, 5)
             @test stabilizer_matrix(tab) == stabilizer_matrix(before)
-            @test tab.workspace == before.workspace
+            @test QuditClifford._rank_workspace(tab) == QuditClifford._rank_workspace(before)
         end
     end
 
@@ -137,7 +137,7 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
 
             # Scratch may contain residues from any previous operation,
             # including columns beyond the active generator count.
-            fill!(tab.workspace, d - 1)
+            fill!(QuditClifford._rank_workspace(tab), d - 1)
             fill!(tab.c_workspace, d - 1)
             profile = entanglement_profile(tab)
             @test profile == expected
@@ -265,7 +265,7 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
                 @test dest == fill(-1, 5)
                 @test stabilizer_matrix(tab) == stabilizer_matrix(before)
                 @test tab.m == before.m
-                @test tab.workspace == before.workspace
+                @test QuditClifford._rank_workspace(tab) == QuditClifford._rank_workspace(before)
                 TT === DestabilizerTableau && @test destabilizer_matrix(tab) == destabilizer_matrix(before)
             end
             # The destination is still checked first.
@@ -282,8 +282,9 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             reference = deepcopy(tab)
             perm = randperm(rng, 4)
             expected = [entanglement_entropy(reference, perm[1:l]) for l in 0:4]
-            stores = Any[(tab.workspace, ws -> view(ws, 1:4, 1)),
-                         (tab.workspace, ws -> view(ws, 5:8, m)),
+            rws = QuditClifford._rank_workspace(tab)
+            stores = Any[(rws, ws -> view(ws, 1:4)),
+                         (rws, ws -> view(ws, (length(ws) - 3):length(ws))),
                          (tab.c_workspace, identity),
                          (tab.c_workspace, cws -> view(cws, 1:4))]
             for (storage, place) in stores
@@ -314,7 +315,7 @@ Base.setindex!(v::_ZeroBasedProfileVector, x, i::Int) = (v.data[i + 1] = x)
             reference = deepcopy(tab)
             order = randperm(rng, 6)
             expected = [entanglement_entropy(reference, order[1:l]) for l in 0:6]
-            fill!(tab.workspace, d - 1)
+            fill!(QuditClifford._rank_workspace(tab), d - 1)
             fill!(tab.c_workspace, d - 1)
             @test entanglement_profile(tab, order) == expected
             @test stabilizer_matrix(tab) == stabilizer_matrix(reference)

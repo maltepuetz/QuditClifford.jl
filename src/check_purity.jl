@@ -38,8 +38,8 @@ true
 # Notes
 - Neither form changes the represented state or emits diagnostic output.
 - `is_pure(tab)` reads only `tab.m` and `tab.n`; `verify=true` additionally
-  borrows `tab.workspace` and the rank workspace for `d` (`tab.bit_workspace`
-  for `d = 2`, `tab.narrow_workspace` for other `d ≤ 255`).
+  borrows the rank workspace for `d` (`tab.bit_workspace` for `d = 2`, else
+  `tab.rank_workspace`) for both the commutation and the independence check.
 """
 function is_pure(tab::AbstractTableau; verify::Bool=false)
     tab.m == tab.n || return false
@@ -60,7 +60,8 @@ end
 # has to be computed, not both orientations of it.
 #
 # `P` is written over its whole `m x m` block and needs no initialization. It
-# must not alias the block.
+# must not alias the block. An `Int` block holds the products as they are,
+# any other element type the products reduced mod `d`, which it must hold.
 #
 # Only the scan early-exits; the product always runs in full. The one caller
 # that sees non-commuting input is construction validation, which raises as
@@ -72,36 +73,75 @@ end
     b::_GMBlock,
     m::Int,
     d::Int,
-    P::AbstractMatrix{Int},
-)
+    P::AbstractMatrix{T},
+) where {T<:_StorageEltype}
     m <= 1 && return (0, 0)
     n = _nq(b)
     x = b.x
     z = b.z
-    @turbo for j in 1:m, i in 1:m
-        s = 0
-        for q in 1:n
-            s += x[q, j] * z[q, i]
+    if T === Int
+        @turbo for j in 1:m, i in 1:m
+            s = 0
+            for q in 1:n
+                s += Int(x[q, j]) * Int(z[q, i])
+            end
+            P[j, i] = s
         end
-        P[j, i] = s
+    else
+        # Not `@turbo`: it narrows `s` to `T` before reducing it.
+        @inbounds for i in 1:m, j in 1:m
+            s = 0
+            @simd for q in 1:n
+                s += Int(x[q, j]) * Int(z[q, i])
+            end
+            P[j, i] = mod(s, d) % T
+        end
     end
     @inbounds for j in 1:m, i in (j+1):m
-        mod(P[j, i] - P[i, j], d) != 0 && return (j, i)
+        mod(Int(P[j, i]) - Int(P[i, j]), d) != 0 && return (j, i)
     end
     return (0, 0)
 end
 
-# Check if all active generators commute.
-function is_commuting(tab::AbstractTableau)
-    m = tab.m
-    m <= 1 && return true
-    # `workspace` is 2n x n and m <= n, so the m x m block fits. Borrowing it
-    # is safe: `is_pure` runs this to completion before `is_independent`, which
-    # eliminates in the same buffer for d > 255, and no other consumer holds it
-    # across this call.
-    return _first_noncommuting_pair(
-        _stab(tab), m, tab.d, view(tab.workspace, 1:m, 1:m)) == (0, 0)
+# `_first_noncommuting_pair` for d = 2 on the columns 1:m of `W`, packed by
+# `_pack_sites_gf2!` into words 1:nw: site k at bits 2k-2 (X) and 2k-1 (Z).
+# The form x_j·z_i + z_j·x_i mod 2 of a pair is the parity of the even bits of
+# the XOR over words of `a & (b >> 1)` and `(a >> 1) & b`, as in
+# `_symplectic_gram_gf2!`. Returns the first `(j, i)`, `j < i`, in that order,
+# whose form is 1, or `(0, 0)`.
+function _first_noncommuting_pair_gf2(W::AbstractMatrix{UInt64}, nw::Int, m::Int)
+    even = 0x5555555555555555
+    checkbounds(W, 1:nw, 1:m)
+    @inbounds for j in 1:m, i in (j + 1):m
+        acc = zero(UInt64)
+        @simd for l in 1:nw
+            a = W[l, j]
+            b = W[l, i]
+            acc = xor(acc, xor(a & (b >> 1), (a >> 1) & b))
+        end
+        isodd(count_ones(acc & even)) && return (j, i)
+    end
+    return (0, 0)
 end
+
+# The first non-commuting pair of active generators of `tab`, borrowing the
+# rank workspace for `tab.d`: the packed columns in `bit_workspace` at d = 2,
+# else an `m x m` block of `rank_workspace` (2n x n, and m <= n) for the
+# products. Every caller reads the result before the workspace is used again.
+function _first_noncommuting_pair(tab::AbstractTableau)
+    m = tab.m
+    m <= 1 && return (0, 0)
+    if tab.d == 2
+        nw = _pack_sites_gf2!(tab.bit_workspace, _stab(tab), m, Base.OneTo(tab.n), tab.n)
+        return _first_noncommuting_pair_gf2(tab.bit_workspace, nw, m)
+    end
+    return _first_noncommuting_pair(_stab(tab), m, tab.d, view(tab.rank_workspace, 1:m, 1:m))
+end
+
+# Check if all active generators commute. Borrows the rank workspace for `d`,
+# which `is_pure` then hands to `is_independent`; this call is finished with it
+# by then.
+is_commuting(tab::AbstractTableau) = _first_noncommuting_pair(tab) == (0, 0)
 
 # Rank of the active generator columns over GF(d). Consumes the rank
 # workspace that `d` selects, which the elimination is free to leave in column
@@ -123,8 +163,8 @@ is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
 # here makes it an invariant everywhere else, which is what lets `is_pure` rest
 # on `m == n`.
 #
-# Runs on the built tableau so it can borrow `workspace` rather than allocate
-# its own -- the two checks take it in turn, never at once.
+# Runs on the built tableau so it can borrow the rank workspace for `d` rather
+# than allocate its own -- the two checks take it in turn, never at once.
 function _validate_generators!(tab::AbstractTableau)
     m = tab.m
     # A qubit generator must also be Hermitian, a ≡ x·z (mod 2): otherwise it
@@ -142,8 +182,7 @@ function _validate_generators!(tab::AbstractTableau)
         end
     end
     if m > 1
-        pair = _first_noncommuting_pair(
-            _stab(tab), m, tab.d, view(tab.workspace, 1:m, 1:m))
+        pair = _first_noncommuting_pair(tab)
         if pair != (0, 0)
             throw(ArgumentError(
                 "Stabilizer generators must commute, but generators $(pair[1]) and " *

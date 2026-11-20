@@ -347,10 +347,11 @@ end
 end
 
 @testset "Generator rows are copied site by site" begin
-    for (d, ws_of) in ((2, t -> t.bit_workspace), (3, t -> t.narrow_workspace),
-                       (257, t -> t.workspace)), n in (1, 9, 64, 65, 130)
+    for (d, E) in ((2, Int), (3, UInt8), (3, Int), (257, UInt16), (257, Int)),
+        n in (1, 9, 64, 65, 130)
+        ws_of = CM._rank_workspace
         rng = Xoshiro(n + d)
-        S = StabilizerTableau(d, n; state = :Z)
+        S = StabilizerTableau(d, n; state = :Z, eltype = E)
         random_state!(rng, S)
         for m in unique((0, 1, n ÷ 2, n - 1, n))
             m < 0 && continue

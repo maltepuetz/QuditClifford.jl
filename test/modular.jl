@@ -443,4 +443,120 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             @test all(iszero, X[:, 2]) && all(iszero, Z[:, 2])
         end
     end
+
+    # UInt8 and UInt16 vectors, and every mixed pair of storage element types,
+    # against the Int references. Length 37 leaves an odd tail after the
+    # vector body of every lane width.
+    @testset "narrow primitives" begin
+        rng = Xoshiro(20261121)
+        # The references run in Int64: a * y reaches (d - 1)^2 ≈ 2^32 at
+        # d = 65521, which wraps a 32-bit Int.
+        function check_all(E, d, a, x, y)
+            x64, y64, a64, d64 = Int64.(x), Int64.(y), Int64(a), Int64(d)
+            for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x64, y64, a64, d64)),
+                               (QC.submul_mod!, _ref_submul(x64, y64, a64, d64)),
+                               (QC.mulcopy_mod!, _ref_mulcopy(y64, a64, d64)))
+                dst = E.(x)
+                @test f!(dst, E.(y), a, d) === dst
+                @test Int64.(dst) == want
+            end
+            dst = E.(x)
+            @test QC.scale_mod!(dst, a, d) === dst
+            @test Int64.(dst) == _ref_scale(x64, a64, d64)
+        end
+
+        # Every multiplier at every prime a UInt8 holds.
+        for d in _primes_upto(251), a in 0:(d - 1)
+            x = rand(rng, 0:(d - 1), 37); y = rand(rng, 0:(d - 1), 37)
+            check_all(UInt8, d, a, x, y)
+        end
+        # Every (dst, src) pair at the largest UInt8 prime and at the largest
+        # prime with UInt8 lanes, for the Shoup tier.
+        for d in (127, 131, 251)
+            x = repeat(0:(d - 1), d); y = repeat(0:(d - 1); inner=d)
+            for a in (2, d ÷ 2, d - 2)
+                check_all(UInt8, d, a, x, y)
+            end
+        end
+        # UInt16: below and above the UInt16-lane threshold 2d <= 2^16.
+        for d in (3, 251, 257, 4093, 32749, 32771, 65521)
+            for a in (0, 1, 2, d ÷ 2, d - 2, d - 1, rand(rng, 0:(d - 1)))
+                x = rand(rng, 0:(d - 1), 37); y = rand(rng, 0:(d - 1), 37)
+                x[1:2] .= d - 1; y[1:2] .= (d - 1, 0)
+                check_all(UInt16, d, a, x, y)
+            end
+        end
+
+        # Mixed element types: dst and src of different storage types.
+        for (T, S) in ((UInt8, Int), (Int, UInt8), (UInt16, Int), (Int, UInt16),
+                       (UInt8, UInt16), (UInt16, UInt8)), d in (2, 3, 251)
+            for a in unique((0, 1, 2 % d, d ÷ 2, d - 1, rand(rng, 0:(d - 1))))
+                x = rand(rng, 0:(d - 1), 37); y = rand(rng, 0:(d - 1), 37)
+                for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x, y, a, d)),
+                                   (QC.submul_mod!, _ref_submul(x, y, a, d)),
+                                   (QC.mulcopy_mod!, _ref_mulcopy(y, a, d)))
+                    dst = T.(x)
+                    @test f!(dst, S.(y), a, d) === dst
+                    @test eltype(dst) === T && Int.(dst) == want
+                end
+            end
+        end
+
+        # Mixed element types, every tier: every (dst, src) pair at small d for
+        # every multiplier, and at a prime the Barrett guard accepts (137, 443)
+        # and one it rejects (131, 1031) for the general-multiplier tier.
+        @test QC._barrett_valid(137) && QC._barrett_valid(443)
+        @test !QC._barrett_valid(131) && !QC._barrett_valid(1031)
+        mixed_pairs(d) = d <= 251 ?
+            ((UInt8, Int), (Int, UInt8), (UInt16, Int), (Int, UInt16), (UInt8, UInt16), (UInt16, UInt8)) :
+            ((UInt16, Int), (Int, UInt16))
+        for d in (2, 3, 5, 7, 131, 137, 443, 1031)
+            x = repeat(0:(d - 1), d); y = repeat(0:(d - 1); inner=d)
+            as = d <= 7 ? (0:(d - 1)) : unique((0, 1, 2, d ÷ 2, d - 2, d - 1))
+            for (T, S) in mixed_pairs(d), a in as
+                for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x, y, a, d)),
+                                   (QC.submul_mod!, _ref_submul(x, y, a, d)),
+                                   (QC.mulcopy_mod!, _ref_mulcopy(y, a, d)))
+                    dst = T.(x)
+                    @test f!(dst, S.(y), a, d) === dst
+                    @test Int.(dst) == want
+                end
+            end
+        end
+
+        for f! in (QC.addmul_mod!, QC.submul_mod!, QC.mulcopy_mod!), a in (0, 1, 2, 4)
+            @test_throws DimensionMismatch f!(zeros(UInt8, 3), zeros(UInt8, 4), a, 5)
+            @test_throws DimensionMismatch f!(zeros(UInt16, 3), zeros(UInt16, 4), a, 5)
+            @test_throws DimensionMismatch f!(zeros(UInt8, 3), zeros(Int, 4), a, 5)
+        end
+
+        for E in (UInt8, UInt16), d in (E === UInt8 ? (2, 3, 127, 131, 251) : (257, 32749, 32771, 65521)),
+            a in unique((0, 1, d ÷ 2, d - 1))
+            q = QC._shoup_q(E, a, d)
+            @test q isa widen(E)
+            @test q == fld(big(a) << (8sizeof(E)), d)
+        end
+
+        # Site-restricted forms over every pair of storage element types: the
+        # sites change to the reference, every other entry keeps its value.
+        n = 9
+        for T in (UInt8, UInt16, Int), S in (UInt8, UInt16, Int), d in (2, 3, 251), trial in 1:6
+            dstx = rand(rng, 0:(d - 1), n); dstz = rand(rng, 0:(d - 1), n)
+            srcx = rand(rng, 0:(d - 1), n); srcz = rand(rng, 0:(d - 1), n)
+            k = rand(rng, 0:n)
+            sites = vcat(randperm(rng, n)[1:k], rand(rng, 1:n, 3))
+            a = (0, 1, d - 1, rand(rng, 0:(d - 1)), 2 % d, d ÷ 2)[trial]
+            out = trues(n)
+            out[sites[1:k]] .= false
+            for (f!, ref) in ((QC.addmul_mod_sites!, _ref_addmul),
+                              (QC.submul_mod_sites!, _ref_submul))
+                gx = T.(dstx); gz = T.(dstz)
+                @test f!(gx, gz, S.(srcx), S.(srcz), sites, k, a, d) === nothing
+                @test eltype(gx) === T && eltype(gz) === T
+                @test Int.(gx[sites[1:k]]) == ref(dstx[sites[1:k]], srcx[sites[1:k]], a, d)
+                @test Int.(gz[sites[1:k]]) == ref(dstz[sites[1:k]], srcz[sites[1:k]], a, d)
+                @test Int.(gx[out]) == dstx[out] && Int.(gz[out]) == dstz[out]
+            end
+        end
+    end
 end

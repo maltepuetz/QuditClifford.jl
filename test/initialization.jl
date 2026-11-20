@@ -1,6 +1,13 @@
 using Test
 using QuditClifford
 
+# `reset!` measured behind a function barrier, so the dynamic keyword call of
+# the testset scope is not counted.
+function init_reset_allocs(tab, args...; kwargs...)
+    reset!(tab, args...; kwargs...)
+    return @allocated reset!(tab, args...; kwargs...)
+end
+
 @testset "Initialization presets" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)]
         @testset "$label" begin
@@ -59,18 +66,10 @@ using QuditClifford
                 reset!(tab_nophase; state=:product, basis=:Y)
 
                 # reset! should not allocate (after warm-up)
-                reset!(tab_reset; state=:mixed)
-                alloc_mixed = @allocated reset!(tab_reset; state=:mixed)
-                @test alloc_mixed == 0
-
+                @test init_reset_allocs(tab_reset; state=:mixed) == 0
                 basis_vec = [:Z, :X]
-                reset!(tab_reset; state=:product, basis=basis_vec)
-                alloc_prod = @allocated reset!(tab_reset; state=:product, basis=basis_vec)
-                @test alloc_prod == 0
-
-                reset!(tab_reset, :ghz)
-                alloc_ghz = @allocated reset!(tab_reset, :ghz)
-                @test alloc_ghz == 0
+                @test init_reset_allocs(tab_reset; state=:product, basis=basis_vec) == 0
+                @test init_reset_allocs(tab_reset, :ghz) == 0
             end
 
             @testset "Qudit (d=3)" begin
@@ -404,6 +403,36 @@ end
 
     destab_large_text = sprint(show, DestabilizerTableau(2, 30; state=:mixed))
     @test occursin("too large to display", destab_large_text)
+
+    # The storage line follows the generator count and names the element type.
+    for (TT, head) in ((StabilizerTableau, "Stabilizer"), (DestabilizerTableau, "Destabilizer")),
+        (d, kw, E) in ((3, (;), UInt8), (257, (;), UInt16), (3, (; eltype=Int), Int))
+
+        text = sprint(show, TT(d, 2; state=:product, kw...))
+        @test startswith(text, "$head Tableau:\n" *
+                               "    Qudit dimension:  d = $d\n" *
+                               "    Number of Qudits: n = 2\n" *
+                               "    Generators:       m = 2\n" *
+                               "    Storage:          generator-major, $(string(E))\n" *
+                               "    Tableau:\n")
+        large_text = sprint(show, TT(d, 30; kw...))
+        @test occursin("    Generators:       m = 0\n" *
+                       "    Storage:          generator-major, $(string(E))\n" *
+                       "    Tableau is too large to display.", large_text)
+    end
+end
+
+@testset "Default storage element type" begin
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        for (d, E) in ((2, UInt8), (3, UInt8), (251, UInt8), (257, UInt16),
+                       (65521, UInt16), (65537, Int))
+            @test QuditClifford._storage_eltype(TT(d, 1)) === E
+            @test QuditClifford._storage_eltype(TT(d, 1; state=:product)) === E
+            @test QuditClifford._storage_eltype(TT(d, reshape([0, 1, 0], 3, 1))) === E
+        end
+        @test QuditClifford._storage_eltype(TT(3, 1; eltype=Int)) === Int
+        @test QuditClifford._storage_eltype(TT(3, 1; eltype=UInt16)) === UInt16
+    end
 end
 
 # Preset construction writes values that are already reduced, so it needs no

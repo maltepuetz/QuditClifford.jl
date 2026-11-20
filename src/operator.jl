@@ -592,11 +592,12 @@ end
 
     xg = _xgen(_stab(tab), i)
     zg = _zgen(_stab(tab), i)
+    E = eltype(xg)
     @turbo for q in 1:n
-        xg[q] = mod(op[q], d)
+        xg[q] = E(mod(op[q], d))
     end
     @turbo for q in 1:n
-        zg[q] = mod(op[n+q], d)
+        zg[q] = E(mod(op[n+q], d))
     end
     if tab.storephase && (len_op == 2n + 1)
         _phase(tab)[i] = mod(op[2n+1], phase_modulus(d))
@@ -613,11 +614,12 @@ end
     zg = _zgen(_stab(tab), i)
     _check_pauli_support(op, n)
 
+    E = eltype(xg)
     @turbo for q in 1:n
-        xg[q] = mod(op.xz[q], d)
+        xg[q] = E(mod(op.xz[q], d))
     end
     @turbo for q in 1:n
-        zg[q] = mod(op.xz[n+q], d)
+        zg[q] = E(mod(op.xz[n+q], d))
     end
     if tab.storephase
         _phase(tab)[i] = mod(op.phase, phase_modulus(d))

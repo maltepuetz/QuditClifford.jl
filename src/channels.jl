@@ -90,19 +90,21 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
     stab = _stab(tab)
     pivot = 0
     comm0 = 0
+    kws = 0
     for i in 1:m
         c = mod(commutation_col(stab, i, opc), d)
         c == 0 && continue
         if pivot == 0
-            # The pivot is kept in the workspace and removed afterwards; the
-            # other noncommuting generators absorb a power of it.
-            _copy_gen!(tab.generator_workspace, stab, i)
-            tab.storephase && (tab.generator_workspace[2tab.n+1] = _phase(tab)[i])
+            # The pivot is kept in pivot_workspace, its phase in `kws`, and it
+            # is removed afterwards; the other noncommuting generators absorb a
+            # power of it.
+            _copy_gen!(tab.pivot_workspace, stab, i)
+            kws = tab.storephase ? _phase(tab)[i] : 0
             pivot = i
             comm0 = c
         else
             a = mod(-c * tab.inversemod(comm0, d), d)
-            mul_col_by_workspace_power!(tab, i, a)
+            mul_col_by_workspace_power!(tab, i, a, kws)
             _on_noncommuting_col_updated!(tab, i)
         end
     end

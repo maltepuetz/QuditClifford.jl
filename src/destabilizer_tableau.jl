@@ -1,7 +1,7 @@
 """
-    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d))
+    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type)
     DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true)
+    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type)
 
 Construct a destabilizer tableau for an `n`-qudit *stabilizer density operator*
 (mixed-state stabilizer formalism).
@@ -45,6 +45,13 @@ without first canonicalizing the stabilizer generators.
   `O(n^3)` validation and builds the tableau regardless -- every later operation
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
+- `eltype::Type`: Element type of the stored X and Z exponents of the
+  stabilizers and destabilizers: `UInt8` for `d ≤ 251`, `UInt16` for
+  `d ≤ 65521`, or `Int` for every `d`. The default is the narrowest of these
+  that holds `d`. Another type, or one too narrow for `d`, throws an
+  `ArgumentError`. The choice affects memory and speed only:
+  every result, and every matrix the tableau returns, is the same `Int` value
+  in each element type. Phases are always stored as `Int`.
 
 # Examples
 ```jldoctest
@@ -97,22 +104,22 @@ If `storephase=true`, the phase vector stores the phase exponent `k` of each sta
 Use [`StabilizerTableau`](@ref) instead when compact storage is more important
 than maintaining the dual basis. See also [`reset!`](@ref).
 """
-mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
+mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{Int}              # n×n X exponents, generator j in column j (see _padded_block)
-    stab_z::_BlockMatrix{Int}              # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{E}            # n×n X exponents, generator j in column j (see _padded_block)
+    stab_z::_BlockMatrix{E}            # n×n Z exponents, generator j in column j
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
-    destab_x::_BlockMatrix{Int}            # n×n X exponents of the destabilizers (no phases)
-    destab_z::_BlockMatrix{Int}            # n×n Z exponents of the destabilizers
+    destab_x::_BlockMatrix{E}          # n×n X exponents of the destabilizers (no phases)
+    destab_z::_BlockMatrix{E}          # n×n Z exponents of the destabilizers
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
-    inversemod::T                      # inverse mod function for dimension d
+    inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
-    workspace::Matrix{Int}             # 2n×n (rank eliminations for d > 255, commutation checks)
     generator_workspace::Vector{Int}   # length 2n + storephase
+    pivot_workspace::Vector{E}         # length 2n, [x; z] of a pivot or new destabilizer (no phase)
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
@@ -126,31 +133,35 @@ mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
     # workspace for the noncommuting measurement update
     support_workspace::Vector{Int}     # length n (qudit support of one column)
 
-    # rank elimination workspaces (see src/rank_workspaces.jl)
-    narrow_workspace::Matrix{UInt8}    # 2n×n for 3 ≤ d ≤ 255, else 0×0
+    # rank elimination and commutation-check workspaces (see src/rank_workspaces.jl)
+    rank_workspace::Matrix{E}          # 2n×n for d ≥ 3, else 0×0
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 
-function DestabilizerTableau(d::Int, n::Int;
+Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
-    inversemod::T=PrecomputedInvMod(d)
-) where {T<:InverseMod}
+    inversemod::T=PrecomputedInvMod(d),
+    eltype::Type{E}=_default_eltype(d),
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
-    b, phase, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
-    return _build_destabilizer_tableau(d, n, m, (b, phase), storephase, inversemod;
+    b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
+    return _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
                                        preset_state=state_norm, preset_basis=basis_spec)
 end
 
 DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = DestabilizerTableau(d, n; state=state, kwargs...)
 
-function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
+Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     m::Union{Int,Nothing}=nothing,
     storephase::Union{Bool,Nothing}=nothing,
     inversemod::T=PrecomputedInvMod(d),
-    check::Bool=true
-) where {T<:InverseMod}
+    check::Bool=true,
+    eltype::Type{E}=_default_eltype(d),
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     layout === nothing && throw(ArgumentError(
@@ -161,11 +172,12 @@ function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     # never writes to its input.
     tab_in = layout.transpose ? permutedims(tableau) : tableau
 
-    return _build_destabilizer_tableau(d, layout.n, layout.m, tab_in, layout.storephase, inversemod;
-                                      check=check)
+    return _build_destabilizer_tableau(eltype, d, layout.n, layout.m, tab_in, layout.storephase,
+                                       inversemod; check=check)
 end
 
 function _build_destabilizer_tableau(
+    ::Type{E},
     d::Int,
     n::Int,
     m::Int,
@@ -175,34 +187,34 @@ function _build_destabilizer_tableau(
     preset_state::Union{Symbol,Nothing}=nothing,
     preset_basis=nothing,
     check::Bool=true,
-) where {T<:InverseMod}
+) where {E<:_StorageEltype, T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
-    b, phase = _generator_storage(stab_in, d, n, m, storephase)
+    b, phase = _generator_storage(stab_in, E, d, n, m, storephase)
 
-    tab = DestabilizerTableau{T}(
+    tab = DestabilizerTableau{T, E}(
         d,
         n,
         m,
         b.x,
         b.z,
         phase,
-        _destab_blocks(n)...,
+        _destab_blocks(E, n)...,
         storephase,
         false,
         inversemod,
-        zeros(Int, 2n, n),
         zeros(Int, 2n + (storephase ? 1 : 0)),
+        zeros(E, 2n),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, n),
         zeros(Int, n),
-        _narrow_rank_workspace(d, n),
+        _storage_rank_workspace(E, d, n),
         _bit_rank_workspace(d, n),
     )
 
@@ -224,8 +236,30 @@ end
 # Destabilizer construction #
 #############################
 
+# Swap rows `r` and `s` of `A` over the columns `1:ncols`.
+@inline function _swap_rows!(A::AbstractMatrix, r::Int, s::Int, ncols::Int)
+    @turbo for j in 1:ncols
+        t = A[r, j]
+        A[r, j] = A[s, j]
+        A[s, j] = t
+    end
+    return A
+end
+
+# A plain loop for bytes. There `@turbo` runs 64 lanes and builds its remainder
+# mask with the 64-bit `bzhi` instruction, which LLVM cannot always compile for
+# 32-bit x86. On 64-bit machines the plain loop is also the faster one for bytes.
+@inline function _swap_rows!(A::AbstractMatrix{UInt8}, r::Int, s::Int, ncols::Int)
+    @inbounds for j in 1:ncols
+        t = A[r, j]
+        A[r, j] = A[s, j]
+        A[s, j] = t
+    end
+    return A
+end
+
 @inline function _pivot_columns!(
-    A::AbstractMatrix{Int},
+    A::AbstractMatrix{<:_StorageEltype},
     m::Int,
     ncols::Int,
     d::Int,
@@ -245,22 +279,16 @@ end
             continue
         end
 
-        if pivot != r
-            @turbo for j in 1:ncols
-                t = A[r, j]
-                A[r, j] = A[pivot, j]
-                A[pivot, j] = t
-            end
-        end
+        pivot != r && _swap_rows!(A, r, pivot, ncols)
 
         # Row-strided rather than column-strided, but the contract is the same:
         # `rebuild_destabilizers!` fills `A` through `mod(..., d)`, so every
         # entry is reduced into [0, d) before this runs.
-        α = inversemod(A[r, c], d)
+        α = inversemod(Int(A[r, c]), d)
         scale_mod!(view(A, r, c:ncols), α, d)
 
         for rr in (r+1):m
-            β = A[rr, c]
+            β = Int(A[rr, c])
             β == 0 && continue
             # rr >= r+1, so these are disjoint rows.
             submul_mod!(view(A, rr, c:ncols), view(A, r, c:ncols), β, d)
@@ -275,18 +303,18 @@ end
 end
 
 function _inv_matrix_mod!(
-    invA::AbstractMatrix{Int},
-    Awork::AbstractMatrix{Int},
+    invA::AbstractMatrix{T},
+    Awork::AbstractMatrix{T},
     m::Int,
     d::Int,
     inversemod::InverseMod,
-)
+) where {T<:_StorageEltype}
     (size(Awork, 1) >= m && size(Awork, 2) >= m) || throw(ArgumentError("Matrix workspace too small."))
     (size(invA, 1) >= m && size(invA, 2) >= m) || throw(ArgumentError("Inverse workspace too small."))
 
-    fill!(invA, 0)
+    fill!(invA, zero(T))
     @inbounds for i in 1:m
-        invA[i, i] = 1
+        invA[i, i] = one(T)
     end
 
     for c in 1:m
@@ -297,15 +325,8 @@ function _inv_matrix_mod!(
         pivot > m && throw(ArgumentError("Matrix is singular modulo d."))
 
         if pivot != c
-            @turbo for j in 1:m
-                t = Awork[c, j]
-                Awork[c, j] = Awork[pivot, j]
-                Awork[pivot, j] = t
-
-                t2 = invA[c, j]
-                invA[c, j] = invA[pivot, j]
-                invA[pivot, j] = t2
-            end
+            _swap_rows!(Awork, c, pivot, m)
+            _swap_rows!(invA, c, pivot, m)
         end
 
         # `Awork` and `invA` are separate matrices, so scaling row `c` takes
@@ -313,13 +334,13 @@ function _inv_matrix_mod!(
         # `Awork` is copied from the `mod`-reduced `A`, `invA` from the
         # identity -- and at d = 2 every α is 1, which `scale_mod!` skips
         # outright.
-        α = inversemod(Awork[c, c], d)
+        α = inversemod(Int(Awork[c, c]), d)
         scale_mod!(view(Awork, c, 1:m), α, d)
         scale_mod!(view(invA, c, 1:m), α, d)
 
         for rr in 1:m
             rr == c && continue
-            β = Awork[rr, c]
+            β = Int(Awork[rr, c])
             β == 0 && continue
             # rr != c (guarded above), so these are disjoint rows.
             submul_mod!(view(Awork, rr, 1:m), view(Awork, c, 1:m), β, d)
@@ -330,7 +351,7 @@ function _inv_matrix_mod!(
     return invA
 end
 
-function rebuild_destabilizers!(tab::DestabilizerTableau)
+function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}) where {IM, E}
     n = tab.n
     m = tab.m
     d = tab.d
@@ -344,51 +365,55 @@ function rebuild_destabilizers!(tab::DestabilizerTableau)
     # locals rather than tableau fields: this runs at most once per tableau,
     # only from the raw-matrix constructor, and a preset never reaches it at all
     # (it goes to `_preset_destabilizers!`). Hoisting them onto the struct would
-    # put 6n^2 + n Ints on every tableau to save an allocation on a path that is
-    # already O(n^3).
+    # put 6n^2 entries of `E` and n Ints on every tableau to save an allocation
+    # on a path that is already O(n^3). They hold entries reduced mod d in the
+    # storage element type, which holds every residue, and are eliminated with
+    # the primitives in src/modular.jl for that type.
     #
     # A and Awork are allocated n rows but only 1:m are ever touched, since
     # every row index below is bounded by m. `zeros` rather than `undef` for
     # the unused rows: one O(n^2) fill against an O(n^3) routine.
 
     # Build A = Sᵀ J (size m × 2n)
-    A = zeros(Int, n, 2n)
+    A = zeros(E, n, 2n)
     @inbounds for k in 1:m
         for q in 1:n
-            A[k, q] = mod(_zget(stab, q, k), d)
-            A[k, n+q] = mod(-_xget(stab, q, k), d)
+            A[k, q] = mod(_zget(stab, q, k), d) % E
+            A[k, n+q] = mod(-_xget(stab, q, k), d) % E
         end
     end
 
-    Awork = zeros(Int, n, 2n)
-    @turbo for j in 1:(2n), i in 1:m
-        Awork[i, j] = A[i, j]
-    end
+    # The copies below use `copy` and plain loops, not `@turbo`. On `UInt8`
+    # entries `@turbo` runs 64 lanes and builds its remainder mask with the
+    # 64-bit `bzhi` instruction, which LLVM cannot compile for 32-bit x86 once
+    # the mask is shared between loops. Each copy is O(n^2) in an O(n^3)
+    # routine.
+    Awork = copy(A)
 
     pivots = zeros(Int, n)
     pivcount = _pivot_columns!(Awork, m, 2n, d, tab.inversemod, pivots)
     # If generators are not independent, destabilizers are undefined; leave them zeroed.
     pivcount == m || return destab
 
-    A_P = zeros(Int, n, n)
+    A_P = zeros(E, n, n)
     @inbounds for j in 1:m
         pj = pivots[j]
-        @turbo for i in 1:m
+        for i in 1:m
             A_P[i, j] = A[i, pj]
         end
     end
 
-    @turbo for j in 1:m, i in 1:m
+    @inbounds for j in 1:m, i in 1:m
         Awork[i, j] = A_P[i, j]
     end
 
-    A_inv = zeros(Int, n, n)
+    A_inv = zeros(E, n, n)
     _inv_matrix_mod!(A_inv, Awork, m, d, tab.inversemod)
 
     @inbounds for i in 1:m
         p = pivots[i]
         for j in 1:m
-            _rset!(destab, mod(A_inv[i, j], d), p, j)
+            _rset!(destab, mod(Int(A_inv[i, j]), d), p, j)
         end
     end
     return destab
@@ -522,9 +547,9 @@ loaded only when the entry of `b` it pairs with is nonzero.
 end
 
 """
-The same pairing as `_symplectic_col_col_support` with a vector `vec` in
-place of generator `colA`; `supp[1:nsupp]` must cover the support of generator
-`colB` of `b`.
+The same pairing as `_symplectic_col_col_support` with a stacked vector `vec`
+of any integer type in place of generator `colA`, widened to `Int` before it
+multiplies; `supp[1:nsupp]` must cover the support of generator `colB` of `b`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
@@ -535,7 +560,7 @@ place of generator `colA`; `supp[1:nsupp]` must cover the support of generator
     s = 0
     @inbounds for k in 1:nsupp
         q = supp[k]
-        s += vec[q] * _zget(b, q, colB) - vec[n+q] * _xget(b, q, colB)
+        s += Int(vec[q]) * _zget(b, q, colB) - Int(vec[n+q]) * _xget(b, q, colB)
     end
     return s
 end
@@ -558,8 +583,8 @@ function reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
 end
 
 # Documented together with the `StabilizerTableau` methods.
-function Base.copy(tab::DestabilizerTableau{T}) where {T}
-    return DestabilizerTableau{T}(
+function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
+    return DestabilizerTableau{IM, E}(
         tab.d,
         tab.n,
         tab.m,
@@ -571,15 +596,15 @@ function Base.copy(tab::DestabilizerTableau{T}) where {T}
         tab.storephase,
         tab.iscanonical,
         tab.inversemod,
-        zero(tab.workspace),
         zero(tab.generator_workspace),
+        zero(tab.pivot_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),
         zero(tab.c_workspace),
         zero(tab.zacc_workspace),
         zero(tab.support_workspace),
-        zero(tab.narrow_workspace),
+        zero(tab.rank_workspace),
         zero(tab.bit_workspace),
     )
 end
@@ -605,6 +630,7 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
+    println(io, "    Storage:          generator-major, ", _storage_eltype(tab))
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
 

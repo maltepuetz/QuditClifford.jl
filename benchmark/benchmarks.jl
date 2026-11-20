@@ -24,9 +24,11 @@ const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 #   ci     n in (64, 256)      the PR job; ~170 s per revision
 #   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
 #
-# d = 5 is in `ci` because it is the smallest prime that takes the Barrett tier
-# in src/modular.jl. Without it no pull-request benchmark executes that tier at
-# all, and a guard that started rejecting every d would look like no change.
+# d = 5 is in `ci` because it is the smallest prime whose dense leaves take a
+# general multiplier: Shoup multiplication in UInt8 lanes for the generator
+# updates, and the Barrett tier for the residual against the Int workspace
+# (src/modular.jl). d = 2 and d = 3 take the multiply-free tiers only, so
+# without d = 5 no pull-request benchmark executes those tiers at all.
 const CONFIG = if PROFILE == "smoke"
     (ns = (8,), ds = (2, 3), probe_n = 8, modulus_n = 8, circuits = false,
      stored_ks = (1, 2, 8), stored_product = false)
@@ -152,10 +154,9 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
         g["invmod=jit/measure!/noncommuting"] = bench_measure(mk, :product, spread_x(n))
     end
 
-    # A prime the Barrett guard REJECTS, so these rows run the divide-twice
-    # fallback in src/modular.jl. Nothing else in any profile does, so without
-    # them the fallback has no benchmark coverage at all and could regress
-    # unseen. Small n as well as the probe size, because the fallback's
+    # A prime above 128, so the UInt8 entries of these rows take Shoup
+    # multiplication in widened (UInt16) lanes in src/modular.jl, and one the
+    # Barrett guard rejects. Small n as well as the probe size, because the
     # per-call tier dispatch is a fixed cost that only shows on short columns.
     #
     # `unique` because the two sizes coincide if a profile ever sets
@@ -166,7 +167,7 @@ let n = CONFIG.probe_n, d = 3, g = BenchmarkGroup()
             # scrambled, NOT :ghz: a constructor-built tableau holds only 0, 1
             # and d-1, so all its elimination multipliers are d-1 and it takes
             # the multiply-free tiers at every prime. Scrambling puts general
-            # residues in, which is what actually reaches the fallback.
+            # residues in, which is what actually reaches the widened lanes.
             # `test_workloads.jl` asserts that it does.
             g["fallback-prime/d=$d_fb/n=$nn/canonicalize!"] =
                 bench_canonicalize_state(fallback_probe_state(nn; d = d_fb))
