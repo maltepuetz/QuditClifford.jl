@@ -35,8 +35,8 @@ end
 # The tableau's own block and phase when it is already canonical, otherwise
 # canonical copies. The scratch passed to `_canonicalize_tableau!` is fresh, so
 # the tableau's pivot table and x·z cache are left alone.
-function _canonical_stab(tab::AbstractTableau)
-    b, phase = _stab(tab), _phase(tab)
+function _canonical_stab(tab::AbstractTableau, L::TableauLayout)
+    b, phase = _stab(tab, L), _phase(tab)
     tab.iscanonical && return b, phase
     S = XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
     Sphase = copy(phase)
@@ -93,12 +93,18 @@ function Base.:(==)(a::AbstractTableau, b::AbstractTableau)
     a === b && return true
     (a.d == b.d && a.n == b.n && a.m == b.m && a.storephase == b.storephase) ||
         return false
+    return _tableaux_equal(a, _layout_marker(a), b, _layout_marker(b))
+end
+
+# `==` for tableaux of equal `d`, `n`, `m` and `storephase`, with `La` and `Lb`
+# the layout markers of `a` and `b`.
+function _tableaux_equal(a::AbstractTableau, La::TableauLayout, b::AbstractTableau, Lb::TableauLayout)
     m, storephase = a.m, a.storephase
-    _active_columns_equal(_stab(a), _phase(a), _stab(b), _phase(b), m, storephase) &&
+    _active_columns_equal(_stab(a, La), _phase(a), _stab(b, Lb), _phase(b), m, storephase) &&
         return true
     a.iscanonical && b.iscanonical && return false
-    ca, pa = _canonical_stab(a)
-    cb, pb = _canonical_stab(b)
+    ca, pa = _canonical_stab(a, La)
+    cb, pb = _canonical_stab(b, Lb)
     return _active_columns_equal(ca, pa, cb, pb, m, storephase)
 end
 
@@ -121,10 +127,14 @@ end
 
 function Base.hash(tab::AbstractTableau, h::UInt)
     h = hash(tab.storephase, hash(tab.m, hash(tab.n, hash(tab.d, hash(:AbstractTableau, h)))))
+    return _hash_tableau(tab, _layout_marker(tab), h)
+end
+
+function _hash_tableau(tab::AbstractTableau, L::TableauLayout, h::UInt)
     # A canonical tableau is hashed in place. Any other is hashed through a
     # canonical copy, which `_canonical_stab` returns with a different block
     # type, so returning here keeps this path free of allocation.
-    tab.iscanonical && return _hash_active(h, _stab(tab), _phase(tab), tab.m, tab.storephase)
-    S, phase = _canonical_stab(tab)
+    tab.iscanonical && return _hash_active(h, _stab(tab, L), _phase(tab), tab.m, tab.storephase)
+    S, phase = _canonical_stab(tab, L)
     return _hash_active(h, S, phase, tab.m, tab.storephase)
 end

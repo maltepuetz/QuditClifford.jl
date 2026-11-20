@@ -114,11 +114,11 @@ end
 #
 # The caller's generators, `iscanonical` flag and workspaces are never touched.
 # `_check_convertible` guarantees a phase row and `m == n`.
-function _prepare_support(tab::AbstractTableau)
+function _prepare_support(tab::AbstractTableau, L::TableauLayout)
     n, d = tab.n, tab.d
     p = phase_modulus(d)
     s = p ÷ d
-    S = _stab(tab)
+    S = _stab(tab, L)
     G = XZBlock{GeneratorMajor}(copy(S.x), copy(S.z))
     Gphase = copy(_phase(tab))
     pivcol = zeros(Int, 2n)

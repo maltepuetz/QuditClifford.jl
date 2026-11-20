@@ -80,13 +80,13 @@ function entanglement_negativity(
     fill!(tab.c_workspace, 0)
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _negativity_from_mask!(tab, length(A), length(B))
+    return _negativity_from_mask!(tab, _layout_marker(tab), length(A), length(B))
 end
 
 function entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
     _mark_with_complement!(tab, A)
-    return _negativity_from_mask!(tab, length(A), tab.n - length(A))
+    return _negativity_from_mask!(tab, _layout_marker(tab), length(A), tab.n - length(A))
 end
 
 # Validate `A` and label it 1 in `c_workspace`, and every other site 2.
@@ -133,9 +133,10 @@ end
 # index `first` on into the rank workspace `ws` after row `offset`: X exponents
 # to rows offset+1:offset+N and Z exponents to offset+N+1:offset+2N, columns
 # 1:m. Returns the last row written, offset + 2N.
-function _copy_site_rows!(tab::AbstractTableau, ws::AbstractMatrix, first::Int, N::Int, offset::Int)
+function _copy_site_rows!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix, first::Int,
+                          N::Int, offset::Int)
     sites = view(tab.zacc_workspace, first:(first + N - 1))
-    return _copy_sites!(ws, _stab(tab), tab.m, sites, N, offset)
+    return _copy_sites!(ws, _stab(tab, L), tab.m, sites, N, offset)
 end
 
 # The dot products x_i·z_j and z_i·x_j of columns `ci` and `cj` of `ws`, with
@@ -164,15 +165,16 @@ end
 
 # `c_workspace[q]` labels site `q`: 1 for A, 2 for B and 0 for a traced-out
 # site. `NA` and `NB` are the sizes of A and B.
-function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
+function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     if tab.d == 2
-        return _negativity_from_mask!(tab, tab.bit_workspace, NA, NB)
+        return _negativity_from_mask!(tab, L, tab.bit_workspace, NA, NB)
     end
-    return _negativity_from_mask!(tab, tab.rank_workspace, NA, NB)
+    return _negativity_from_mask!(tab, L, tab.rank_workspace, NA, NB)
 end
 
-function _negativity_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::Int, NB::Int)
+function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix, NA::Int,
+                                NB::Int)
     n, m, d = tab.n, tab.m, tab.d
 
     # ℰ(A:B) = ℰ(B:A), so the generators are restricted to the smaller side S.
@@ -183,8 +185,8 @@ function _negativity_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::In
     # Rows 1:R0 hold the X and Z exponents on the traced-out sites, rows
     # R0+1:R those on S (see `_copy_sites!` for the layout).
     first = _group_sites_by_label!(tab, (NC, NA, NB, 0))
-    R0 = _copy_site_rows!(tab, ws, first[1], NC, 0)
-    R = _copy_site_rows!(tab, ws, first[side + 1], NS, R0)
+    R0 = _copy_site_rows!(tab, L, ws, first[1], NC, 0)
+    R = _copy_site_rows!(tab, L, ws, first[side + 1], NS, R0)
 
     # Pivoting on the traced-out rows alone leaves columns piv+1:m zero there,
     # and those columns are a basis of the stabilizer group of ρ_AB.

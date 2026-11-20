@@ -35,10 +35,16 @@ function _check_eltype(E::Type, d::Int)
     throw(ArgumentError("eltype = $E cannot hold entries mod d = $d; use one of $ok."))
 end
 
-# The stabilizer and destabilizer blocks and the phase vector of a tableau. They
-# share the tableau's arrays, so writing through them changes the tableau.
-_stab(tab::AbstractTableau) = XZBlock{GeneratorMajor}(tab.stab_x, tab.stab_z)
-_destab(tab::DestabilizerTableau) = XZBlock{GeneratorMajor}(tab.destab_x, tab.destab_z)
+# The layout marker of a tableau's X and Z blocks. Code that reaches the blocks
+# takes it as the argument after the tableau; an entry point reads it once and
+# passes it on, so the call that receives it is split on the two layouts.
+_layout_marker(tab::AbstractTableau)::Union{GeneratorMajor, QuditMajor} = tab.layout
+
+# The stabilizer and destabilizer blocks and the phase vector of a tableau,
+# with `L` the tableau's layout marker. They share the tableau's arrays, so
+# writing through them changes the tableau.
+_stab(tab::AbstractTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.stab_x, tab.stab_z)
+_destab(tab::DestabilizerTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.destab_x, tab.destab_z)
 _phase(tab::AbstractTableau) = tab.phase
 
 @noinline _throw_removed_field(s::Symbol, accessor::Symbol) =
@@ -66,8 +72,8 @@ function _stacked_int_matrix(b::_GMBlock, extra::Int)
 end
 
 # The generator matrix of `tab` in generator-major layout.
-function _stabilizer_generator_matrix(tab::AbstractTableau)
-    S = _stacked_int_matrix(_stab(tab), tab.storephase ? 1 : 0)
+function _stabilizer_generator_matrix(tab::AbstractTableau, L::TableauLayout)
+    S = _stacked_int_matrix(_stab(tab, L), tab.storephase ? 1 : 0)
     tab.storephase && (S[2tab.n+1, :] .= _phase(tab))
     return S
 end
@@ -101,7 +107,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function stabilizer_matrix(tab::AbstractTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    S = _stabilizer_generator_matrix(tab)
+    S = _stabilizer_generator_matrix(tab, _layout_marker(tab))
     return layout === :generator ? S : permutedims(S)
 end
 
@@ -126,7 +132,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    D = _stacked_int_matrix(_destab(tab), 0)
+    D = _stacked_int_matrix(_destab(tab, _layout_marker(tab)), 0)
     return layout === :generator ? D : permutedims(D)
 end
 

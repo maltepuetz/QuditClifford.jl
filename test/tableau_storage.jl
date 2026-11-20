@@ -181,14 +181,14 @@ end
             d in (2, 3), sp in (true, false)
         n = 4
         tab = TT(d, n; state = :product, basis = :Z, storephase = sp)
-        ts_QC._rset!(ts_QC._stab(tab), 1, 1, 2)
+        ts_QC._rset!(ts_QC._stab(tab, ts_QC._layout_marker(tab)), 1, 1, 2)
         Sm = stabilizer_matrix(tab)
-        b = ts_QC._stab(tab)
+        b = ts_QC._stab(tab, ts_QC._layout_marker(tab))
         @test all(ts_QC._rget(b, r, j) == Sm[r, j] for r in 1:2n, j in 1:n)
         @test ts_QC._phase(tab) == (sp ? Sm[2n+1, :] : Int[])
         if TT === DestabilizerTableau
             Dm = destabilizer_matrix(tab)
-            bd = ts_QC._destab(tab)
+            bd = ts_QC._destab(tab, ts_QC._layout_marker(tab))
             @test all(ts_QC._rget(bd, r, j) == Dm[r, j] for r in 1:2n, j in 1:n)
         end
     end
@@ -415,6 +415,17 @@ end
     end
 end
 
+@testset "layout marker" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        tab = TT(d, 5; state = :ghz)
+        @test tab.layout === QuditClifford.GeneratorMajor()
+        @test fieldtype(TT, :layout) === Union{QuditClifford.GeneratorMajor, QuditClifford.QuditMajor}
+        @test QuditClifford._layout_marker(tab) === QuditClifford.GeneratorMajor()
+        @test QuditClifford._stab(tab, QuditClifford.GeneratorMajor()) isa QuditClifford.XZBlock{QuditClifford.GeneratorMajor}
+        @test !hasmethod(QuditClifford._stab, Tuple{TT})
+    end
+end
+
 @testset "no raw storage access outside the storage files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
     allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl")
@@ -423,5 +434,6 @@ end
         text = read(joinpath(srcdir, f), String)
         f in allowed || @test !occursin(r"\.(stab|destab)_[xz]\b", text)
         @test !occursin(r"\.(stab|destab)\b", text)
+        @test !occursin(r"\b_(de)?stab\(\s*[A-Za-z_][A-Za-z_0-9]*\s*\)", text)
     end
 end

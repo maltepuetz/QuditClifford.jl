@@ -89,6 +89,7 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
+    layout::Union{GeneratorMajor, QuditMajor}  # layout of the X and Z blocks
     inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
@@ -173,6 +174,7 @@ function _build_stabilizer_tableau(
         phase,
         storephase,
         false,
+        GeneratorMajor(),
         inversemod,
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(E, 2n),
@@ -188,7 +190,7 @@ function _build_stabilizer_tableau(
     # A preset filler satisfies the generator contract by definition, so the
     # (d, n) path never pays for the check. Validating the built tableau rather
     # than the raw matrix lets the check borrow the rank workspaces.
-    check && !preset && _validate_generators!(out)
+    check && !preset && _validate_generators!(out, _layout_marker(out))
 
     return out
 end
@@ -304,7 +306,11 @@ state. See also [`StabilizerTableau`](@ref).
 """
 function reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
-    m = _preset_tableau!(_stab(tab), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+    return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
+end
+
+function _reset_preset!(tab::StabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec)
+    m = _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
     return tab
@@ -355,6 +361,7 @@ function Base.copy(tab::StabilizerTableau{IM, E}) where {IM, E}
         copy(tab.phase),
         tab.storephase,
         tab.iscanonical,
+        tab.layout,
         tab.inversemod,
         zero(tab.generator_workspace),
         zero(tab.pivot_workspace),
@@ -599,7 +606,8 @@ function Base.show(io::IO, tab::StabilizerTableau)
         return
     end
 
-    N = ndigits(_max_abs_entry(_stab(tab), _phase(tab), tab.m)) - 1
+    stab = _stab(tab, _layout_marker(tab))
+    N = ndigits(_max_abs_entry(stab, _phase(tab), tab.m)) - 1
     extraspace = 0
     isodd(N) && isodd(tab.n) && (extraspace += 1)
     dash_len = max(0, tab.n * (N + 2) ÷ 2 - 2 + extraspace)
@@ -615,7 +623,7 @@ function Base.show(io::IO, tab::StabilizerTableau)
     println(io)
 
     for col in 1:tab.m
-        _print_generator_row(io, _stab(tab), _phase(tab), col, N + 2)
+        _print_generator_row(io, stab, _phase(tab), col, N + 2)
     end
 end
 

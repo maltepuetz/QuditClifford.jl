@@ -291,8 +291,18 @@ true
   preserve the stabilizer/destabilizer duality.
 """
 function canonicalize!(tab::StabilizerTableau)
+    _canonicalize!(tab, _layout_marker(tab))
+    return nothing
+end
+
+function canonicalize!(tab::DestabilizerTableau)
+    _canonicalize!(tab, _layout_marker(tab))
+    return nothing
+end
+
+function _canonicalize!(tab::StabilizerTableau, L::TableauLayout)
     _canonicalize_tableau!(
-        _stab(tab),
+        _stab(tab, L),
         _phase(tab),
         tab.m,
         tab.d,
@@ -305,11 +315,11 @@ function canonicalize!(tab::StabilizerTableau)
     return nothing
 end
 
-function canonicalize!(tab::DestabilizerTableau)
+function _canonicalize!(tab::DestabilizerTableau, L::TableauLayout)
     _canonicalize_tableau_with_destab!(
-        _stab(tab),
+        _stab(tab, L),
         _phase(tab),
-        _destab(tab),
+        _destab(tab, L),
         tab.m,
         tab.d,
         tab.storephase,

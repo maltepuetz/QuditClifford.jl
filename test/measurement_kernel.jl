@@ -42,7 +42,7 @@ end
 
 mkref_col_updated!(::StabilizerTableau, ::Int) = nothing
 mkref_col_updated!(tab::DestabilizerTableau, col::Int) =
-    (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, tab.d); nothing)
+    (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, tab.d); nothing)
 
 mkref_after_noncommuting!(::StabilizerTableau, ::Int, ::Int, ::Int) = nothing
 function mkref_after_noncommuting!(tab::DestabilizerTableau, pivot::Int, comm0::Int, m::Int)
@@ -84,14 +84,14 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
     pivot = 0
     opc = MK._commutation_operand!(tab, op)
     for i in 1:m
-        commutator = mod(MK.commutation_col(MK._stab(tab), i, opc), d)
+        commutator = mod(MK.commutation_col(MK._stab(tab, MK._layout_marker(tab)), i, opc), d)
         commutator == 0 && continue
         if comm0 == 0
             t = MK._random_outcome(rng, outcome, d)
             for j in eachindex(tab.generator_workspace)
                 tab.generator_workspace[j] = stabilizer_matrix(tab)[j, i]
             end
-            MK.set_operator!(tab, i, op)
+            MK.set_operator!(tab, MK._layout_marker(tab), i, op)
             if tab.storephase
                 S = stabilizer_matrix(tab)
                 S[2n+1, i] = MK._measured_generator_phase(t, kop, d)
@@ -112,12 +112,12 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
         return t
     end
     tab.m == n && !tab.storephase && return 0
-    MK._span_coeffs_keep_basis!(tab, op)
-    in_span = MK._in_span_from_coeffs!(tab, op)
+    MK._span_coeffs_keep_basis!(tab, MK._layout_marker(tab), op)
+    in_span = MK._in_span_from_coeffs!(tab, MK._layout_marker(tab), op)
     res = tab.res_workspace
     if in_span
         tab.storephase || return 0
-        kacc = MK.phase_exponent_from_coeffs!(tab)
+        kacc = MK.phase_exponent_from_coeffs!(tab, MK._layout_marker(tab))
         if d == 2
             k = mod(-kacc + kop, 4)
             isodd(k) && throw(ArgumentError("eigenvalue ±i"))
@@ -129,13 +129,13 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
     t = MK._random_outcome(rng, outcome, d)
     newcol = m + 1
     tab.m = newcol
-    MK.set_operator!(tab, newcol, op)
+    MK.set_operator!(tab, MK._layout_marker(tab), newcol, op)
     if tab.storephase
         S = stabilizer_matrix(tab)
         S[2n+1, newcol] = MK._measured_generator_phase(t, kop, d)
         QuditClifford._load_stabilizer_matrix!(tab, S)
     end
-    MK._after_append_measurement!(tab, newcol, res)
+    MK._after_append_measurement!(tab, MK._layout_marker(tab), newcol, res)
     tab.iscanonical = false
     return t
 end
@@ -224,7 +224,7 @@ function mkref_fuzz(TT, d, n, flavor, storephase, nsteps, seed)
         # generator takes (the pivot alone never reaches the update).
         if tab.m > 0 && all(q -> 1 <= q <= n, MK._few_qudit_pauli_data(op isa GeneralPauli ? SinglePauli(1, 0, 0) : op)[1])
             opc = MK._commutation_operand!(tab, op)
-            anti = [i for i in 1:tab.m if mod(MK.commutation_col(MK._stab(tab), i, opc), d) != 0]
+            anti = [i for i in 1:tab.m if mod(MK.commutation_col(MK._stab(tab, MK._layout_marker(tab)), i, opc), d) != 0]
             if length(anti) >= 2
                 p = anti[1]
                 nsupp = count(q -> stabilizer_matrix(tab)[q, p] != 0 || stabilizer_matrix(tab)[n+q, p] != 0, 1:n)
@@ -306,25 +306,25 @@ end
         S[n+7, piv] = rand(rng, 1:(d - 1))
         storephase && (S[2n+1, piv] = rand(rng, 0:(MK.phase_modulus(d) - 1)))
         QuditClifford._load_stabilizer_matrix!(tab, S)
-        pu = MK._prepare_pivot_update(tab, piv, rand(rng, 1:(d - 1)))
+        pu = MK._prepare_pivot_update(tab, MK._layout_marker(tab), piv, rand(rng, 1:(d - 1)))
         @test pu.nsupp == 2
         pd = MK._PivotUpdate(pu.nsupp, false, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         ps = MK._PivotUpdate(pu.nsupp, true, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         for col in 2:n, a in (d == 2 ? (1,) : (1, 2, d - 1))
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d))
             before = stabilizer_matrix(tab)[:, col]
-            MK._absorb_pivot_power!(tab, col, a, pd)
+            MK._absorb_pivot_power!(tab, MK._layout_marker(tab), col, a, pd)
             dense = stabilizer_matrix(tab)[:, col]
             cdense = tab.xdotz_cache[col]
             S = stabilizer_matrix(tab)
             S[:, col] .= before
             QuditClifford._load_stabilizer_matrix!(tab, S)
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
-            MK._absorb_pivot_power!(tab, col, a, ps)
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d))
+            MK._absorb_pivot_power!(tab, MK._layout_marker(tab), col, a, ps)
             @test stabilizer_matrix(tab)[:, col] == dense
             @test tab.xdotz_cache[col] == cdense
             if TT === DestabilizerTableau
-                @test cdense == MK.dot_xz_col(MK._stab(tab), col, d)
+                @test cdense == MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d)
             end
             S = stabilizer_matrix(tab)
             S[:, col] .= before

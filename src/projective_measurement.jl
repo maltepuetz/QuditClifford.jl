@@ -110,10 +110,10 @@ end
 end
 
 # Whether `op` commutes with every active generator of `tab`.
-function _commutes_with_generators(tab::AbstractTableau, op::AbstractPauli)
+function _commutes_with_generators(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     normalized = _commutation_operand!(tab, op)
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     for i in 1:tab.m
         mod(commutation_col(stab, i, normalized), d) == 0 || return false
     end
@@ -142,11 +142,12 @@ phase exponent is `kws` (0 without a phase row).
 """
 function mul_col_by_workspace_power!(
     tab::AbstractTableau,
+    L::TableauLayout,
     col::Int,
     a::Int,
     kws::Int,
 )
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     genws = tab.pivot_workspace
     n = tab.n
     d = tab.d
@@ -227,8 +228,8 @@ end
 # phase into `kws`, and record its support in zacc_workspace, which nothing else
 # touches during a measurement. Must run before the pivot column is
 # overwritten.
-function _prepare_pivot_update(tab::AbstractTableau, pivot::Int, comm0::Int)
-    stab = _stab(tab)
+function _prepare_pivot_update(tab::AbstractTableau, L::TableauLayout, pivot::Int, comm0::Int)
+    stab = _stab(tab, L)
     genws = tab.pivot_workspace
     n = tab.n
     d = tab.d
@@ -256,9 +257,10 @@ end
 # `mul_col_by_workspace_power!`, with the pivot terms read from `pu`; for a
 # `DestabilizerTableau` it also patches `xdotz_cache[col]` from
 #     (x + a x_p)·(z + a z_p) = x·z + a (x_p·z + x·z_p) + a² x_p·z_p.
-@inline function _absorb_pivot_power!(tab::AbstractTableau, col::Int, a::Int, pu::_PivotUpdate)
+@inline function _absorb_pivot_power!(tab::AbstractTableau, L::TableauLayout, col::Int, a::Int,
+                                      pu::_PivotUpdate)
     a == 0 && return nothing
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     xg = _xgen(stab, col)
     zg = _zgen(stab, col)
     genws = tab.pivot_workspace
@@ -356,11 +358,13 @@ end
 # Type-specific hooks for generic projective measurement    #
 #############################################################
 
-@inline _on_noncommuting_col_updated!(tab::AbstractTableau, _col::Int) = nothing
-@inline _on_noncommuting_col_updated!(tab::DestabilizerTableau, col::Int) = _update_xdotz_cache!(tab, col)
+@inline _on_noncommuting_col_updated!(tab::AbstractTableau, ::TableauLayout, _col::Int) = nothing
+@inline _on_noncommuting_col_updated!(tab::DestabilizerTableau, L::TableauLayout, col::Int) =
+    _update_xdotz_cache!(tab, L, col)
 
 @inline function _after_noncommuting_measurement!(
     tab::AbstractTableau,
+    ::TableauLayout,
     _pivot::Int,
     _comm0::Int,
     _m::Int,
@@ -371,14 +375,15 @@ end
 
 @inline function _after_noncommuting_measurement!(
     tab::DestabilizerTableau,
+    L::TableauLayout,
     pivot::Int,
     comm0::Int,
     m::Int,
     pu::_PivotUpdate,
 )
     d = tab.d
-    stab = _stab(tab)
-    destab = _destab(tab)
+    stab = _stab(tab, L)
+    destab = _destab(tab, L)
 
     # noncommuting branch: update destabilizers
     inv_comm0 = tab.inversemod(comm0, d)
@@ -416,6 +421,7 @@ end
 
 @inline function _after_append_measurement!(
     tab::AbstractTableau,
+    ::TableauLayout,
     _newcol::Int,
     _res::AbstractVector{Int},
 )
@@ -424,6 +430,7 @@ end
 
 @inline function _after_append_measurement!(
     tab::DestabilizerTableau,
+    L::TableauLayout,
     newcol::Int,
     res::AbstractVector{Int},
 )
@@ -442,8 +449,8 @@ end
     end
     q == 0 && throw(ArgumentError("Failed to construct destabilizer: residual is zero."))
 
-    stab = _stab(tab)
-    destab = _destab(tab)
+    stab = _stab(tab, L)
+    destab = _destab(tab, L)
     # The new destabilizer v is built in pivot_workspace, in the storage element
     # type, so the projection below runs on same-type vector primitives. The
     # append branch has no pivot generator, so pivot_workspace holds nothing
@@ -505,7 +512,7 @@ end
         end
     end
 
-    _update_xdotz_cache!(tab, newcol)
+    _update_xdotz_cache!(tab, L, newcol)
     return nothing
 end
 
@@ -651,6 +658,11 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     outcome::Union{Int,Nothing}=nothing, # outcome used if random
     phase_policy::Int=0,
 )
+    return _measure!(rng, tab, _layout_marker(tab), op, outcome, phase_policy)
+end
+
+function _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
+                   op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
     _check_pauli_support(tab, op)
     d = tab.d
     n = tab.n
@@ -673,7 +685,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     # in res_workspace, which nothing in this loop writes; the commuting branch
     # below overwrites it from `op` again.
     opc = _commutation_operand!(tab, op)
-    stab = _stab(tab)
+    stab = _stab(tab, L)
 
     for i in 1:m
 
@@ -698,10 +710,10 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
             # store generator i in workspace, with everything the later
             # generators need from it, and then replace it by the operator
-            pu = _prepare_pivot_update(tab, i, commutator)
+            pu = _prepare_pivot_update(tab, L, i, commutator)
 
             # replace generator i by op (phase-aware if storephase=true)
-            set_operator!(tab, i, op)
+            set_operator!(tab, L, i, op)
 
             # IMPORTANT for mixed-state measurement:
             # we override the phase so that the new generator stabilizes the post-measurement state,
@@ -712,14 +724,14 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
             comm0 = commutator
             pivot = i
-            _on_noncommuting_col_updated!(tab, i)
+            _on_noncommuting_col_updated!(tab, L, i)
         else
             # multiply generator i by the (generator that we replaced)^(a)
             # where a = mod(-commutator * invmod(comm0, d), d)
             # this ensures that the new generator commutes with the operator;
             # the update also keeps xdotz_cache[i] current.
             a = mod(commutator * pu.ninv, d)
-            _absorb_pivot_power!(tab, i, a, pu)
+            _absorb_pivot_power!(tab, L, i, a, pu)
         end
     end
 
@@ -729,7 +741,7 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     # and `t` is the returned measurement result.        #
     ######################################################
     if comm0 != 0
-        _after_noncommuting_measurement!(tab, pivot, comm0, m, pu)
+        _after_noncommuting_measurement!(tab, L, pivot, comm0, m, pu)
         tab.iscanonical = false
         return t
     end
@@ -746,14 +758,14 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
     # check whether op is in the stabilizer span and set coeffs in c_workspace;
     # the generator basis stays as it is
-    _span_coeffs_keep_basis!(tab, op)
-    in_span = _in_span_from_coeffs!(tab, op)
+    _span_coeffs_keep_basis!(tab, L, op)
+    in_span = _in_span_from_coeffs!(tab, L, op)
     res = tab.res_workspace
 
     if in_span
         # deterministic outcome, state unchanged
         if tab.storephase
-            kacc = phase_exponent_from_coeffs!(tab)
+            kacc = phase_exponent_from_coeffs!(tab, L)
             if d == 2
                 # The eigenvalue is i^k; a Hermitian operator on Hermitian
                 # generators has even k, and (-1)^t = i^(2t).
@@ -777,11 +789,11 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
 
     newcol = m + 1
     tab.m = newcol
-    set_operator!(tab, newcol, op)
+    set_operator!(tab, L, newcol, op)
     if tab.storephase
         _phase(tab)[newcol] = _measured_generator_phase(t, kop, d)
     end
-    _after_append_measurement!(tab, newcol, res)
+    _after_append_measurement!(tab, L, newcol, res)
 
     tab.iscanonical = false
     return t

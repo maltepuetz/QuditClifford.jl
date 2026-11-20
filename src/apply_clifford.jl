@@ -697,7 +697,7 @@ end
 # `StabilizerTableau` needs neither, because clearing `iscanonical` is the
 # existing contract for a stale cache.
 @inline _before_clifford_scatter!(::AbstractTableau, prep, j::Int, v, vout) = nothing
-@inline _after_clifford!(::AbstractTableau, prep) = nothing
+@inline _after_clifford!(::AbstractTableau, ::TableauLayout, prep) = nothing
 
 ########################################
 # apply!                               #
@@ -776,7 +776,7 @@ function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
         "PreparedClifford for this tableau before applying it."))
     length(prep.targets) == 0 && return tab
     _validate_clifford_targets(prep, tab.n)
-    return _apply_columns!(tab, prep)
+    return _apply_columns!(tab, prep, _layout_marker(tab))
 end
 
 # The column loop of `_apply_prepared!`, for a `prep` already checked against
@@ -784,8 +784,9 @@ end
 # same body as the entry checks, the loop ran about 1.3x slower (two-qudit
 # brickwork gates on a `DestabilizerTableau`, n = 511, M3 Pro), and the
 # function barrier costs one call per gate.
-@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford)
-    stab = _stab(tab)
+@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
+                                  L::TableauLayout)
+    stab = _stab(tab, L)
     phase = _phase(tab)
     @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, stab, j)
@@ -799,7 +800,7 @@ end
         _before_clifford_scatter!(tab, prep, j, v, vout)
         _scatter_prepared!(prep, stab, j, vout)
     end
-    _after_clifford!(tab, prep)
+    _after_clifford!(tab, L, prep)
     tab.iscanonical = false
     return tab
 end
@@ -823,8 +824,9 @@ end
 # deliberately REUSES the main loop's `v`/`vout` buffers on the dense backing:
 # it runs strictly after that loop, nothing from it stays live, and this is not
 # an instance of the allocating-API scratch rule. Do not give it own buffers.
-function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford)
-    destab = _destab(tab)
+function _after_clifford!(tab::DestabilizerTableau, L::TableauLayout,
+                         prep::AbstractPreparedClifford)
+    destab = _destab(tab, L)
     @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, destab, j)
         vout = _matvec_prepared!(prep, v)

@@ -3,7 +3,7 @@
 #############################################################
 
 """
-    coeffs_from_generators!(tab, op)
+    coeffs_from_generators!(tab, L, op)
 
 Fill `tab.c_workspace` with coefficients of `op` in the active stabilizer-generator basis.
 
@@ -12,11 +12,11 @@ Fill `tab.c_workspace` with coefficients of `op` in the active stabilizer-genera
 """
 function coeffs_from_generators! end
 
-@inline function coeffs_from_generators!(tab::StabilizerTableau, op)
+@inline function coeffs_from_generators!(tab::StabilizerTableau, L::TableauLayout, op)
     n = tab.n
     d = tab.d
 
-    tab.iscanonical || canonicalize!(tab)
+    tab.iscanonical || _canonicalize!(tab, L)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -36,11 +36,11 @@ function coeffs_from_generators! end
     return cvec
 end
 
-@inline function coeffs_from_generators!(tab::DestabilizerTableau, op)
+@inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op)
     n = tab.n
     m = tab.m
     d = tab.d
-    destab = _destab(tab)
+    destab = _destab(tab, L)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -69,13 +69,14 @@ end
 
 @inline function _coeffs_from_destab_sparse!(
     tab::DestabilizerTableau,
+    L::TableauLayout,
     qudits::NTuple{D,Int},
     xs::NTuple{D,Int},
     zs::NTuple{D,Int},
 ) where D
     m = tab.m
     d = tab.d
-    destab = _destab(tab)
+    destab = _destab(tab, L)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)
@@ -94,57 +95,60 @@ end
     return cvec
 end
 
-@inline function coeffs_from_generators!(tab::DestabilizerTableau, op::SinglePauli)
+@inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op::SinglePauli)
     d = tab.d
     return _coeffs_from_destab_sparse!(
         tab,
+        L,
         (op.qudit,),
         (mod(op.x, d),),
         (mod(op.z, d),),
     )
 end
 
-@inline function coeffs_from_generators!(tab::DestabilizerTableau, op::DoublePauli)
+@inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op::DoublePauli)
     d = tab.d
     return _coeffs_from_destab_sparse!(
         tab,
+        L,
         (op.qudit1, op.qudit2),
         (mod(op.x1, d), mod(op.x2, d)),
         (mod(op.z1, d), mod(op.z2, d)),
     )
 end
 
-@inline function coeffs_from_generators!(tab::DestabilizerTableau, op::TriplePauli)
+@inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op::TriplePauli)
     d = tab.d
     return _coeffs_from_destab_sparse!(
         tab,
+        L,
         (op.qudit1, op.qudit2, op.qudit3),
         (mod(op.x1, d), mod(op.x2, d), mod(op.x3, d)),
         (mod(op.z1, d), mod(op.z2, d), mod(op.z3, d)),
     )
 end
 
-@inline function coeffs_from_generators!(tab::DestabilizerTableau, op::NPauli{D}) where D
+@inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op::NPauli{D}) where D
     d = tab.d
     xs = ntuple(i -> mod(op.xs[i], d), D)
     zs = ntuple(i -> mod(op.zs[i], d), D)
-    return _coeffs_from_destab_sparse!(tab, op.qudits, xs, zs)
+    return _coeffs_from_destab_sparse!(tab, L, op.qudits, xs, zs)
 end
 
 """
-    residual_from_coeffs!(tab, op)
+    residual_from_coeffs!(tab, L, op)
 
 Compute `op - Σ_j c_j g_j` in XZ space and store it in `tab.res_workspace`,
 where `c_j` are taken from `tab.c_workspace` and `g_j` are active stabilizer generators.
 """
-@inline function residual_from_coeffs!(tab::AbstractTableau, op)
+@inline function residual_from_coeffs!(tab::AbstractTableau, L::TableauLayout, op)
     res = tab.res_workspace
     set_operator!(res, tab, op)
 
     d = tab.d
     m = tab.m
     cvec = tab.c_workspace
-    stab = _stab(tab)
+    stab = _stab(tab, L)
 
     @inbounds for j in 1:m
         aj = cvec[j]
@@ -155,19 +159,19 @@ where `c_j` are taken from `tab.c_workspace` and `g_j` are active stabilizer gen
 end
 
 """
-    in_span_and_coeffs!(tab, op)
+    in_span_and_coeffs!(tab, L, op)
 
 Fill coefficients in `tab.c_workspace`, residual in `tab.res_workspace`,
 and return whether `op` is in the span of active stabilizer generators.
 """
-@inline function in_span_and_coeffs!(tab::AbstractTableau, op)
-    coeffs_from_generators!(tab, op)
-    return _in_span_from_coeffs!(tab, op)
+@inline function in_span_and_coeffs!(tab::AbstractTableau, L::TableauLayout, op)
+    coeffs_from_generators!(tab, L, op)
+    return _in_span_from_coeffs!(tab, L, op)
 end
 
 # The residual and in-span test for coefficients already in `c_workspace`.
-@inline function _in_span_from_coeffs!(tab::AbstractTableau, op)
-    residual_from_coeffs!(tab, op)
+@inline function _in_span_from_coeffs!(tab::AbstractTableau, L::TableauLayout, op)
+    residual_from_coeffs!(tab, L, op)
 
     n = tab.n
     res = tab.res_workspace
@@ -178,16 +182,16 @@ end
 end
 
 """
-    phase_exponent_from_coeffs!(tab::AbstractTableau)
+    phase_exponent_from_coeffs!(tab::AbstractTableau, L::TableauLayout)
 
 Compute the phase exponent of `Q = ∏_j g_j^{c[j]}` from `tab.c_workspace`,
 where `g_j` are active stabilizer generators.
 """
-@inline function phase_exponent_from_coeffs!(tab::AbstractTableau)
+@inline function phase_exponent_from_coeffs!(tab::AbstractTableau, L::TableauLayout)
     n = tab.n
     m = tab.m
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     tab.storephase || return 0
 
     phase = _phase(tab)
@@ -540,7 +544,7 @@ function _solve_generator_rows!(
 end
 
 """
-    _span_coeffs_keep_basis!(tab, op)
+    _span_coeffs_keep_basis!(tab, L, op)
 
 `coeffs_from_generators!` without changing the generator basis: a
 `StabilizerTableau` that is not canonical solves for the coefficients on a
@@ -551,14 +555,15 @@ left as they were. Writes `c_workspace`, `res_workspace`, `zacc_workspace`
 and, at `d = 2`, `generator_workspace`, whose `2n + storephase` entries hold
 the `cld(m, 64) * 8 ÷ sizeof(Int) <= 2n` coefficient bit words.
 """
-@inline _span_coeffs_keep_basis!(tab::DestabilizerTableau, op) = coeffs_from_generators!(tab, op)
+@inline _span_coeffs_keep_basis!(tab::DestabilizerTableau, L::TableauLayout, op) =
+    coeffs_from_generators!(tab, L, op)
 
-function _span_coeffs_keep_basis!(tab::StabilizerTableau, op)
-    tab.iscanonical && return coeffs_from_generators!(tab, op)
+function _span_coeffs_keep_basis!(tab::StabilizerTableau, L::TableauLayout, op)
+    tab.iscanonical && return coeffs_from_generators!(tab, L, op)
     n = tab.n
     m = tab.m
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
 
     cvec = tab.c_workspace
     @turbo for j in eachindex(cvec)

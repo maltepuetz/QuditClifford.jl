@@ -25,7 +25,9 @@ span exactly when it commutes with every generator. The generator basis and
 `iscanonical` are unchanged; dense operators reuse the residual workspace.
 This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a dense Pauli.
 """
-function expect_int!(tab::AbstractTableau, op::AbstractPauli)
+expect_int!(tab::AbstractTableau, op::AbstractPauli) = _expect_int!(tab, _layout_marker(tab), op)
+
+function _expect_int!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     _check_pauli_support(tab, op)
     d = tab.d
     kP = op.phase
@@ -33,13 +35,13 @@ function expect_int!(tab::AbstractTableau, op::AbstractPauli)
     # Pure state: the span is exactly the Paulis commuting with every generator
     # (see `measure!`), and without phases the in-span answer is `0`.
     if tab.m == tab.n && !tab.storephase
-        return _commutes_with_generators(tab, op) ? 0 : -1
+        return _commutes_with_generators(tab, L, op) ? 0 : -1
     end
 
-    in_span_and_coeffs!(tab, op) || return -1
+    in_span_and_coeffs!(tab, L, op) || return -1
     tab.storephase || return 0
 
-    kacc = phase_exponent_from_coeffs!(tab)
+    kacc = phase_exponent_from_coeffs!(tab, L)
     d_phase = phase_modulus(d)
     return mod(mod(kP, d_phase) - kacc, d_phase)
 end

@@ -18,6 +18,7 @@
 
 abstract type TableauLayout end
 struct GeneratorMajor <: TableauLayout end
+struct QuditMajor <: TableauLayout end
 
 struct XZBlock{L<:TableauLayout, M<:AbstractMatrix{<:_StorageEltype}}
     x::M
@@ -148,6 +149,7 @@ function _stacked_views(S::Matrix{Int}, n::Int, storephase::Bool)
 end
 
 const _GMBlock = XZBlock{GeneratorMajor}
+const _QMBlock = XZBlock{QuditMajor}
 
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)

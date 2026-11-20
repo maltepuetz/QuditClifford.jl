@@ -175,7 +175,7 @@ end
     for trial in 1:6
         tab = dense_random_tableau(TT, d, 3, Xoshiro(100d + trial))
         before = dense_snapshot(tab)
-        G, Gphase, k, cstar = QC._prepare_support(tab)
+        G, Gphase, k, cstar = QC._prepare_support(tab, QC._layout_marker(tab))
         n = tab.n
         @test dense_unchanged(tab, before)
         G.x .+= d; G.z .+= d; Gphase .+= d

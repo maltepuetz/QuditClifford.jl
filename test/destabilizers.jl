@@ -297,11 +297,11 @@ end
 
                 for j in 1:tab.m
                     @test tab.xdotz_cache[j] ==
-                          QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                          QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
                 end
 
                 direct = copy(destabilizer_matrix(tab))
-                QuditClifford.rebuild_destabilizers!(tab)
+                QuditClifford.rebuild_destabilizers!(tab, QuditClifford._layout_marker(tab))
                 @test destabilizer_matrix(tab) == direct
             end
         end
@@ -418,8 +418,8 @@ end
         tab = TT(d, n; state=:product, basis=:Z)
 
         if want_mult !== nothing
-            c1 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 1, op), d)
-            c2 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 2, op), d)
+            c1 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), 1, op), d)
+            c2 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), 2, op), d)
             @test mod(-c2 * invmod(c1, d), d) == want_mult
         end
 
@@ -429,7 +429,7 @@ end
 
         # generators stay mutually commuting
         for i in 1:tab.m, j in 1:tab.m
-            @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, stabilizer_matrix(tab)[:, j]), d) == 0
+            @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), i, stabilizer_matrix(tab)[:, j]), d) == 0
         end
         # inactive capacity stays zeroed
         @test all(stabilizer_matrix(tab)[:, (tab.m + 1):end] .== 0)
@@ -437,7 +437,7 @@ end
         if TT === DestabilizerTableau
             _assert_duality(tab)
             for j in 1:tab.m
-                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):end] .== 0)
         end
@@ -495,7 +495,7 @@ end
 
             for j in 1:tab.m
                 @test tab.xdotz_cache[j] ==
-                      QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                      QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):n] .== 0)
             @test all(destabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)

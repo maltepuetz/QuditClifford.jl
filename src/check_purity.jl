@@ -44,8 +44,14 @@ true
 function is_pure(tab::AbstractTableau; verify::Bool=false)
     tab.m == tab.n || return false
     verify || return true
-    is_commuting(tab) || return false
-    is_independent(tab) || return false
+    return _verify_pure(tab, _layout_marker(tab))
+end
+
+# Whether the active generators of a tableau with `m == n` commute and are
+# independent.
+function _verify_pure(tab::AbstractTableau, L::TableauLayout)
+    _first_noncommuting_pair(tab, L) == (0, 0) || return false
+    _generator_rank(tab, L) == tab.m || return false
     return true
 end
 
@@ -128,28 +134,29 @@ end
 # rank workspace for `tab.d`: the packed columns in `bit_workspace` at d = 2,
 # else an `m x m` block of `rank_workspace` (2n x n, and m <= n) for the
 # products. Every caller reads the result before the workspace is used again.
-function _first_noncommuting_pair(tab::AbstractTableau)
+function _first_noncommuting_pair(tab::AbstractTableau, L::TableauLayout)
     m = tab.m
     m <= 1 && return (0, 0)
     if tab.d == 2
-        nw = _pack_sites_gf2!(tab.bit_workspace, _stab(tab), m, Base.OneTo(tab.n), tab.n)
+        nw = _pack_sites_gf2!(tab.bit_workspace, _stab(tab, L), m, Base.OneTo(tab.n), tab.n)
         return _first_noncommuting_pair_gf2(tab.bit_workspace, nw, m)
     end
-    return _first_noncommuting_pair(_stab(tab), m, tab.d, view(tab.rank_workspace, 1:m, 1:m))
+    return _first_noncommuting_pair(_stab(tab, L), m, tab.d, view(tab.rank_workspace, 1:m, 1:m))
 end
 
 # Check if all active generators commute. Borrows the rank workspace for `d`,
-# which `is_pure` then hands to `is_independent`; this call is finished with it
+# which `is_pure` then hands to the rank check; this check is finished with it
 # by then.
-is_commuting(tab::AbstractTableau) = _first_noncommuting_pair(tab) == (0, 0)
+is_commuting(tab::AbstractTableau) = _first_noncommuting_pair(tab, _layout_marker(tab)) == (0, 0)
 
 # Rank of the active generator columns over GF(d). Consumes the rank
 # workspace that `d` selects, which the elimination is free to leave in column
 # echelon form -- nothing reads it back.
-_generator_rank(tab::AbstractTableau) = _rank_on_sites!(tab, Base.OneTo(tab.n), tab.n, tab.m)
+_generator_rank(tab::AbstractTableau, L::TableauLayout) =
+    _rank_on_sites!(tab, L, Base.OneTo(tab.n), tab.n, tab.m)
 
 """Check if the active stabilizer generators are linearly independent (rank m)."""
-is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
+is_independent(tab::AbstractTableau) = _generator_rank(tab, _layout_marker(tab)) == tab.m
 
 # Reject generator columns that cannot represent a stabilizer group.
 #
@@ -165,13 +172,13 @@ is_independent(tab::AbstractTableau) = _generator_rank(tab) == tab.m
 #
 # Runs on the built tableau so it can borrow the rank workspace for `d` rather
 # than allocate its own -- the two checks take it in turn, never at once.
-function _validate_generators!(tab::AbstractTableau)
+function _validate_generators!(tab::AbstractTableau, L::TableauLayout)
     m = tab.m
     # A qubit generator must also be Hermitian, a ≡ x·z (mod 2): otherwise it
     # squares to -I and stabilizes nothing. Without stored phases there is no `a`
     # to check.
     if tab.d == 2 && tab.storephase
-        b, phase = _stab(tab), _phase(tab)
+        b, phase = _stab(tab, L), _phase(tab)
         for j in 1:m
             xz = dot_xz_col(b, j, 2)
             mod(phase[j], 2) == xz && continue
@@ -182,7 +189,7 @@ function _validate_generators!(tab::AbstractTableau)
         end
     end
     if m > 1
-        pair = _first_noncommuting_pair(tab)
+        pair = _first_noncommuting_pair(tab, L)
         if pair != (0, 0)
             throw(ArgumentError(
                 "Stabilizer generators must commute, but generators $(pair[1]) and " *
@@ -190,7 +197,7 @@ function _validate_generators!(tab::AbstractTableau)
         end
     end
     if m > 0
-        r = _generator_rank(tab)
+        r = _generator_rank(tab, L)
         r == m || throw(ArgumentError(
             "Stabilizer generators must be independent, but the $m active " *
             "generators span rank $r. Pass check=false to skip this check."))

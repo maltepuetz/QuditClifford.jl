@@ -103,7 +103,7 @@ const TIER_COUNTS = zeros(Int, 4)
         S = StabilizerTableau(3, copy(_wl_stab(D)); m = D.m, check = false)
         @test D.m == 16
         op = first_anticommuting(D, [SinglePauli(q, 0, 1) for q in 1:16])
-        @test !QuditClifford._commutes_with_generators(S, op)
+        @test !_wl_commutes(S, op)
         # The fixed-Z leaf commutes and leaves both tableau types as they were.
         fixed = first_in_branch(D, [SinglePauli(q, 0, 1) for q in 1:16], :fixed)
         for tab in (copy(D), copy(S))

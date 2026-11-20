@@ -109,13 +109,13 @@ end
 
     # Insertion into a tableau column follows exactly the same conversion rules.
     for (col, (op, expected)) in enumerate(operators_and_dense[1:3])
-        QuditClifford.set_operator!(tab, col, op)
+        QuditClifford.set_operator!(tab, QuditClifford._layout_marker(tab), col, op)
         @test stabilizer_matrix(tab)[:, col] == expected
     end
-    QuditClifford.set_operator!(tab, 1, operators_and_dense[4][1])
+    QuditClifford.set_operator!(tab, QuditClifford._layout_marker(tab), 1, operators_and_dense[4][1])
     @test stabilizer_matrix(tab)[:, 1] == operators_and_dense[4][2]
-    QuditClifford.set_operator!(tab, 2, vector_op)
+    QuditClifford.set_operator!(tab, QuditClifford._layout_marker(tab), 2, vector_op)
     @test stabilizer_matrix(tab)[:, 2] == Int[1, 0, 1, 2, 0, 2, 1]
-    QuditClifford.set_operator!(tab, 3, view(vector_op, 1:6))
+    QuditClifford.set_operator!(tab, QuditClifford._layout_marker(tab), 3, view(vector_op, 1:6))
     @test stabilizer_matrix(tab)[:, 3] == Int[1, 0, 1, 2, 0, 2, 0]
 end
