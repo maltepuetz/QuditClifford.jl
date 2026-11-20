@@ -1,8 +1,9 @@
 using Test
 include(joinpath(@__DIR__, "workloads.jl"))
 
-# Barrett and fallback call counts, filled by the tier testset at the end.
-const TIER_COUNTS = zeros(Int, 2)
+# Tier call counts, filled by the tier testset at the end: Barrett, fallback,
+# Shoup in lanes of the storage type, Shoup in widened lanes.
+const TIER_COUNTS = zeros(Int, 4)
 
 @testset "Workloads" begin
     @testset "Entropy profile comparison and baseline compatibility" begin
@@ -1024,11 +1025,21 @@ const TIER_COUNTS = zeros(Int, 2)
         @test hist[end] < 64
     end
 
-    # Count which tier of src/modular.jl each leaf reaches. Every call with a
-    # multiplier other than 0, 1 and d-1 asks `_barrett_valid` once, so a
-    # counting copy of it records Barrett (true) and fallback (false) calls.
-    # The copy recomputes the predicate from the same table, so results are
-    # unchanged; if those internals move, this errors instead of passing.
+    # Count which tier of src/modular.jl each leaf reaches. A tableau stores
+    # UInt8 entries for d <= 251 and UInt16 up to 65521, so its generator and
+    # rank updates take the narrow primitives, and every narrow call with a
+    # multiplier other than 0, 1 and d-1 asks `_shoup_in_eltype` once (Shoup
+    # in lanes of the storage type, or in widened lanes). The residual of
+    # `expect!` and of a deterministic `measure!` subtracts narrow generators
+    # from an `Int` workspace; those mixed-type calls run in `Int` and ask
+    # `_barrett_valid` once (Barrett, or the fallback). Counting copies of the
+    # two predicates record each answer. They recompute the same predicates,
+    # so results are unchanged; if those internals move, this errors instead
+    # of passing.
+    #
+    # No leaf stores `Int` by default and reaches the `Int` primitives: the
+    # only such d is the overflow-safe group's, whose Clifford leaves make no
+    # calls into src/modular.jl.
     @testset "Dense and modulus leaves reach the arithmetic tier they claim" begin
         @eval QuditClifford @inline function _barrett_valid(d::Int)
             ok = d < 1 ? false :
@@ -1037,37 +1048,54 @@ const TIER_COUNTS = zeros(Int, 2)
             Main.TIER_COUNTS[ok ? 1 : 2] += 1
             return ok
         end
+        @eval QuditClifford @inline function _shoup_in_eltype(::Type{E}, d::Int) where {E<:_NarrowEltype}
+            ok = 2d <= Int(typemax(E)) + 1
+            Main.TIER_COUNTS[ok ? 3 : 4] += 1
+            return ok
+        end
         function tiers(leaf)
             fill!(TIER_COUNTS, 0)
             run(leaf; samples = 1, evals = 1, seconds = 1.0)
-            return (barrett = TIER_COUNTS[1], fallback = TIER_COUNTS[2])
+            return (barrett = TIER_COUNTS[1], fallback = TIER_COUNTS[2],
+                    lanes = TIER_COUNTS[3], widened = TIER_COUNTS[4])
         end
+        # Lanes of the default storage type at d: UInt8 lanes up to d = 128,
+        # UInt16 lanes from there to 32768 (widened UInt8 up to 251).
+        in_lanes(d) = 2d <= Int(typemax(QuditClifford._default_eltype(d))) + 1
 
-        # the counter sees the existing fallback probe
-        @test tiers(bench_canonicalize_state(fallback_probe_state(16))).fallback > 0
+        # the counters see the fallback probe: UInt8 storage in UInt16 lanes
+        @test !in_lanes(FALLBACK_PRIME)
+        c = tiers(bench_canonicalize_state(fallback_probe_state(16)))
+        @test c.widened > 0 && c.lanes == 0
 
         @test QuditClifford._barrett_valid(5)
+        @test map(QuditClifford._barrett_valid, MODULUS_PRIMES) == (false, true, false)
+        @test map(in_lanes, (5, MODULUS_PRIMES...)) == (true, false, true, true)
+        reached = zeros(Int, 4)
         for T in (StabilizerTableau, DestabilizerTableau)
-            for (key, leaf) in dense_group(; d = 5, n = 16, T)
-                c = tiers(leaf)
-                @test c.barrett > 0
-                @test c.fallback == 0
-            end
-            for d in MODULUS_PRIMES
+            for d in (5, MODULUS_PRIMES...)
+                group = d == 5 ? dense_group(; d, n = 16, T) : modulus_group(; d, n = 16, T)
                 barrett = QuditClifford._barrett_valid(d)
-                @test barrett == (d == 443)
-                for (key, leaf) in modulus_group(; d, n = 16, T)
+                lanes = in_lanes(d)
+                for (key, leaf) in group
                     c = tiers(leaf)
-                    if key == "entropy/half" && d <= 255
-                        # The rank runs in the UInt8 workspace, outside
-                        # src/modular.jl, below 256.
-                        @test c.barrett == c.fallback == 0
-                        continue
+                    reached .+= (c.barrett, c.fallback, c.lanes, c.widened)
+                    shoup, other_shoup = lanes ? (c.lanes, c.widened) : (c.widened, c.lanes)
+                    int, other_int = barrett ? (c.barrett, c.fallback) : (c.fallback, c.barrett)
+                    # only the tiers d selects, and at least one general multiplier
+                    @test other_shoup == 0
+                    @test other_int == 0
+                    @test shoup + int > 0
+                    # eliminations and generator updates run in the storage type
+                    if key in ("canonicalize!", "entropy/half", "measure!/noncommuting")
+                        @test shoup > 0
                     end
-                    @test (barrett ? c.barrett : c.fallback) > 0
-                    @test (barrett ? c.fallback : c.barrett) == 0
+                    # the residual against the Int workspace
+                    key == "expect!" && @test int > 0
                 end
             end
         end
+        # together the groups reach every tier
+        @test all(>(0), reached)
     end
 end
