@@ -47,9 +47,15 @@ XZBlock{L}(x::M, z::M) where {L, M} = XZBlock{L, M}(x, z)
 #   are page-aligned, so unshifted blocks would put them in the same set for
 #   every `j`.
 #
-# Columns shorter than `_PAD_MIN_COL_BYTES` are neither padded nor shifted: a
-# column stride under 256 bytes already spreads consecutive generators over
-# distinct cache sets, so padding buys nothing there.
+# Columns shorter than `_PAD_MIN_COL_BYTES` are neither padded nor shifted:
+# n < 256 for `UInt8` entries, n < 32 for 8-byte `Int`. From 256 bytes on, the
+# padding is a trade-off. With `UInt8` entries it makes the one-qudit gate
+# sweeps up to 1.5x faster near a power of two (n = 256 and 511-513), and it
+# makes random two-qudit gates at d = 3 up to 1.2x slower, because an
+# unpadded stride keeps the in-page offsets that the hardware prefetchers
+# follow when a sweep reads two qudits per generator. Of the cutoffs 256, 512
+# and 1024 bytes, 256 has the smallest worst-case slowdown against the best of
+# the three at each n (monitored circuits differ by at most 1.13x).
 
 const _BlockMatrix{T} = SubArray{T, 2, Matrix{T}, Tuple{Base.OneTo{Int}, UnitRange{Int}}, false}
 
