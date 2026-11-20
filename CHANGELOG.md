@@ -163,15 +163,19 @@ dependency bump — carries the `skip-changelog` label instead.
   column at `d = 2`.
 - Tableau operations run on the narrow storage that is the default:
   generator updates in `apply!`, `measure!`, `dephase!` and `canonicalize!`
-  operate on `UInt8` or `UInt16` entries, and a tableau with its workspaces
-  takes at most about twice the bytes of its generators: at `n = 1024`–`4096`
-  a `StabilizerTableau` takes 2.0–2.2× at `d = 3` and 1.2–1.3× at `d = 2`, a
-  `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. A `StabilizerTableau` at
-  `d = 3` and `n = 1024` takes 4.4 bytes per `n²` instead of 32.8 with `Int`
-  storage. Against the previous release, at `n = 511`–`1025` and
-  `d = 2, 3, 31`, one-qudit random gates run 1.3–7× faster, two-qudit random
-  gates 1.1–4.4×, random-outcome measurements 1.2–2.3× and `canonicalize!`
-  1.4–4.3×; at `d = 257` (`UInt16`) the half-chain entropy is 10× faster.
+  operate on `UInt8` or `UInt16` entries. At `n ≥ 1024` a tableau with its
+  workspaces takes about twice the bytes of its generators or less: at
+  `n = 1024`–`4096` a `StabilizerTableau` takes 2.0–2.2× at `d = 3` and
+  1.2–1.3× at `d = 2`, a `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. At
+  small `n` the padding of the generator blocks adds more (a
+  `StabilizerTableau` at `d = 3` takes 3.7× at `n = 32`). A
+  `StabilizerTableau` at `d = 3` and `n = 1024` takes 4.4 bytes per `n²`
+  instead of 32.8 with `Int` storage. Against `main` before the split and
+  narrow storage (the state after the commuting-measurement change above), at
+  `n = 511`–`1025` and `d = 2, 3, 31`, one-qudit random gates run 1.3–7×
+  faster, two-qudit random gates 1.1–4.4×, random-outcome measurements
+  1.2–2.3× and `canonicalize!` 1.4–4.3×; at `d = 257` (`UInt16`) the
+  half-chain entropy is 10× faster.
   Full timings are in the pull request description.
 
 ### Documentation
