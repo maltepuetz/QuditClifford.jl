@@ -424,11 +424,12 @@ end
         @test QuditClifford._stab(tab, QuditClifford.GeneratorMajor()) isa QuditClifford.XZBlock{QuditClifford.GeneratorMajor}
         @test !hasmethod(QuditClifford._stab, Tuple{TT})
     end
+    @test !hasmethod(QuditClifford._destab, Tuple{DestabilizerTableau})
 end
 
 @testset "no raw storage access outside the storage files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
-    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl")
+    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl", "layout.jl")
     for f in readdir(srcdir)
         endswith(f, ".jl") || continue
         text = read(joinpath(srcdir, f), String)

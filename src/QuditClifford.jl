@@ -22,7 +22,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     apply!, conjugate,
     random_clifford, random_clifford!, random_state!,
     StabilizerKet, ket, state_vector, density_matrix,
-    stabilizer_matrix, destabilizer_matrix
+    stabilizer_matrix, destabilizer_matrix,
+    qudit_major!, generator_major!, tableau_layout
 
 import Random, Primes
 import Random.rand!
@@ -42,6 +43,7 @@ include("abstract_tableau.jl")
 include("stabilizer_tableau.jl")
 include("destabilizer_tableau.jl")
 include("tableau_storage.jl")
+include("layout.jl")
 include("canonicalize.jl")
 include("tableau_equality.jl")
 include("operator.jl")

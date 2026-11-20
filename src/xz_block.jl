@@ -2,14 +2,20 @@
 #
 # An `XZBlock` holds the X and Z exponents of a set of generators as two
 # matrices. In the `GeneratorMajor` layout generator `j` is column `j` of both:
-# `x[q, j]` and `z[q, j]` are its exponents on qudit `q`. Every operation below
-# works on whole generators or single entries, and calls the `src/modular.jl`
-# primitives on the contiguous per-generator vectors, so the arithmetic tiers and
-# their preconditions (reduced entries, no aliasing) are those of the primitives.
+# `x[q, j]` and `z[q, j]` are its exponents on qudit `q`. In the `QuditMajor`
+# layout generator `j` is row `j`: its exponents on qudit `q` are `x[j, q]` and
+# `z[j, q]`. Every operation below works on whole generators or single entries,
+# and calls the `src/modular.jl` primitives on the per-generator vectors
+# (contiguous columns, or strided rows), so the arithmetic tiers and their
+# preconditions (reduced entries, no aliasing) are those of the primitives.
 #
-# Methods are written for `XZBlock{GeneratorMajor}` only; another layout gets a
-# `MethodError`. This file touches only `b.x`, `b.z` and plain arrays, never a
-# tableau.
+# Two kinds of methods. The leaves (`_nq`, `_ncap`, `_xget`, `_zget`, `_xset!`,
+# `_zset!`, `_xgen`, `_zgen`, `_zero_gen!`, `_swap_gens!` and the `dot_xz_*`
+# products) know the layout: each has one method for `XZBlock{GeneratorMajor}`
+# and one for `XZBlock{QuditMajor}`, and none for a bare `XZBlock`. Every other
+# operation is a single method on `XZBlock` that calls only leaves, so it works
+# in both layouts. This file touches only `b.x`, `b.z` and plain arrays, never
+# a tableau.
 #
 # The matrices hold one of the storage element types `E` (`_StorageEltype`).
 # Single entries go in and out as `Int` (`_xget`, `_xset!` and their kin), so
@@ -153,6 +159,8 @@ const _QMBlock = XZBlock{QuditMajor}
 
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)
+@inline _nq(b::_QMBlock) = size(b.x, 2)
+@inline _ncap(b::_QMBlock) = size(b.x, 1)
 
 # Entries are read as `Int` and written from an `Int` `v` with `0 ≤ v < d`,
 # which every storage element type of the block holds (see `_eltype_admissible`),
@@ -167,13 +175,23 @@ end
     @inbounds b.z[q, j] = v % eltype(b.z)
     return v
 end
+@inline _xget(b::_QMBlock, q::Int, j::Int) = @inbounds b.x[j, q] % Int
+@inline _zget(b::_QMBlock, q::Int, j::Int) = @inbounds b.z[j, q] % Int
+@inline function _xset!(b::_QMBlock, v::Int, q::Int, j::Int)
+    @inbounds b.x[j, q] = v % eltype(b.x)
+    return v
+end
+@inline function _zset!(b::_QMBlock, v::Int, q::Int, j::Int)
+    @inbounds b.z[j, q] = v % eltype(b.z)
+    return v
+end
 
 # Combined row `r` in `1:2n`, X rows first.
-@inline function _rget(b::_GMBlock, r::Int, j::Int)
+@inline function _rget(b::XZBlock, r::Int, j::Int)
     n = _nq(b)
     return r <= n ? _xget(b, r, j) : _zget(b, r - n, j)
 end
-@inline function _rset!(b::_GMBlock, v::Int, r::Int, j::Int)
+@inline function _rset!(b::XZBlock, v::Int, r::Int, j::Int)
     n = _nq(b)
     r <= n ? _xset!(b, v, r, j) : _zset!(b, v, r - n, j)
     return v
@@ -181,6 +199,8 @@ end
 
 @inline _xgen(b::_GMBlock, j::Int) = view(b.x, :, j)
 @inline _zgen(b::_GMBlock, j::Int) = view(b.z, :, j)
+@inline _xgen(b::_QMBlock, j::Int) = view(b.x, j, :)
+@inline _zgen(b::_QMBlock, j::Int) = view(b.z, j, :)
 
 # Stacked vectors `[x; z]` of length at least `2n`, of any storage element
 # type. Operations between a vector and a block of different element types go
@@ -188,14 +208,14 @@ end
 @inline _vx(v::AbstractVector{<:_StorageEltype}, n::Int) = view(v, 1:n)
 @inline _vz(v::AbstractVector{<:_StorageEltype}, n::Int) = view(v, n+1:2n)
 
-function _copy_gen!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int)
+function _copy_gen!(v::AbstractVector{<:_StorageEltype}, b::XZBlock, j::Int)
     n = _nq(b)
     copyto!(_vx(v, n), _xgen(b, j))
     copyto!(_vz(v, n), _zgen(b, j))
     return v
 end
 
-function _load_gen!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype})
+function _load_gen!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype})
     n = _nq(b)
     copyto!(_xgen(b, j), _vx(v, n))
     copyto!(_zgen(b, j), _vz(v, n))
@@ -203,6 +223,12 @@ function _load_gen!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype})
 end
 
 function _zero_gen!(b::_GMBlock, j::Int)
+    fill!(_xgen(b, j), 0)
+    fill!(_zgen(b, j), 0)
+    return b
+end
+
+function _zero_gen!(b::_QMBlock, j::Int)
     fill!(_xgen(b, j), 0)
     fill!(_zgen(b, j), 0)
     return b
@@ -220,8 +246,20 @@ function _swap_gens!(b::_GMBlock, i::Int, j::Int)
     return b
 end
 
-# Copy generator `k` into generator `j` (`j ≠ k`: distinct columns).
-function _move_gen!(b::_GMBlock, j::Int, k::Int)
+function _swap_gens!(b::_QMBlock, i::Int, j::Int)
+    i == j && return b
+    for blk in (b.x, b.z)
+        @inbounds for q in axes(blk, 2)
+            t = blk[i, q]
+            blk[i, q] = blk[j, q]
+            blk[j, q] = t
+        end
+    end
+    return b
+end
+
+# Copy generator `k` into generator `j` (`j ≠ k`: distinct generators).
+function _move_gen!(b::XZBlock, j::Int, k::Int)
     j == k && return b
     copyto!(_xgen(b, j), _xgen(b, k))
     copyto!(_zgen(b, j), _zgen(b, k))
@@ -230,19 +268,19 @@ end
 
 # generator j  (+=, -=, =)  a * v, v stacked. `v` is a separate vector from the
 # block, so it cannot alias generator j.
-function _gen_addmul!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+function _gen_addmul!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     addmul_mod!(_xgen(b, j), _vx(v, n), a, d)
     addmul_mod!(_zgen(b, j), _vz(v, n), a, d)
     return b
 end
-function _gen_submul!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+function _gen_submul!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     submul_mod!(_xgen(b, j), _vx(v, n), a, d)
     submul_mod!(_zgen(b, j), _vz(v, n), a, d)
     return b
 end
-function _gen_mulcopy!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+function _gen_mulcopy!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     mulcopy_mod!(_xgen(b, j), _vx(v, n), a, d)
     mulcopy_mod!(_zgen(b, j), _vz(v, n), a, d)
@@ -250,32 +288,32 @@ function _gen_mulcopy!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype},
 end
 
 # generator j of `b`  (+=, -=)  a * generator k of `src`. `src` may be `b`
-# itself when `k ≠ j`: then dst and src are distinct columns of one matrix.
-function _gen_addmul!(b::_GMBlock, j::Int, src::_GMBlock, k::Int, a::Int, d::Int)
+# itself when `k ≠ j`: then dst and src are distinct generators of one matrix.
+function _gen_addmul!(b::XZBlock, j::Int, src::XZBlock, k::Int, a::Int, d::Int)
     addmul_mod!(_xgen(b, j), _xgen(src, k), a, d)
     addmul_mod!(_zgen(b, j), _zgen(src, k), a, d)
     return b
 end
-function _gen_submul!(b::_GMBlock, j::Int, src::_GMBlock, k::Int, a::Int, d::Int)
+function _gen_submul!(b::XZBlock, j::Int, src::XZBlock, k::Int, a::Int, d::Int)
     submul_mod!(_xgen(b, j), _xgen(src, k), a, d)
     submul_mod!(_zgen(b, j), _zgen(src, k), a, d)
     return b
 end
 
-function _gen_scale!(b::_GMBlock, j::Int, a::Int, d::Int)
+function _gen_scale!(b::XZBlock, j::Int, a::Int, d::Int)
     scale_mod!(_xgen(b, j), a, d)
     scale_mod!(_zgen(b, j), a, d)
     return b
 end
 
 # stacked v[1:2n]  (+=, -=)  a * generator j. `v` is a separate vector from the block.
-function _vec_addmul!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int, a::Int, d::Int)
+function _vec_addmul!(v::AbstractVector{<:_StorageEltype}, b::XZBlock, j::Int, a::Int, d::Int)
     n = _nq(b)
     addmul_mod!(_vx(v, n), _xgen(b, j), a, d)
     addmul_mod!(_vz(v, n), _zgen(b, j), a, d)
     return v
 end
-function _vec_submul!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int, a::Int, d::Int)
+function _vec_submul!(v::AbstractVector{<:_StorageEltype}, b::XZBlock, j::Int, a::Int, d::Int)
     n = _nq(b)
     submul_mod!(_vx(v, n), _xgen(b, j), a, d)
     submul_mod!(_vz(v, n), _zgen(b, j), a, d)
@@ -284,26 +322,26 @@ end
 
 # Site-restricted forms: only qudits `sites[1:nsites]` of generator j change.
 # The stacked `v` is a separate vector from the block, so it cannot alias.
-function _gen_addmul_sites!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype},
+function _gen_addmul_sites!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype},
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     n = _nq(b)
     addmul_mod_sites!(_xgen(b, j), _zgen(b, j), _vx(v, n), _vz(v, n), sites, nsites, a, d)
     return b
 end
-function _gen_submul_sites!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype},
+function _gen_submul_sites!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype},
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     n = _nq(b)
     submul_mod_sites!(_xgen(b, j), _zgen(b, j), _vx(v, n), _vz(v, n), sites, nsites, a, d)
     return b
 end
-# `src` may be `b` itself when `k ≠ j`: distinct columns of one matrix.
-function _gen_addmul_sites!(b::_GMBlock, j::Int, src::_GMBlock, k::Int,
+# `src` may be `b` itself when `k ≠ j`: distinct generators of one matrix.
+function _gen_addmul_sites!(b::XZBlock, j::Int, src::XZBlock, k::Int,
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     addmul_mod_sites!(_xgen(b, j), _zgen(b, j), _xgen(src, k), _zgen(src, k),
                       sites, nsites, a, d)
     return b
 end
-function _gen_submul_sites!(b::_GMBlock, j::Int, src::_GMBlock, k::Int,
+function _gen_submul_sites!(b::XZBlock, j::Int, src::XZBlock, k::Int,
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     submul_mod_sites!(_xgen(b, j), _zgen(b, j), _xgen(src, k), _zgen(src, k),
                       sites, nsites, a, d)
@@ -345,4 +383,76 @@ end
         s += Int(x[q, j]) * Int(zacc[q])
     end
     return mod(s, d)
+end
+
+@inline function dot_xz_col(b::_QMBlock, i::Int, j::Int, d::Int)
+    s = 0
+    x = b.x
+    z = b.z
+    @turbo for q in 1:size(x, 2)
+        s += Int(x[i, q]) * Int(z[j, q])
+    end
+    return mod(s, d)
+end
+@inline dot_xz_col(b::_QMBlock, j::Int, d::Int) = dot_xz_col(b, j, j, d)
+
+@inline function dot_xz_ws_vs_col(genws::AbstractVector{<:_StorageEltype}, b::_QMBlock,
+                                  tgt::Int, d::Int)
+    s = 0
+    z = b.z
+    @turbo for q in 1:size(z, 2)
+        s += Int(genws[q]) * Int(z[tgt, q])
+    end
+    return mod(s, d)
+end
+
+@inline function dot_xz_col_vs_zacc(b::_QMBlock, j::Int, zacc::AbstractVector{<:_StorageEltype},
+                                    d::Int)
+    s = 0
+    x = b.x
+    @turbo for q in 1:size(x, 2)
+        s += Int(x[j, q]) * Int(zacc[q])
+    end
+    return mod(s, d)
+end
+
+##### in-place transpose of a block #####
+#
+# Switching a tableau between the layouts transposes each `n × n` block inside
+# its existing parent, so the padding and line slot of the block are kept. The
+# square is walked in tiles of `_TRANSPOSE_TILE` entries: each diagonal tile is
+# transposed in place and each tile below the diagonal is swapped with its
+# mirror above it. Reads run down a contiguous column of the tile and writes
+# step by the parent's column stride, so one tile touches at most
+# `2 · _TRANSPOSE_TILE` columns at a time. Parent rows `n+1:end` and parent
+# columns outside the view are never touched.
+
+const _TRANSPOSE_TILE = 32
+
+function _transpose_block!(A::_BlockMatrix{T}) where {T<:_StorageEltype}
+    n = size(A, 1)
+    P = parent(A)
+    off = first(parentindices(A)[2]) - 1
+    tb = _TRANSPOSE_TILE
+    @inbounds for jb in 1:tb:n
+        je = min(jb + tb - 1, n)
+        for j in jb:je
+            for i in jb:(j - 1)
+                t = P[i, j + off]
+                P[i, j + off] = P[j, i + off]
+                P[j, i + off] = t
+            end
+        end
+        for ib in (je + 1):tb:n
+            ie = min(ib + tb - 1, n)
+            for j in jb:je
+                for i in ib:ie
+                    t = P[i, j + off]
+                    P[i, j + off] = P[j, i + off]
+                    P[j, i + off] = t
+                end
+            end
+        end
+    end
+    return A
 end
