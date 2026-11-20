@@ -579,12 +579,15 @@ end
     end
 end
 
-# Allocations of `f!(copy(tab), args...)`, measured after a warm-up call on
-# another copy.
-function ly_allocs(f!, tab, args...)
-    f!(copy(tab), args...)
-    t = copy(tab)
-    return @allocated f!(t, args...)
+# Allocations of one call on a copy of `tab`, measured after a warm-up call on
+# another copy. One function per operation: a shared varargs helper allocates
+# on Julia 1.10.
+ly_canonicalize_allocs(t) = @allocated canonicalize!(t)
+ly_dephase_allocs(t, op) = @allocated dephase!(t, op)
+ly_traceout_allocs(t, sites) = @allocated traceout!(t, sites)
+function ly_allocs(f, tab, args...)
+    f(copy(tab), args...)
+    return f(copy(tab), args...)
 end
 
 @testset "canonicalize!, dephase! and traceout! allocate nothing" begin
@@ -593,8 +596,8 @@ end
         n = 48
         g = ly_fixture(TT, d, n, E, true, :mixed, 13d)
         layout === :qudit && qudit_major!(g)
-        @test ly_allocs(canonicalize!, g) == 0
-        @test ly_allocs(dephase!, g, SinglePauli(5, 1, 0)) == 0
-        @test ly_allocs(traceout!, g, [3, 9]) == 0
+        @test ly_allocs(ly_canonicalize_allocs, g) == 0
+        @test ly_allocs(ly_dephase_allocs, g, SinglePauli(5, 1, 0)) == 0
+        @test ly_allocs(ly_traceout_allocs, g, [3, 9]) == 0
     end
 end
