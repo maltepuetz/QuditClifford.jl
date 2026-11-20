@@ -230,18 +230,15 @@ both layouts and in every element type, and `==` and `hash` compare tableaux
 across layouts.
 
 A switch transposes each `n × n` block inside its existing array and allocates
-nothing. On a `UInt8` block at `n = 2048` it takes under a millisecond
-(preliminary measurement on an Apple M3 Pro), so it is cheap next to a phase of
-many gates.
+nothing. It costs about one transpose of each block: two for a
+[`StabilizerTableau`](@ref), four for a [`DestabilizerTableau`](@ref). That is
+cheap next to a phase of many gates.
 
-Which layout is faster depends on the operation (preliminary measurements on an
-Apple M3 Pro at `n = 2048`):
+Which layout is faster depends on the operation:
 
-- Two-qudit gates are much faster qudit-major: about 13–19× at `d = 3`–`31`,
-  and about 5× at `d = 251`.
-- Random-outcome measurements are faster qudit-major as well: 1.5–1.9× on
-  monitored states, and about 5× on random states at `d = 3`.
-- [`canonicalize!`](@ref) and some channels are currently slower qudit-major.
+- Gates are much faster qudit-major.
+- Random-outcome measurements are faster qudit-major, most on dense states.
+- [`canonicalize!`](@ref) and some channels are slower qudit-major.
 
 Keep the default generator-major layout unless a phase of the computation is
 dominated by gates and measurements, and switch at the phase boundaries. For
