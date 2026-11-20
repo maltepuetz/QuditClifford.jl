@@ -174,18 +174,20 @@ end
 @inline _xgen(b::_GMBlock, j::Int) = view(b.x, :, j)
 @inline _zgen(b::_GMBlock, j::Int) = view(b.z, :, j)
 
-# Stacked vectors `[x; z]` of length at least `2n`.
-@inline _vx(v::AbstractVector{Int}, n::Int) = view(v, 1:n)
-@inline _vz(v::AbstractVector{Int}, n::Int) = view(v, n+1:2n)
+# Stacked vectors `[x; z]` of length at least `2n`, of any storage element
+# type. Operations between a vector and a block of different element types go
+# to the mixed-type methods of the `src/modular.jl` primitives.
+@inline _vx(v::AbstractVector{<:_StorageEltype}, n::Int) = view(v, 1:n)
+@inline _vz(v::AbstractVector{<:_StorageEltype}, n::Int) = view(v, n+1:2n)
 
-function _copy_gen!(v::AbstractVector{Int}, b::_GMBlock, j::Int)
+function _copy_gen!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int)
     n = _nq(b)
     copyto!(_vx(v, n), _xgen(b, j))
     copyto!(_vz(v, n), _zgen(b, j))
     return v
 end
 
-function _load_gen!(b::_GMBlock, j::Int, v::AbstractVector{Int})
+function _load_gen!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype})
     n = _nq(b)
     copyto!(_xgen(b, j), _vx(v, n))
     copyto!(_zgen(b, j), _vz(v, n))
@@ -220,19 +222,19 @@ end
 
 # generator j  (+=, -=, =)  a * v, v stacked. `v` is a separate vector from the
 # block, so it cannot alias generator j.
-function _gen_addmul!(b::_GMBlock, j::Int, v::AbstractVector{Int}, a::Int, d::Int)
+function _gen_addmul!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     addmul_mod!(_xgen(b, j), _vx(v, n), a, d)
     addmul_mod!(_zgen(b, j), _vz(v, n), a, d)
     return b
 end
-function _gen_submul!(b::_GMBlock, j::Int, v::AbstractVector{Int}, a::Int, d::Int)
+function _gen_submul!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     submul_mod!(_xgen(b, j), _vx(v, n), a, d)
     submul_mod!(_zgen(b, j), _vz(v, n), a, d)
     return b
 end
-function _gen_mulcopy!(b::_GMBlock, j::Int, v::AbstractVector{Int}, a::Int, d::Int)
+function _gen_mulcopy!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     n = _nq(b)
     mulcopy_mod!(_xgen(b, j), _vx(v, n), a, d)
     mulcopy_mod!(_zgen(b, j), _vz(v, n), a, d)
@@ -259,13 +261,13 @@ function _gen_scale!(b::_GMBlock, j::Int, a::Int, d::Int)
 end
 
 # stacked v[1:2n]  (+=, -=)  a * generator j. `v` is a separate vector from the block.
-function _vec_addmul!(v::AbstractVector{Int}, b::_GMBlock, j::Int, a::Int, d::Int)
+function _vec_addmul!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int, a::Int, d::Int)
     n = _nq(b)
     addmul_mod!(_vx(v, n), _xgen(b, j), a, d)
     addmul_mod!(_vz(v, n), _zgen(b, j), a, d)
     return v
 end
-function _vec_submul!(v::AbstractVector{Int}, b::_GMBlock, j::Int, a::Int, d::Int)
+function _vec_submul!(v::AbstractVector{<:_StorageEltype}, b::_GMBlock, j::Int, a::Int, d::Int)
     n = _nq(b)
     submul_mod!(_vx(v, n), _xgen(b, j), a, d)
     submul_mod!(_vz(v, n), _zgen(b, j), a, d)
@@ -274,13 +276,13 @@ end
 
 # Site-restricted forms: only qudits `sites[1:nsites]` of generator j change.
 # The stacked `v` is a separate vector from the block, so it cannot alias.
-function _gen_addmul_sites!(b::_GMBlock, j::Int, v::AbstractVector{Int},
+function _gen_addmul_sites!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype},
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     n = _nq(b)
     addmul_mod_sites!(_xgen(b, j), _zgen(b, j), _vx(v, n), _vz(v, n), sites, nsites, a, d)
     return b
 end
-function _gen_submul_sites!(b::_GMBlock, j::Int, v::AbstractVector{Int},
+function _gen_submul_sites!(b::_GMBlock, j::Int, v::AbstractVector{<:_StorageEltype},
                             sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int)
     n = _nq(b)
     submul_mod_sites!(_xgen(b, j), _zgen(b, j), _vx(v, n), _vz(v, n), sites, nsites, a, d)
@@ -317,20 +319,22 @@ end
 end
 @inline dot_xz_col(b::_GMBlock, j::Int, d::Int) = dot_xz_col(b, j, j, d)
 
-@inline function dot_xz_ws_vs_col(genws::Vector{Int}, b::_GMBlock, tgt::Int, d::Int)
+@inline function dot_xz_ws_vs_col(genws::AbstractVector{<:_StorageEltype}, b::_GMBlock,
+                                  tgt::Int, d::Int)
     s = 0
     z = b.z
     @turbo for q in 1:size(z, 1)
-        s += genws[q] * Int(z[q, tgt])
+        s += Int(genws[q]) * Int(z[q, tgt])
     end
     return mod(s, d)
 end
 
-@inline function dot_xz_col_vs_zacc(b::_GMBlock, j::Int, zacc::Vector{Int}, d::Int)
+@inline function dot_xz_col_vs_zacc(b::_GMBlock, j::Int, zacc::AbstractVector{<:_StorageEltype},
+                                    d::Int)
     s = 0
     x = b.x
     @turbo for q in 1:size(x, 1)
-        s += Int(x[q, j]) * zacc[q]
+        s += Int(x[q, j]) * Int(zacc[q])
     end
     return mod(s, d)
 end

@@ -53,10 +53,10 @@ end
     comm = 0
 
     @turbo for i in 1:N
-        comm += xg[i] * s[i+N]
+        comm += Int(xg[i]) * s[i+N]
     end
     @turbo for i in 1:N
-        comm -= zg[i] * s[i]
+        comm -= Int(zg[i]) * s[i]
     end
     comm
 end
@@ -272,24 +272,24 @@ end
         if track
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * zg[q]
-                cz += xg[q] * genws[n+q]
+                cb += genws[q] * (zg[q] % Int)
+                cz += (xg[q] % Int) * genws[n+q]
             end
         elseif tab.storephase
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * zg[q]
+                cb += genws[q] * (zg[q] % Int)
             end
         end
     else
         if track
             @turbo for q in 1:n
-                cb += genws[q] * zg[q]
-                cz += xg[q] * genws[n+q]
+                cb += genws[q] * Int(zg[q])
+                cz += Int(xg[q]) * genws[n+q]
             end
         elseif tab.storephase
             @turbo for q in 1:n
-                cb += genws[q] * zg[q]
+                cb += genws[q] * Int(zg[q])
             end
         end
     end

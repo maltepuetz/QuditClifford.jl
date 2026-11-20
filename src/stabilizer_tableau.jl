@@ -323,9 +323,9 @@ An independent tableau holding the same state in the same generator basis.
 The copy has the same type (so the same storage element type), `d`, `n`, `m`,
 `storephase` and `iscanonical`, and equal generator columns, phases and (for a
 [`DestabilizerTableau`](@ref)) destabilizers, so it continues exactly where
-`tab` stands. It shares no arrays
-with `tab`: measuring or applying gates to one leaves the other unchanged. The
-inversion strategy, which is never mutated, is shared. Workspaces start zeroed.
+`tab` stands. It shares no arrays with `tab`: measuring or applying gates to
+one leaves the other unchanged. The inversion strategy, which is never mutated,
+is shared. Workspaces start zeroed.
 
 Use `copy!(dst, tab)` to overwrite an existing tableau instead of allocating a
 new one, for example when branching many trajectories off one state.
@@ -621,7 +621,7 @@ end
 # The largest absolute entry of generators `1:m` of `b` and of `phase[1:m]`
 # (`phase` may be empty), for the column width of `show`. Needs `m ≥ 1`.
 function _max_abs_entry(b::_GMBlock, phase::AbstractVector{Int}, m::Int)
-    v = max(maximum(abs, view(b.x, :, 1:m)), maximum(abs, view(b.z, :, 1:m)))
+    v = Int(max(maximum(abs, view(b.x, :, 1:m)), maximum(abs, view(b.z, :, 1:m))))
     isempty(phase) || (v = max(v, maximum(abs, view(phase, 1:m))))
     return v
 end

@@ -73,11 +73,11 @@ function _warn_if_dimension_unsafe(d::Int, n::Int)
     return nothing
 end
 
-# dot(x_ws, z_ws) for a generator stored in workspace
-@inline function dot_xz_ws(genws::Vector{Int}, n::Int, d::Int)
+# dot(x_ws, z_ws) for a generator stored in workspace, accumulated in `Int`.
+@inline function dot_xz_ws(genws::AbstractVector{<:_StorageEltype}, n::Int, d::Int)
     s = 0
     @turbo for q in 1:n
-        s += genws[q] * genws[n+q]
+        s += Int(genws[q]) * Int(genws[n+q])
     end
     return mod(s, d)
 end

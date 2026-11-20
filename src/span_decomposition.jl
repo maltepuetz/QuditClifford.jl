@@ -56,10 +56,10 @@ end
         dz = _zgen(destab, j)
         coeff = 0
         @turbo for q in 1:n
-            coeff += dx[q] * opvec[n + q]
+            coeff += Int(dx[q]) * opvec[n + q]
         end
         @turbo for q in 1:n
-            coeff -= dz[q] * opvec[q]
+            coeff -= Int(dz[q]) * opvec[q]
         end
         cvec[j] = mod(coeff, d)
     end
@@ -211,7 +211,7 @@ where `g_j` are active stabilizer generators.
 
             zj = _zgen(stab, j)
             @inbounds @simd for q in 1:n
-                zacc[q] = (zacc[q] + zj[q]) & 1
+                zacc[q] = (zacc[q] + zj[q] % Int) & 1
             end
         end
         return kacc

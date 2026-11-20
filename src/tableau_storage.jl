@@ -15,11 +15,11 @@ _storage_eltype(::DestabilizerTableau{IM, E}) where {IM, E} = E
 
 # Whether `E` can store a tableau at dimension `d`: `Int` always, `UInt8` and
 # `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`, any
-# other type never.
+# other type never, `Union{UInt8, UInt16}` and `Union{}` included.
 _eltype_admissible(::Type, ::Int) = false
 _eltype_admissible(::Type{Int}, ::Int) = true
 _eltype_admissible(::Type{E}, d::Int) where {E<:_NarrowEltype} =
-    d - 1 <= typemax(E) && phase_modulus(d) - 1 <= typemax(E)
+    isconcretetype(E) && d - 1 <= typemax(E) && phase_modulus(d) - 1 <= typemax(E)
 
 # The narrowest admissible storage element type for dimension `d`.
 function _default_eltype(d::Int)

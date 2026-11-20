@@ -81,7 +81,7 @@ end
     @turbo for j in 1:m, i in 1:m
         s = 0
         for q in 1:n
-            s += x[q, j] * z[q, i]
+            s += Int(x[q, j]) * Int(z[q, i])
         end
         P[j, i] = s
     end
