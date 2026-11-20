@@ -427,20 +427,29 @@ end
 #
 # Switching a tableau between the layouts transposes each `n × n` block inside
 # its existing parent, so the padding and line slot of the block are kept. The
-# square is walked in tiles of `_TRANSPOSE_TILE` entries: each diagonal tile is
-# transposed in place and each tile below the diagonal is swapped with its
+# square is walked in tiles of `_transpose_tile(T)` entries: each diagonal tile
+# is transposed in place and each tile below the diagonal is swapped with its
 # mirror above it. Reads run down a contiguous column of the tile and writes
-# step by the parent's column stride, so one tile touches at most
-# `2 · _TRANSPOSE_TILE` columns at a time. Parent rows `n+1:end` and parent
-# columns outside the view are never touched.
+# step by the parent's column stride, so one tile touches at most two tiles'
+# worth of columns at a time. Parent rows `n+1:end` and parent columns outside
+# the view are never touched.
+#
+# Tiles of 32 entries for 1- and 2-byte entries and 64 for 8-byte ones had the
+# smallest worst case over n = 1000, 1023-1025, 2047-2049, 4095-4097 among
+# tiles of 8 to 128, the loop order with the mirror's rows inner, and a
+# recursive cache-oblivious order with 16-64-entry leaves (median of three
+# runs, M3 Pro, padded blocks). For `UInt8` the recursive order was at most 4%
+# faster, within the run-to-run spread; for 8-byte entries 64 beat 32 by 8%
+# from n = 2047 on. One `UInt8` block takes 0.18 ms at n = 1024, 0.75 ms at
+# n = 2048 and 3.1 ms at n = 4096.
 
-const _TRANSPOSE_TILE = 32
+_transpose_tile(::Type{T}) where {T} = sizeof(T) >= 8 ? 64 : 32
 
 function _transpose_block!(A::_BlockMatrix{T}) where {T<:_StorageEltype}
     n = size(A, 1)
     P = parent(A)
     off = first(parentindices(A)[2]) - 1
-    tb = _TRANSPOSE_TILE
+    tb = _transpose_tile(T)
     @inbounds for jb in 1:tb:n
         je = min(jb + tb - 1, n)
         for j in jb:je
