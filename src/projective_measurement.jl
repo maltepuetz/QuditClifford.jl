@@ -594,7 +594,8 @@ julia> measure!(ghz, DoublePauli(1, 0, 1, 2, 0, 2))           # Z₁ Z₂², fix
   A [`DestabilizerTableau`](@ref) reads it off its dual basis in `O(km)`. A canonical
   `StabilizerTableau` reads it off its pivot rows in `O(n)`; one that is not canonical
   solves for it by elimination on a copy of its generators, one bit per entry for
-  `d=2` and one byte up to `d=255`, at up to `O(nm²)` operations on those. Neither changes the
+  `d=2` and one entry of its storage element type otherwise, at up to `O(nm²)`
+  operations on those. Neither changes the
   generator basis or `iscanonical`: a fixed outcome leaves the tableau as it was, and
   an appended generator goes after the existing ones. Prefer a `DestabilizerTableau`
   for measurement-heavy circuits with phases, and call [`canonicalize!`](@ref) first

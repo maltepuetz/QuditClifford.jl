@@ -33,8 +33,7 @@ smaller side is used. This takes at most `O(n*m^2)` time, cubic in `n`, reads
 only the X and Z rows, and leaves the generators, phases, destabilizers and
 canonicalization caches unchanged. It overwrites the scratch arrays
 `tab.c_workspace` and `tab.zacc_workspace` and the rank workspace for `d`
-(`tab.bit_workspace` for `d = 2`, `tab.narrow_workspace` for other `d ≤ 255`,
-else `tab.workspace`), and allocates nothing unless `A` or `B` shares memory
+(`tab.bit_workspace` for `d = 2`, else `tab.rank_workspace`), and allocates nothing unless `A` or `B` shares memory
 with `tab.c_workspace`, in which case it is copied first.
 
 # References
@@ -152,7 +151,7 @@ end
     return xz, zx
 end
 
-@inline function _cross_dots(ws::AbstractMatrix{UInt8}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
+@inline function _cross_dots(ws::AbstractMatrix{<:_NarrowEltype}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
     xz = 0
     zx = 0
     @inbounds @simd for t in 1:len
@@ -168,10 +167,8 @@ function _negativity_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     if tab.d == 2
         return _negativity_from_mask!(tab, tab.bit_workspace, NA, NB)
-    elseif _uses_narrow_rank(tab.d)
-        return _negativity_from_mask!(tab, tab.narrow_workspace, NA, NB)
     end
-    return _negativity_from_mask!(tab, tab.workspace, NA, NB)
+    return _negativity_from_mask!(tab, tab.rank_workspace, NA, NB)
 end
 
 function _negativity_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::Int, NB::Int)

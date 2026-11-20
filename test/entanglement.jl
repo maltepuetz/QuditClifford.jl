@@ -293,8 +293,8 @@ end
 qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.PrecomputedInvMod(d))
 
 @testset "rank_fp_cols! pivot count" begin
-    # The signature names the element types that have an inner loop: Int
-    # and UInt8, both through src/modular.jl. Pin that any other
+    # The signature names the element types that have an inner loop: Int,
+    # UInt8 and UInt16, all through src/modular.jl. Pin that any other
     # one is rejected at the signature rather than deep inside a primitive,
     # which would report a MethodError naming a function the caller never
     # mentioned.
@@ -302,10 +302,11 @@ qc_rank(A, d) = QuditClifford.rank_fp_cols!(copy(A), d, QuditClifford.Precompute
         A = Int[1 0 1; 0 1 1; 1 1 0]
         @test qc_rank(A, 2) == 2
         @test qc_rank(UInt8.(A), 2) == 2
+        @test qc_rank(UInt16.(A), 2) == 2
         # Int is Int32 on 32-bit hosts, so the narrower signed type is
         # whichever of the two Int is not.
         other_int = Int === Int64 ? Int32 : Int64
-        for AT in (other_int, UInt16, Float64)
+        for AT in (other_int, UInt32, Float64)
             @test_throws MethodError qc_rank(AT.(A), 2)
         end
     end

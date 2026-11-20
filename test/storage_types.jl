@@ -171,12 +171,15 @@ function st_run!(tabs, seed, oprng, nops)
                 @error "differs from the Int reference" i eltype = Base.eltype(tab.stab_x) vals[k] vals[1]
             end
         end
-        if ref isa DestabilizerTableau
-            ok &= st_duality(ref) == Matrix{Int64}(I, ref.m, ref.m)
+        if ref isa DestabilizerTableau && st_duality(ref) != Matrix{Int64}(I, ref.m, ref.m)
+            ok = false
+            @error "the Int reference breaks destabilizer duality" i
         end
-        if d == 2 && ref.storephase
-            ok &= all(mod(Sref[2n+1, j], 2) ==
-                      mod(sum(Sref[q, j] * Sref[n+q, j] for q in 1:n), 2) for j in 1:ref.m)
+        if d == 2 && ref.storephase &&
+           !all(mod(Sref[2n+1, j], 2) ==
+                mod(sum(Sref[q, j] * Sref[n+q, j] for q in 1:n), 2) for j in 1:ref.m)
+            ok = false
+            @error "the Int reference has a non-Hermitian qubit generator" i
         end
         ok || (bad += 1)
         ok || break
@@ -325,6 +328,119 @@ end
         @test st_QC.dot_xz_ws_vs_col(v, b, 3, d) == st_QC.dot_xz_ws_vs_col(v0, bref, 3, d)
         @test st_QC.dot_xz_col_vs_zacc(b, 4, v, d) == st_QC.dot_xz_col_vs_zacc(bref, 4, v0, d)
         @test st_QC.dot_xz_ws(v, n, d) == st_QC.dot_xz_ws(v0, n, d)
+    end
+end
+
+@testset "memory bound" begin
+    n = 1024
+    slack = 64n * sizeof(Int)
+    for d in (3, 2)
+        S = StabilizerTableau(d, n; eltype = UInt8)
+        D = DestabilizerTableau(d, n; eltype = UInt8)
+        @test Base.summarysize(S) <= 2.25 * 2n^2 + slack
+        @test Base.summarysize(D) <= 2.25 * 4n^2 + slack
+    end
+    st_int_matrix_fields(tab) =
+        [f for f in fieldnames(typeof(tab)) if getfield(tab, f) isa Matrix{Int}]
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d)
+        tab = TT(d, 8; eltype = E)
+        @test E === Int || isempty(st_int_matrix_fields(tab))
+    end
+end
+
+# A pure state reached through random measurements, left non-canonical by a
+# final gate, so that `measure!` on a `StabilizerTableau` solves on a copy in
+# the rank workspace rather than canonicalizing.
+function st_monitored(TT, d, n, E, seed)
+    tab = TT(d, n; eltype = E)
+    rng = Xoshiro(seed)
+    random_state!(rng, tab; m = n)
+    for q in 1:n
+        if rand(rng) < 0.5
+            x = rand(rng, 0:d-1)
+            measure!(rng, tab, SinglePauli(q, x, 1, d == 2 ? x : 0))
+        end
+    end
+    apply!(tab, SUM(1, 2))
+    apply!(tab, Fourier(3))
+    return tab
+end
+
+# The product of generators 1 and 2 of `tab` with a phase that makes it
+# Hermitian at d = 2: in the stabilizer group up to its phase.
+function st_in_span_op(tab)
+    n, d = tab.n, tab.d
+    S = stabilizer_matrix(tab)
+    v = mod.(S[1:2n, 1] .+ S[1:2n, 2], d)
+    ph = d == 2 ? mod(sum(v[1:n] .* v[n+1:2n]), 2) : 0
+    return GeneralPauli(v, ph)
+end
+
+@testset "borrowed workspaces back to back" begin
+    n = 12
+    A, B, C = [1, 4, 7], [2, 5, 9, 11], [3, 10]
+    calls = (
+        tab -> is_pure(tab; verify = true),
+        tab -> measure!(tab, st_in_span_op(tab); outcome = 0),
+        tab -> entanglement_entropy(tab, A),
+        tab -> entanglement_negativity(tab, A, B),
+        tab -> conditional_mutual_information(tab, A, B, C),
+        tab -> is_pure(tab; verify = true),
+    )
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 251, 257)
+        seed = hash((TT, d)) % UInt
+        ref = st_monitored(TT, d, n, Int, seed)
+        @test !ref.iscanonical
+        refvals = Any[]
+        refmats = Any[]
+        for f in calls
+            push!(refvals, f(ref))
+            push!(refmats, stabilizer_matrix(ref))
+        end
+        @test refvals[1] && refvals[end]
+        for E in st_types(d)
+            tab = st_monitored(TT, d, n, E, seed)
+            for (k, f) in enumerate(calls)
+                @test f(tab) == refvals[k]
+                @test stabilizer_matrix(tab) == refmats[k]
+            end
+        end
+    end
+end
+
+@testset "non-commuting input" begin
+    # Generator j is Z_j except generators `ja` = X_s and `ia` = Z_s, so the
+    # one non-commuting pair is (ja, ia).
+    function st_anticommuting(n, ja, ia, s)
+        S = zeros(Int, 2n + 1, n)
+        for j in 1:n
+            S[n + j, j] = 1
+        end
+        S[:, ja] .= 0
+        S[s, ja] = 1
+        S[:, ia] .= 0
+        S[n + s, ia] = 1
+        return S
+    end
+    st_error(f) = try
+        f()
+        nothing
+    catch e
+        e
+    end
+    for (d, n, ja, ia) in ((2, 70, 3, 69), (2, 5, 2, 4), (3, 5, 2, 4), (257, 5, 2, 4))
+        S = st_anticommuting(n, ja, ia, ia)
+        for TT in (StabilizerTableau, DestabilizerTableau)
+            msgs = String[]
+            for E in st_types(d)
+                e = st_error(() -> TT(d, S; eltype = E))
+                @test e isa ArgumentError
+                e isa ArgumentError && push!(msgs, e.msg)
+                @test !is_pure(TT(d, S; eltype = E, check = false); verify = true)
+            end
+            @test all(==(msgs[1]), msgs)
+            @test occursin("generators $ja and $ia do not", msgs[1])
+        end
     end
 end
 

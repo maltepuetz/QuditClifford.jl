@@ -265,9 +265,9 @@ end
 # above, the order of `set_operator!`, so the reduced right-hand side lives in
 # a vector laid out like `res_workspace`.
 
-# Rows of G as entries mod d, one byte (3 <= d <= 255) or one Int (d > 255)
-# each: X row of site q in ws[1:m, q], Z row in ws[h+1:h+m, q], with h half
-# the column height. The tableau is reduced, so the narrowing is exact.
+# Rows of G as entries mod d in the storage element type `T`: X row of site q
+# in ws[1:m, q], Z row in ws[h+1:h+m, q], with h half the column height. The
+# tableau is reduced and `T` holds every residue, so the conversion is exact.
 #
 # A transpose, in tiles of 64 generators by 8 sites: within a tile the 64
 # generator columns are read as short sequential runs, and only 8 workspace
@@ -280,7 +280,7 @@ function _copy_generator_rows!(
     ws::AbstractMatrix{T},
     b::_GMBlock,
     m::Int,
-) where T<:Union{UInt8,Int}
+) where T<:_StorageEltype
     n = _nq(b)
     sx = b.x
     sz = b.z
@@ -399,7 +399,9 @@ function _solve_generator_rows!(
     m::Int,
     d::Int,
     inversemod::InverseMod,
-) where T<:Union{UInt8,Int}
+) where T<:_StorageEltype
+    _eltype_admissible(T, d) || throw(ArgumentError(
+        "_solve_generator_rows!: element type $T cannot hold every residue mod d = $d."))
     h = size(ws, 1) >> 1
     @inbounds for ℓ in 1:m
         lead[ℓ] = 0
@@ -570,12 +572,8 @@ function _span_coeffs_keep_basis!(tab::StabilizerTableau, op)
         ws = tab.bit_workspace
         _copy_generator_rows!(ws, stab, m)
         _solve_generator_rows!(ws, opv, lead, cvec, tab.generator_workspace, n, m)
-    elseif _uses_narrow_rank(d)
-        ws = tab.narrow_workspace
-        _copy_generator_rows!(ws, stab, m)
-        _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
     else
-        ws = tab.workspace
+        ws = tab.rank_workspace
         _copy_generator_rows!(ws, stab, m)
         _solve_generator_rows!(ws, opv, lead, cvec, n, m, d, tab.inversemod)
     end

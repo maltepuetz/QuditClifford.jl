@@ -38,9 +38,8 @@ so whichever of `C` and `D` is smaller is traced out. This takes at most
 `O(n*m^2)` time, cubic in `n`, reads only the X and Z rows, and leaves the
 generators, phases, destabilizers and canonicalization caches unchanged. It
 overwrites the scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and
-the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
-`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
-allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
+the rank workspace for `d` (`tab.bit_workspace` for `d = 2`, else
+`tab.rank_workspace`), and allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
 which case it is copied first.
 
 # Examples
@@ -92,10 +91,8 @@ function conditional_mutual_information(
     x, y = NA >= NB ? (1, 2) : (2, 1)
     if tab.d == 2
         return _cmi_from_groups!(tab, tab.bit_workspace, first, counts, x, y)
-    elseif _uses_narrow_rank(tab.d)
-        return _cmi_from_groups!(tab, tab.narrow_workspace, first, counts, x, y)
     end
-    return _cmi_from_groups!(tab, tab.workspace, first, counts, x, y)
+    return _cmi_from_groups!(tab, tab.rank_workspace, first, counts, x, y)
 end
 
 function _cmi_from_groups!(

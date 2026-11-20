@@ -92,7 +92,6 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
-    workspace::Matrix{Int}             # 2n×n (rank eliminations for d > 255, commutation checks)
     generator_workspace::Vector{Int}   # length 2n + storephase
 
     # workspace for canonicalize!
@@ -104,8 +103,8 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     c_workspace::Vector{Int}           # length n
     zacc_workspace::Vector{Int}        # length n
 
-    # rank elimination workspaces (see src/rank_workspaces.jl)
-    narrow_workspace::Matrix{UInt8}    # 2n×n for 3 ≤ d ≤ 255, else 0×0
+    # rank elimination and commutation-check workspaces (see src/rank_workspaces.jl)
+    rank_workspace::Matrix{E}          # 2n×n for d ≥ 3, else 0×0
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 
@@ -174,20 +173,19 @@ function _build_stabilizer_tableau(
         storephase,
         false,
         inversemod,
-        zeros(Int, 2n, n),
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, n),
-        _narrow_rank_workspace(d, n),
+        _storage_rank_workspace(E, d, n),
         _bit_rank_workspace(d, n),
     )
 
     # A preset filler satisfies the generator contract by definition, so the
     # (d, n) path never pays for the check. Validating the built tableau rather
-    # than the raw matrix lets the check borrow `workspace`.
+    # than the raw matrix lets the check borrow the rank workspaces.
     check && !preset && _validate_generators!(out)
 
     return out
@@ -356,14 +354,13 @@ function Base.copy(tab::StabilizerTableau{IM, E}) where {IM, E}
         tab.storephase,
         tab.iscanonical,
         tab.inversemod,
-        zero(tab.workspace),
         zero(tab.generator_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),
         zero(tab.c_workspace),
         zero(tab.zacc_workspace),
-        zero(tab.narrow_workspace),
+        zero(tab.rank_workspace),
         zero(tab.bit_workspace),
     )
 end

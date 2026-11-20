@@ -32,9 +32,8 @@ three entropies is instead computed on the smaller side of its cut, as
 time, cubic in `n`, reads only the X and Z rows, and leaves the generators,
 phases, destabilizers and canonicalization caches unchanged. It overwrites the
 scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and the rank
-workspace for `d` (`tab.bit_workspace` for `d = 2`, `tab.narrow_workspace`
-for other `d ≤ 255`, else `tab.workspace`), and allocates nothing unless `A`
-or `B` shares memory with `tab.c_workspace`, in which case it is copied first.
+workspace for `d` (`tab.bit_workspace` for `d = 2`, else
+`tab.rank_workspace`), and allocates nothing unless `A` or `B` shares memory with `tab.c_workspace`, in which case it is copied first.
 
 # Examples
 ```jldoctest
@@ -106,9 +105,8 @@ seven entropies are instead computed on the smaller side of each cut, as
 `O(n*m^2)` time, cubic in `n`, reads only the X and Z rows, and leaves the
 generators, phases, destabilizers and canonicalization caches unchanged. It
 overwrites the scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and
-the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
-`tab.narrow_workspace` for other `d ≤ 255`, else `tab.workspace`), and
-allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
+the rank workspace for `d` (`tab.bit_workspace` for `d = 2`, else
+`tab.rank_workspace`), and allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
 which case it is copied first.
 
 # Examples
@@ -147,10 +145,8 @@ function tripartite_information(
     first = _group_sites_by_label!(tab, counts)
     if tab.d == 2
         return _tripartite_from_groups!(tab, tab.bit_workspace, first, counts)
-    elseif _uses_narrow_rank(tab.d)
-        return _tripartite_from_groups!(tab, tab.narrow_workspace, first, counts)
     end
-    return _tripartite_from_groups!(tab, tab.workspace, first, counts)
+    return _tripartite_from_groups!(tab, tab.rank_workspace, first, counts)
 end
 
 # `first` and `counts` describe the site list built by `_group_sites_by_label!`
@@ -185,10 +181,8 @@ function _mutual_information_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     if tab.d == 2
         return _mutual_information_from_mask!(tab, tab.bit_workspace, NA, NB)
-    elseif _uses_narrow_rank(tab.d)
-        return _mutual_information_from_mask!(tab, tab.narrow_workspace, NA, NB)
     end
-    return _mutual_information_from_mask!(tab, tab.workspace, NA, NB)
+    return _mutual_information_from_mask!(tab, tab.rank_workspace, NA, NB)
 end
 
 function _mutual_information_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::Int, NB::Int)
