@@ -503,17 +503,42 @@ end
 ##############################################
 # dst and src of different storage types     #
 ##############################################
-# Correct for every pair of storage element types, not tuned: one scalar loop
-# in `Int` arithmetic with a single `mod`. The unreduced value lies within
-# (d-1) + (d-1)^2 of zero, inside `Int` under the package-wide envelope
-# `max(n, 2) * (d-1)^2 <= typemax(Int)`. The method is chosen only when the
-# element types differ; equal types take the methods above.
-@inline function submul_mod!(dst::AbstractVector{<:_StorageEltype},
-                             src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
-    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
+# Chosen only when the element types differ; equal types take the methods
+# above. Entries are read as `Int`, every tier runs in `Int` arithmetic, and
+# results are stored as `eltype(dst)`. Tiers, resolved once per call, as for
+# the `Int` methods: a == 0, a == 1 and a == d-1 (no multiply; sums and
+# differences of two reduced entries lie in (-d, 2d)), Barrett where
+# `_barrett_valid(d)` (a*s <= (d-1)^2, the range the constant is validated
+# for), and otherwise one `mod` of a value within (d-1) + (d-1)^2 of zero,
+# inside `Int` under the package-wide envelope
+# `max(n, 2) * (d-1)^2 <= typemax(Int)`. `residual_from_coeffs!` subtracts
+# narrow generators from the `Int` `res_workspace` through `submul_mod!`.
+
+# dst .= mod.(dst .+ a .* src, d) for 0 < a < d.
+@inline function _addmul_mixed!(dst::AbstractVector{<:_StorageEltype},
+                                src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     T = eltype(dst)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(Int(dst[i]) - a * Int(src[i]), d) % T
+    if a == 1
+        @inbounds @simd for i in eachindex(dst)
+            u = Int(dst[i]) + Int(src[i])               # in [0, 2d - 2]
+            dst[i] = (u - ifelse(u >= d, d, 0)) % T
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            u = Int(dst[i]) - Int(src[i])               # in [-(d - 1), d - 1]
+            dst[i] = (u + ifelse(u < 0, d, 0)) % T
+        end
+    elseif _barrett_valid(d)
+        M = _barrett_mul(d)
+        @inbounds @simd for i in eachindex(dst)
+            t = a * Int(src[i])                         # in [0, (d - 1)^2]
+            u = Int(dst[i]) + (t - ((t * M) >> _BARRETT_K) * d)   # in [0, 2d - 2]
+            dst[i] = (u - ifelse(u >= d, d, 0)) % T
+        end
+    else
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = mod(Int(dst[i]) + a * Int(src[i]), d) % T
+        end
     end
     return dst
 end
@@ -521,19 +546,43 @@ end
 @inline function addmul_mod!(dst::AbstractVector{<:_StorageEltype},
                              src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("addmul_mod!", dst, src)
-    T = eltype(dst)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(Int(dst[i]) + a * Int(src[i]), d) % T
-    end
-    return dst
+    a == 0 && return dst
+    return _addmul_mixed!(dst, src, a, d)
+end
+
+# dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d.
+@inline function submul_mod!(dst::AbstractVector{<:_StorageEltype},
+                             src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
+    a == 0 && return dst
+    return _addmul_mixed!(dst, src, d - a, d)
 end
 
 @inline function mulcopy_mod!(dst::AbstractVector{<:_StorageEltype},
                               src::AbstractVector{<:_StorageEltype}, a::Int, d::Int)
     @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("mulcopy_mod!", dst, src)
     T = eltype(dst)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = mod(a * Int(src[i]), d) % T
+    if a == 0
+        fill!(dst, zero(T))
+    elseif a == 1
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = Int(src[i]) % T
+        end
+    elseif a == d - 1
+        @inbounds @simd for i in eachindex(dst)
+            s = Int(src[i])
+            dst[i] = ifelse(s == 0, 0, d - s) % T
+        end
+    elseif _barrett_valid(d)
+        M = _barrett_mul(d)
+        @inbounds @simd for i in eachindex(dst)
+            t = a * Int(src[i])                         # in [0, (d - 1)^2]
+            dst[i] = (t - ((t * M) >> _BARRETT_K) * d) % T
+        end
+    else
+        @inbounds @simd for i in eachindex(dst)
+            dst[i] = mod(a * Int(src[i]), d) % T
+        end
     end
     return dst
 end

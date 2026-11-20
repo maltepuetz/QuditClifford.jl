@@ -499,6 +499,28 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             end
         end
 
+        # Mixed element types, every tier: every (dst, src) pair at small d for
+        # every multiplier, and at a prime the Barrett guard accepts (137, 443)
+        # and one it rejects (131, 1031) for the general-multiplier tier.
+        @test QC._barrett_valid(137) && QC._barrett_valid(443)
+        @test !QC._barrett_valid(131) && !QC._barrett_valid(1031)
+        mixed_pairs(d) = d <= 251 ?
+            ((UInt8, Int), (Int, UInt8), (UInt16, Int), (Int, UInt16), (UInt8, UInt16), (UInt16, UInt8)) :
+            ((UInt16, Int), (Int, UInt16))
+        for d in (2, 3, 5, 7, 131, 137, 443, 1031)
+            x = repeat(0:(d - 1), d); y = repeat(0:(d - 1); inner=d)
+            as = d <= 7 ? (0:(d - 1)) : unique((0, 1, 2, d ÷ 2, d - 2, d - 1))
+            for (T, S) in mixed_pairs(d), a in as
+                for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x, y, a, d)),
+                                   (QC.submul_mod!, _ref_submul(x, y, a, d)),
+                                   (QC.mulcopy_mod!, _ref_mulcopy(y, a, d)))
+                    dst = T.(x)
+                    @test f!(dst, S.(y), a, d) === dst
+                    @test Int.(dst) == want
+                end
+            end
+        end
+
         for f! in (QC.addmul_mod!, QC.submul_mod!, QC.mulcopy_mod!), a in (0, 1, 2, 4)
             @test_throws DimensionMismatch f!(zeros(UInt8, 3), zeros(UInt8, 4), a, 5)
             @test_throws DimensionMismatch f!(zeros(UInt16, 3), zeros(UInt16, 4), a, 5)
