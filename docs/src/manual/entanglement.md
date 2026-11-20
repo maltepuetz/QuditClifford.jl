@@ -200,10 +200,10 @@ streams the matrix once per pivot, so at large `n` its cost follows the bytes
 per entry rather than the arithmetic. For the half-chain entropy at `n = 512`
 of a state after 64 monitored layers, qubits are about three times faster than
 `d = 3` on bytes, and bytes are about five times faster than `eltype = Int`
-at `d = 3` and eight times at `d = 31`. The workspaces are allocated with the tableau, so the calls
-themselves do not allocate. They add about 1 % to the memory of a qubit
-tableau; for other `d` the workspace holds `2n × n` entries, as many as the
-stabilizer storage.
+at `d = 3` and eight times at `d = 31`. The workspaces are allocated with the
+tableau, so the calls themselves do not allocate. They add about 1 % to the
+memory of a qubit tableau; for other `d` the workspace holds `2n × n` entries,
+as many as the stabilizer storage.
 
 Subsystems are checked to hold distinct sites in `1:n`, and the subsystems of
 one call to be disjoint, throwing `ArgumentError` otherwise.

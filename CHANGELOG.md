@@ -40,8 +40,13 @@ dependency bump — carries the `skip-changelog` label instead.
   `StabilizerTableau{PrecomputedInvMod, UInt8}`, where that matters.
 - Tableaux store their generators in `UInt8` for `d ≤ 251` and `UInt16` for
   `d ≤ 65521` by default, and in `Int` above. Every result is the same `Int`
-  value as before; `eltype = Int` restores the previous storage. `copy!`
-  between tableaux of different element types throws an `ArgumentError`.
+  value as before; `eltype = Int` restores the previous storage, but not its
+  speed everywhere: rank-based functions and the deterministic `measure!` on
+  a non-canonical `StabilizerTableau` eliminate in the storage element type,
+  so with `eltype = Int` they are slower than before at `d ≤ 251` (measured
+  at `d = 3` and `31`: entropies 4.6–8.9×, the deterministic `measure!`
+  2.3–6.1×). `copy!` between tableaux of different element types throws an
+  `ArgumentError`.
 - `show` of a tableau prints a `Storage:` line with the layout and element
   type after the generator count.
 - The internal fields `workspace` and `narrow_workspace` are gone; a tableau
@@ -166,7 +171,7 @@ dependency bump — carries the `skip-changelog` label instead.
   operate on `UInt8` or `UInt16` entries. At `n ≥ 1024` a tableau with its
   workspaces takes about twice the bytes of its generators or less: at
   `n = 1024`–`4096` a `StabilizerTableau` takes 2.0–2.2× at `d = 3` and
-  1.2–1.3× at `d = 2`, a `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. At
+  1.2–1.35× at `d = 2`, a `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. At
   small `n` the padding of the generator blocks adds more (a
   `StabilizerTableau` at `d = 3` takes 3.7× at `n = 32`). A
   `StabilizerTableau` at `d = 3` and `n = 1024` takes 4.4 bytes per `n²`

@@ -187,6 +187,15 @@ function st_run!(tabs, seed, oprng, nops)
     return bad
 end
 
+# Constructor calls with a literal `eltype`, wrapped so that `@inferred` sees the
+# constant the way a caller's compiled code does.
+st_new_u8(::Type{TT}, n) where {TT} = TT(3, n; eltype = UInt8)
+st_new_u16(::Type{TT}, n) where {TT} = TT(257, n; eltype = UInt16)
+st_new_int(::Type{TT}, d, n) where {TT} = TT(d, n; eltype = Int)
+st_new_state_u8(::Type{TT}, n) where {TT} = TT(3, n, :product; eltype = UInt8)
+st_new_raw_u8(::Type{TT}, M) where {TT} = TT(3, M; eltype = UInt8)
+st_new_raw_int(::Type{TT}, d, M) where {TT} = TT(d, M; eltype = Int)
+
 @testset "storage element types" begin
 
 @testset "admissible element types" begin
@@ -204,6 +213,18 @@ end
         @test typeof(TT(3, 2)).parameters[2] === UInt8
         @test typeof(TT(3, 2; eltype = Int)).parameters[2] === Int
         @test st_QC._storage_eltype(TT(3, 2; eltype = UInt8)) === UInt8
+    end
+end
+
+@testset "explicit element type is inferred" begin
+    M = [1 0 2 0 0; 0 1 0 0 0]
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        @test typeof(@inferred st_new_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
+        @test typeof(@inferred st_new_u16(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt16}
+        @test typeof(@inferred st_new_int(TT, 3, 4)) === TT{st_QC.PrecomputedInvMod, Int}
+        @test typeof(@inferred st_new_state_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
+        @test typeof(@inferred st_new_raw_u8(TT, M)) === TT{st_QC.PrecomputedInvMod, UInt8}
+        @test typeof(@inferred st_new_raw_int(TT, 3, M)) === TT{st_QC.PrecomputedInvMod, Int}
     end
 end
 

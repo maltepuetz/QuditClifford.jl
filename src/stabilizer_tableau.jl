@@ -109,7 +109,7 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 
-function StabilizerTableau(d::Int, n::Int;
+Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
@@ -124,7 +124,7 @@ end
 
 StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = StabilizerTableau(d, n; state=state, kwargs...)
 
-function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
+Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     m::Union{Int,Nothing}=nothing,
     storephase::Union{Bool,Nothing}=nothing,
     inversemod::T=PrecomputedInvMod(d),
