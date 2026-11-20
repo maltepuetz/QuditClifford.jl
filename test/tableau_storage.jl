@@ -454,6 +454,7 @@ end
         "check_purity.jl" => 4,
         "apply_qudit_major.jl" => 2,
         "measure_qudit_major.jl" => 2,
+        "canonicalize_qudit_major.jl" => 4,
         "stabilizer_tableau.jl" => 2,
         "destabilizer_tableau.jl" => 6,
         "tableau_storage.jl" => 2,

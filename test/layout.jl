@@ -445,3 +445,119 @@ end
         @test rand(rng_g) == rand(rng_q)
     end
 end
+
+# Fixtures for the qudit-major canonicalization and dephasing kernels, all
+# generator-major: a brickwork circuit with Z measurements at rate `p`, the
+# same with a third of the qudits traced out (mixed), a random pure state and
+# a GHZ state.
+function ly_fixture(TT, d, n, E, storephase, kind, seed)
+    rng = Xoshiro(seed)
+    tab = TT(d, n; state = kind === :ghz ? :ghz : :Z, eltype = E, storephase,
+             layout = :generator)
+    kind === :ghz && return tab
+    if kind === :random
+        random_state!(rng, tab)
+        return tab
+    end
+    for l in 1:8
+        for q in (isodd(l) ? 1 : 2):2:(n - 1)
+            apply!(tab, random_clifford(rng, d, [q, q + 1]))
+        end
+        for q in 1:n
+            rand(rng) < 0.15 && measure!(rng, tab, SinglePauli(q, 0, 1))
+        end
+    end
+    kind === :mixed && traceout!(tab, randperm(rng, n)[1:(n ÷ 3)])
+    return tab
+end
+
+ly_same_full(g, q) = ly_same_state(g, q) && g.iscanonical == q.iscanonical &&
+    g.pivcol_of_row == q.pivcol_of_row && ly_matrices(g) == ly_matrices(q)
+
+@testset "qudit-major canonicalize!" begin
+    L = ly_QC.QuditMajor()
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), E in ly_eltypes(d),
+        storephase in (true, false), kind in (:monitored, :mixed, :random, :ghz), n in (5, 48)
+        g = ly_fixture(TT, d, n, E, storephase, kind, 7d + n)
+        q = qudit_major!(copy(g))
+        # Divisor 1 updates row by row whenever a generator has a nonzero β;
+        # `typemax(Int)` takes the column updates whenever one has.
+        s = copy(q)
+        w = copy(q)
+        canonicalize!(g)
+        canonicalize!(q)
+        ly_QC._canonicalize_qm!(s, L, 1)
+        ly_QC._canonicalize_qm!(w, L, typemax(Int))
+        ok = ly_same_full(g, q) && ly_same_full(g, s) && ly_same_full(g, w)
+        # A canonical tableau stays as it is.
+        canonicalize!(g)
+        canonicalize!(q)
+        ok &= ly_same_full(g, q)
+        ok || @error "layouts differ" TT d E storephase kind n
+        @test ok
+    end
+end
+
+@testset "qudit-major canonicalize! dual accumulators" begin
+    # The dual sums run in UInt16 at d = 31, UInt32 at d = 251 and UInt64 at
+    # d = 65521. Row by row, the path for a `d` at which even UInt64
+    # overflows, and the wider accumulators are also forced at d = 3.
+    L = ly_QC.QuditMajor()
+    for (d, E) in ((31, UInt8), (251, UInt8), (65521, UInt16)), storephase in (true, false)
+        g = ly_fixture(DestabilizerTableau, d, 24, E, storephase, :random, d % 1000)
+        q = qudit_major!(copy(g))
+        w = copy(q)
+        canonicalize!(g)
+        canonicalize!(q)
+        ly_QC._canonicalize_qm!(w, L, typemax(Int))
+        @test ly_same_full(g, q) && ly_same_full(g, w)
+    end
+    for dual in (ly_QC._QMDualRows(), ly_QC._QMDualAcc{UInt64}()), div in (1, typemax(Int)),
+        kind in (:monitored, :random)
+        g = ly_fixture(DestabilizerTableau, 3, 40, UInt8, true, kind, 5)
+        q = qudit_major!(copy(g))
+        canonicalize!(g)
+        ly_QC._canonicalize_qm!(ly_QC._stab(q, L), q.phase, ly_QC._destab(q, L), dual, q, div)
+        @test ly_same_full(g, q)
+    end
+end
+
+@testset "qudit-major canonicalize! inside expect! and measure!" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (true, false)
+        n = 40
+        g = ly_fixture(TT, d, n, ly_QC._default_eltype(d), storephase, :mixed, 3d)
+        q = qudit_major!(copy(g))
+        rng = Xoshiro(d)
+        ok = true
+        for i in 1:60
+            op = ly_measure_op(rng, d, n, i)
+            if isodd(i)
+                ok &= expect_int!(g, op) == expect_int!(q, op)
+            else
+                ok &= measure!(Xoshiro(i), g, op; phase_policy = 1) ==
+                      measure!(Xoshiro(i), q, op; phase_policy = 1)
+            end
+            ok &= ly_same_full(g, q)
+            ok || (@error "layouts differ" TT d storephase i op; break)
+        end
+        @test ok
+    end
+end
+
+# Allocations of `f!(copy(tab), args...)`, measured after a warm-up call on
+# another copy.
+function ly_allocs(f!, tab, args...)
+    f!(copy(tab), args...)
+    t = copy(tab)
+    return @allocated f!(t, args...)
+end
+
+@testset "canonicalize! allocates nothing" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), E in ly_eltypes(d),
+        layout in (:generator, :qudit)
+        n = 48
+        g = ly_fixture(TT, d, n, E, true, :mixed, 13d)
+        layout === :qudit && qudit_major!(g)
+        @test ly_allocs(canonicalize!, g) == 0
+    end
+end

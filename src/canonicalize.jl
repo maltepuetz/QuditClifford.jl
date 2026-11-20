@@ -1,3 +1,27 @@
+# The phase exponent of the pivot generator after it is raised to the power `α`
+# (`xdotz` is its x·z before the scaling). At d = 2, α = 1 and the phase mod 4
+# stays.
+@inline function _scaled_pivot_phase(k_old::Int, α::Int, xdotz::Int, d::Int, d_phase::Int,
+                                     inv2::Int)
+    d == 2 && return mod(k_old, d_phase)
+    return mod(α * k_old + binom2_mod_oddprime(α, d, inv2) * xdotz, d_phase)
+end
+
+# The phase exponent of generator g_jj after g_jj <- g_jj · g_c^(-β), from its
+# phase `kj`, the pivot's phase `kc`, `cross = x_c·z_jj mod d` and the pivot's
+# x·z `xdotz`.
+@inline function _eliminated_phase(kj::Int, kc::Int, β::Int, cross::Int, xdotz::Int, d::Int,
+                                   d_phase::Int, inv2::Int)
+    if d == 2
+        # g_jj <- g_jj · g_c, phase mod 4: the cross term lifts with a factor 2.
+        return mod(kj + kc + 2 * cross, d_phase)
+    end
+    # g_jj <- g_jj · (g_c)^texp, phase mod d, with the binomial term of the power.
+    texp = mod(-β, d)
+    kc_power_t = mod(texp * kc + binom2_mod_oddprime(texp, d, inv2) * xdotz, d_phase)
+    return mod(kj + kc_power_t + mod(texp * cross, d), d_phase)
+end
+
 # Column-reduce the active generators `1:m` of `b` in place. `phase` holds the
 # phase exponents when `storephase` and may be empty otherwise; it is never
 # read or written without `storephase`. The pivot scan walks the combined rows
@@ -62,12 +86,7 @@
         xdotz = storephase ? dot_xz_col(b, c, d) : 0
 
         if storephase
-            k_old = phase[c]
-            if d == 2 # α=1 always, and we store phase mod 4 as i^k, so scaling does nothing
-                phase[c] = mod(k_old, d_phase)
-            else
-                phase[c] = mod(α * k_old + binom2_mod_oddprime(α, d, inv2) * xdotz, d_phase)
-            end
+            phase[c] = _scaled_pivot_phase(phase[c], α, xdotz, d, d_phase, inv2)
         end
 
         _gen_scale!(b, c, α, d)
@@ -84,23 +103,8 @@
             β == 0 && continue
 
             if storephase
-                texp = mod(-β, d)
-
-                kc = phase[c]  # phase exponent of pivot generator (mod d_phase)
-
-                if d == 2
-                    # Multiply g_jj <- g_jj * g_c, with phase mod 4.
-                    # (g_c)^texp is g_c (texp=1), so no binom term needed.
-                    # Cross-term lifts to mod 4 with factor 2: add 2*(x_c·z_jj)
-                    cross = dot_xz_col(b, c, jj, d) # mod 2
-                    phase[jj] = mod(phase[jj] + kc + 2 * cross, d_phase)
-                else
-                    # Multiply g_jj <- g_jj * (g_c)^texp, with phase mod d.
-                    # Binomial term needed for (g_c)^texp.
-                    kc_power_t = mod(texp * kc + binom2_mod_oddprime(texp, d, inv2) * xdotz, d_phase)
-                    cross = mod(texp * dot_xz_col(b, c, jj, d), d)
-                    phase[jj] = mod(phase[jj] + kc_power_t + cross, d_phase)
-                end
+                phase[jj] = _eliminated_phase(phase[jj], phase[c], β, dot_xz_col(b, c, jj, d),
+                                              xdotz, d, d_phase, inv2)
             end
 
             # jj != c: distinct generators of one block, so dst and src cannot alias.
@@ -189,12 +193,7 @@ end
         xdotz = storephase ? dot_xz_col(b, c, d) : 0
 
         if storephase
-            k_old = phase[c]
-            if d == 2 # α=1 always, and we store phase mod 4 as i^k, so scaling does nothing
-                phase[c] = mod(k_old, d_phase)
-            else
-                phase[c] = mod(α * k_old + binom2_mod_oddprime(α, d, inv2) * xdotz, d_phase)
-            end
+            phase[c] = _scaled_pivot_phase(phase[c], α, xdotz, d, d_phase, inv2)
         end
 
         _gen_scale!(b, c, α, d)
@@ -216,23 +215,8 @@ end
             β == 0 && continue
 
             if storephase
-                texp = mod(-β, d)
-
-                kc = phase[c]  # phase exponent of pivot generator (mod d_phase)
-
-                if d == 2
-                    # Multiply g_jj <- g_jj * g_c, with phase mod 4.
-                    # (g_c)^texp is g_c (texp=1), so no binom term needed.
-                    # Cross-term lifts to mod 4 with factor 2: add 2*(x_c·z_jj)
-                    cross = dot_xz_col(b, c, jj, d) # mod 2
-                    phase[jj] = mod(phase[jj] + kc + 2 * cross, d_phase)
-                else
-                    # Multiply g_jj <- g_jj * (g_c)^texp, with phase mod d.
-                    # Binomial term needed for (g_c)^texp.
-                    kc_power_t = mod(texp * kc + binom2_mod_oddprime(texp, d, inv2) * xdotz, d_phase)
-                    cross = mod(texp * dot_xz_col(b, c, jj, d), d)
-                    phase[jj] = mod(phase[jj] + kc_power_t + cross, d_phase)
-                end
+                phase[jj] = _eliminated_phase(phase[jj], phase[c], β, dot_xz_col(b, c, jj, d),
+                                              xdotz, d, d_phase, inv2)
             end
 
             # jj != c, so these are disjoint generators of one block.
