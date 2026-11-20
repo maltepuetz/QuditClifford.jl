@@ -253,6 +253,32 @@ function _prepare_pivot_update(tab::AbstractTableau, L::TableauLayout, pivot::In
     return _PivotUpdate(nsupp, sparse, ninv, kws, xzws, inv2)
 end
 
+# The phase of g_col * g_p^a and, for a `DestabilizerTableau`, its
+# `xdotz_cache` entry, from the cross terms cb = x_p·z_col (reduced) and
+# cz = x_col·z_p of the old generator `col`.
+@inline function _absorb_pivot_scalars!(tab::AbstractTableau, col::Int, a::Int, cb::Int,
+                                        cz::Int, pu::_PivotUpdate)
+    d = tab.d
+    if tab.storephase
+        phase = _phase(tab)
+        if d == 2
+            # a == 1; the cross term enters i^k as 2·(x_p·z_col).
+            phase[col] = mod(phase[col] + pu.kws + 2 * cb, 4)
+        else
+            k_power = mod(a * pu.kws + binom2_mod_oddprime(a, d, pu.inv2) * pu.xzws, d)
+            phase[col] = mod(phase[col] + k_power + mod(a * cb, d), d)
+        end
+    end
+    # Only a DestabilizerTableau keeps `xdotz_cache` valid, so only it patches it.
+    if tab isa DestabilizerTableau
+        cache = tab.xdotz_cache
+        lin = mod(a * mod(cb + mod(cz, d), d), d)
+        quad = mod(mod(a * a, d) * pu.xzws, d)
+        cache[col] = mod(cache[col] + lin + quad, d)
+    end
+    return nothing
+end
+
 # g_col <- g_col * g_p^a for the prepared pivot. Same phase arithmetic as
 # `mul_col_by_workspace_power!`, with the pivot terms read from `pu`; for a
 # `DestabilizerTableau` it also patches `xdotz_cache[col]` from
@@ -299,25 +325,7 @@ end
             end
         end
     end
-    cb = mod(cb, d)
-
-    if tab.storephase
-        phase = _phase(tab)
-        if d == 2
-            # a == 1; the cross term enters i^k as 2·(x_p·z_col).
-            phase[col] = mod(phase[col] + pu.kws + 2 * cb, 4)
-        else
-            k_power = mod(a * pu.kws + binom2_mod_oddprime(a, d, pu.inv2) * pu.xzws, d)
-            phase[col] = mod(phase[col] + k_power + mod(a * cb, d), d)
-        end
-    end
-
-    if track
-        cache = tab.xdotz_cache
-        lin = mod(a * mod(cb + mod(cz, d), d), d)
-        quad = mod(mod(a * a, d) * pu.xzws, d)
-        cache[col] = mod(cache[col] + lin + quad, d)
-    end
+    _absorb_pivot_scalars!(tab, col, a, mod(cb, d), cz, pu)
 
     # genws is a separate array from the block of the same element type, and its
     # contents were copied out of a tableau column, so they are reduced. Outside
@@ -399,23 +407,38 @@ end
     supp = tab.support_workspace
     nsupp = _column_support!(supp, stab, pivot)
 
+    # The new pivot dual is a multiple of the old pivot generator, so it
+    # vanishes outside that generator's sites, which `pu` recorded in
+    # zacc_workspace.
+    _orthogonalize_duals!(tab, L, pivot, m, supp, nsupp, tab.zacc_workspace, pu.nsupp, pu.sparse)
+    return nothing
+end
+
+# Make the duals `1:m` other than `col` orthogonal to generator `col`:
+#     D_j <- D_j - t_j D_col,   t_j = <D_j, S_col>.
+# `supp[1:nsupp]` covers the support of generator `col` and `sites[1:nsites]`
+# that of dual `col`; `sparse` says whether the update runs over those sites or
+# over all rows. D_col is fixed throughout, so each t_j is the same whether it
+# is read before or after the other duals change.
+function _orthogonalize_duals!(tab::DestabilizerTableau, L::TableauLayout, col::Int, m::Int,
+                               supp::Vector{Int}, nsupp::Int,
+                               sites::Vector{Int}, nsites::Int, sparse::Bool)
+    d = tab.d
+    stab = _stab(tab, L)
+    destab = _destab(tab, L)
     @inbounds for j in 1:m
-        j == pivot && continue
-        traw = _symplectic_col_col_support(destab, j, stab, pivot, supp, nsupp)
+        j == col && continue
+        traw = _symplectic_col_col_support(destab, j, stab, col, supp, nsupp)
         traw == 0 && continue
         t = mod(traw, d)
         t == 0 && continue
-        # j != pivot (guarded above), so these are disjoint columns of destab.
-        # The new pivot dual is a multiple of the old pivot generator, so it
-        # vanishes outside that generator's sites, which `pu` recorded in
-        # zacc_workspace.
-        if pu.sparse
-            _gen_submul_sites!(destab, j, destab, pivot, tab.zacc_workspace, pu.nsupp, t, d)
+        # j != col (guarded above), so these are disjoint columns of destab.
+        if sparse
+            _gen_submul_sites!(destab, j, destab, col, sites, nsites, t, d)
         else
-            _gen_submul!(destab, j, destab, pivot, t, d)
+            _gen_submul!(destab, j, destab, col, t, d)
         end
     end
-
     return nothing
 end
 
@@ -499,18 +522,8 @@ end
     sites = tab.zacc_workspace
     ndsupp = _column_support!(sites, destab, newcol)
     dsparse = _pivot_support_is_sparse(ndsupp, n)
-    @inbounds for j in 1:m
-        traw = _symplectic_col_col_support(destab, j, stab, newcol, supp, nsupp)
-        traw == 0 && continue
-        t = mod(traw, d)
-        t == 0 && continue
-        # m == newcol - 1, so j < newcol: disjoint columns of destab.
-        if dsparse
-            _gen_submul_sites!(destab, j, destab, newcol, sites, ndsupp, t, d)
-        else
-            _gen_submul!(destab, j, destab, newcol, t, d)
-        end
-    end
+    # m == newcol - 1, so every j in 1:m is a dual other than newcol.
+    _orthogonalize_duals!(tab, L, newcol, m, supp, nsupp, sites, ndsupp, dsparse)
 
     _update_xdotz_cache!(tab, L, newcol)
     return nothing
@@ -745,6 +758,16 @@ function _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayo
         tab.iscanonical = false
         return t
     end
+    return _measure_commuting!(rng, tab, L, op, kop, outcome)
+end
+
+# The branch of `measure!` for an `op` that commutes with every generator,
+# with `kop` the reduced phase exponent of `op`. It overwrites res_workspace.
+function _measure_commuting!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
+                             op::AbstractPauli, kop::Int, outcome::Union{Int,Nothing})
+    d = tab.d
+    n = tab.n
+    m = tab.m
 
     # A pure state's n independent generators span a Lagrangian subspace (d
     # prime), so a Pauli commuting with all of them lies in the span: the outcome

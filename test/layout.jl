@@ -398,3 +398,50 @@ end
         @test ly_check_gate_stream(TT, d, E, n, storephase, seed)
     end
 end
+
+# Measured operator `i` of a seeded stream on `n ≥ 4` qudits at dimension `d`:
+# every built-in Pauli type, and a dense `GeneralPauli` every fifth call.
+function ly_measure_op(rng, d, n, i)
+    tg = randperm(rng, n)
+    e() = rand(rng, -d:2d)
+    ph = rand(rng, 0:3)
+    kind = mod1(i, 5)
+    if kind == 1
+        r = rand(rng)
+        r < 0.4 && return SinglePauli(tg[1], 0, 1)
+        r < 0.6 && return SinglePauli(tg[1], 1, 0)
+        return SinglePauli(tg[1], e(), e(), ph)
+    end
+    kind == 2 && return DoublePauli(tg[1], e(), e(), tg[2], e(), e(), ph)
+    kind == 3 && return TriplePauli(tg[1], e(), e(), tg[2], e(), e(), tg[3], e(), e(), ph)
+    kind == 4 && return NPauli(Tuple(tg[1:4]), ntuple(_ -> e(), 4), ntuple(_ -> e(), 4), ph)
+    return GeneralPauli(rand(rng, 0:d-1, 2n), ph)
+end
+
+@testset "same rng stream in both layouts" begin
+    n = 40
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (true, false)
+        g = TT(d, n; state = :mixed, storephase, layout = :generator)
+        q = TT(d, n; state = :mixed, storephase, layout = :qudit)
+        rng_g = Xoshiro(7)
+        rng_q = Xoshiro(7)
+        src = Xoshiro(1000d + n)
+        ok = true
+        for i in 1:300
+            op = ly_measure_op(src, d, n, i)
+            tg = measure!(rng_g, g, op; phase_policy = 1)
+            tq = measure!(rng_q, q, op; phase_policy = 1)
+            ok &= tg == tq && ly_matrices(g) == ly_matrices(q) && ly_same_state(g, q) &&
+                  g.iscanonical == q.iscanonical
+            ok || (@error "layouts differ" TT d storephase i op tg tq; break)
+            if rand(src) < 0.5
+                gate = ly_stream_gate(src, d, n, i)
+                apply!(g, gate)
+                apply!(q, gate)
+            end
+        end
+        @test ok
+        @test tableau_layout(q) === :qudit
+        @test rand(rng_g) == rand(rng_q)
+    end
+end

@@ -342,9 +342,10 @@ end
 
 @testset "measure! allocates nothing in the noncommuting branch" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
-        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int))
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
         n = 64
-        tab = TT(d, n; state = :Z, eltype = E)
+        tab = TT(d, n; state = :Z, eltype = E, layout)
         rng = Xoshiro(3)
         for q in 1:2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
@@ -355,8 +356,107 @@ end
             @test mkref_measure_allocs(rng, tab, op) == 0
         end
         # A random state takes the dense pivot path.
-        r = TT(d, n; state = :Z, eltype = E)
+        r = TT(d, n; state = :Z, eltype = E, layout)
         random_state!(rng, r)
         @test mkref_measure_allocs(rng, r, SinglePauli(5, 1, 0)) == 0
+        @test mkref_measure_allocs(rng, r, GeneralPauli(rand(rng, 0:(d - 1), 2n), 0)) == 0
+    end
+end
+
+@testset "measure! allocates nothing in the append branch of a DestabilizerTableau" begin
+    for d in (2, 3, 31), E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
+        n = 64
+        h = n ÷ 2
+        tab = DestabilizerTableau(d, n; state = :mixed, eltype = E, layout)
+        for q in 1:h
+            measure!(tab, SinglePauli(q, 0, 1); outcome = 0)
+        end
+        # Generators and duals spread over the first half; Z_n commutes with
+        # them and lies outside their span.
+        apply!(tab, random_clifford(Xoshiro(d), d, collect(1:h)))
+        @test tab.m == h
+        @test mkref_measure_allocs(Xoshiro(1), tab, SinglePauli(n, 0, 1)) == 0
+        c = copy(tab)
+        measure!(c, SinglePauli(n, 0, 1); outcome = 0)
+        @test c.m == h + 1
+    end
+end
+
+# Random-branch fixtures: brickwork circuits with Z measurements at rate `p`
+# on a pure state, and a random pure state.
+function mkqm_monitored(TT, d, n, p, storephase, seed)
+    rng = Xoshiro(seed)
+    tab = TT(d, n; state = :Z, storephase)
+    for l in 1:8
+        for q in (isodd(l) ? 1 : 2):2:(n - 1)
+            apply!(tab, random_clifford(rng, d, [q, q + 1]))
+        end
+        for q in 1:n
+            rand(rng) < p && measure!(rng, tab, SinglePauli(q, 0, 1))
+        end
+    end
+    return tab
+end
+
+function mkqm_random(TT, d, n, storephase, seed)
+    tab = TT(d, n; state = :Z, storephase)
+    random_state!(Xoshiro(seed), tab)
+    return tab
+end
+
+# Measure Z, X and a two-qudit Pauli on random qudits of a generator-major
+# fixture and its qudit-major copy; compare after every measurement.
+function mkqm_compare(g, nsteps, seed)
+    q = qudit_major!(copy(g))
+    rng = Xoshiro(seed)
+    rg = Xoshiro(seed + 1)
+    rq = Xoshiro(seed + 1)
+    n, d = g.n, g.d
+    for step in 1:nsteps
+        a, b = randperm(rng, n)[1:2]
+        r = rand(rng)
+        op = r < 0.6 ? SinglePauli(a, 0, 1) : r < 0.8 ? SinglePauli(a, 1, 0) :
+             DoublePauli(a, rand(rng, 0:(d - 1)), 1, b, 1, rand(rng, 0:(d - 1)))
+        tg = measure!(rg, g, op; phase_policy = 1)
+        tq = measure!(rq, q, op; phase_policy = 1)
+        same = tg == tq && mkref_same_state(g, q) && g.phase == q.phase
+        same || (@info "layouts differ" typeof(g) d n step op; return false)
+    end
+    return rand(rg, UInt64) == rand(rq, UInt64)
+end
+
+@testset "qudit-major random branch" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
+        n = 96
+        for (k, p) in enumerate((0.05, 0.15))
+            @test mkqm_compare(mkqm_monitored(TT, d, n, p, storephase, 10d + k), 60, d + k)
+        end
+        @test mkqm_compare(mkqm_random(TT, d, n, storephase, 20d), 60, d + 7)
+    end
+end
+
+@testset "qudit-major sparse and dense updates agree" begin
+    # Divisor 1 takes the sparse update whenever a generator anticommutes;
+    # `typemax(Int)` takes the dense one whenever one does.
+    L = MK.QuditMajor()
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
+        n = 48
+        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d),
+                                 mkqm_random(TT, d, n, storephase, 40d)))
+            a = qudit_major!(copy(g))
+            b = copy(a)
+            rng = Xoshiro(k)
+            ok = true
+            for step in 1:40
+                q = rand(rng, 1:n)
+                op = rand(rng) < 0.6 ? SinglePauli(q, 0, 1) : SinglePauli(q, 1, rand(rng, 0:(d - 1)))
+                ta = MK._measure_qm!(Xoshiro(step), a, L, op, nothing, 1, 1)
+                tb = MK._measure_qm!(Xoshiro(step), b, L, op, nothing, 1, typemax(Int))
+                ok &= ta == tb && mkref_same_state(a, b) && a.phase == b.phase
+                ok || break
+            end
+            @test ok
+        end
     end
 end
