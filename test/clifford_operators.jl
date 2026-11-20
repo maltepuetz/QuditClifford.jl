@@ -475,7 +475,7 @@ function stored_apply_allocations(tab, U)
 end
 
 @testset "Stored apply! is allocation-free after warm-up" begin
-    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 67),
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 67, 101, 23189),
         storephase in (false, true), E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int)),
         layout in (:generator, :qudit)
         tab = TT(d, 12; state = :ghz, storephase = storephase, eltype = E, layout = layout)

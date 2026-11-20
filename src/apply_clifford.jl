@@ -787,25 +787,34 @@ end
 @noinline _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
                           L::TableauLayout) = _apply_columns_generic!(tab, prep, L)
 
-# A qudit-major tableau runs the tuple backing's Barrett tier through the
+# A qudit-major tableau runs the tuple backing's `fast` tier through the
 # kernel of src/apply_qudit_major.jl, one SIMD loop over the generators in the
-# narrowest lane `_clifford_lane_bytes` admits; each branch names its lane type,
-# so the kernel is compiled for it. The other tiers, and a `(S, d)` without a
-# lane, take the per-generator path.
+# lane `_clifford_lane` chooses, derived once per gate; each branch names its
+# lane type and constant type, so the kernel is compiled for it. The kernel
+# derives its own constant, so `bm` (an `Int` constant) is needed only at
+# `d = 2`, where it gates `prep.Q`. The overflow-safe tier, and a `(S, d)`
+# without a lane, take the per-generator path.
 @noinline function _apply_columns!(tab::AbstractTableau, prep::PreparedClifford{K,S},
                                   L::QuditMajor) where {K,S}
-    prep.bm == 0 && return _apply_columns_generic!(tab, prep, L)
-    lane = _clifford_lane_bytes(S, prep.d)
-    if lane == 2
-        _qm_apply!(tab, prep, L, Int16)
-    elseif prep.d == 2
-        return _apply_columns_generic!(tab, prep, L)
-    elseif lane == 4
-        _qm_apply!(tab, prep, L, Int32)
-    elseif lane == 8
-        _qm_apply!(tab, prep, L, Int64)
+    prep.fast || return _apply_columns_generic!(tab, prep, L)
+    d = prep.d
+    if d == 2
+        (prep.bm != 0 && _lane_holds(Int16, S, d)) ||
+            return _apply_columns_generic!(tab, prep, L)
+        _qm_apply!(tab, prep, L, Int16, nothing, 0)
     else
-        return _apply_columns_generic!(tab, prep, L)
+        lane, M, s, wide = _clifford_lane(S, d)
+        if lane == 2
+            wide ? _qm_apply!(tab, prep, L, Int16, M % Int32, s) :
+                   _qm_apply!(tab, prep, L, Int16, M % Int16, s)
+        elseif lane == 4
+            wide ? _qm_apply!(tab, prep, L, Int32, M, s) :
+                   _qm_apply!(tab, prep, L, Int32, M % Int32, s)
+        elseif lane == 8
+            _qm_apply!(tab, prep, L, Int64, M, s)
+        else
+            return _apply_columns_generic!(tab, prep, L)
+        end
     end
     tab.iscanonical = false
     return tab
@@ -866,11 +875,11 @@ end
 # The qudit-major kernel's destabilizer pass: the same kernel on the
 # destabilizer block, with neither phase nor cache.
 @inline _after_clifford!(::AbstractTableau, ::QuditMajor, ::PreparedClifford,
-                         ::Type{T}, M::T, s::Int) where {T<:Signed} = nothing
+                         ::Type{T}, M::Union{Nothing,Signed}, s::Int) where {T<:Signed} = nothing
 
 @inline function _after_clifford!(tab::DestabilizerTableau, L::QuditMajor,
-                                  prep::PreparedClifford, ::Type{T}, M::T,
-                                  s::Int) where {T<:Signed}
+                                  prep::PreparedClifford, ::Type{T},
+                                  M::Union{Nothing,Signed}, s::Int) where {T<:Signed}
     _qm_tuple_kernel!(_destab(tab, L), nothing, nothing, tab.coeff_workspace, tab.m,
                       prep, T, M, s)
     return nothing

@@ -238,19 +238,37 @@ end
     end
 end
 
-# The Barrett reduction of `x` evaluated in the lane type `T`.
-ly_reduce(::Type{T}, x::Integer, d::Integer, M::T, s::Int) where {T<:Signed} =
+# The Barrett reduction of `x` evaluated in the lane type `T`, with the product
+# formed in the type of `M`.
+ly_reduce(::Type{T}, x::Integer, d::Integer, M::Signed, s::Int) where {T<:Signed} =
     ly_QC._barrett_reduce(T(x), T(d), M, s)
 
 const ly_LANES = (Int16, Int32, Int64)
 
+# The type a lane forms its Barrett product in: the lane itself when it has
+# its own constant (and always for `Int64`), else the next wider type.
+ly_product_type(T, wide) = wide ? widen(T) : T
+
+# `T` holds the kernel's largest unreduced value `X = 2S·d·(d-1)`.
+ly_holds(T, S, d) = big(2S) * d * (d - 1) <= typemax(T)
+
+ly_has_constant(W, S, d) = ly_QC._clifford_barrett(W, S, d)[1] != 0
+
+# A lane is usable if it holds `X` and has its own or (below Int64) a widened constant.
+ly_lane_ok(T, S, d) = T === Int64 ? ly_has_constant(Int64, S, d) :
+    ly_holds(T, S, d) && (ly_has_constant(T, S, d) || ly_has_constant(widen(T), S, d))
+
 ly_lane_type(S, d) =
     (b = ly_QC._clifford_lane_bytes(S, d); b == 0 ? nothing : only(filter(T -> sizeof(T) == b, ly_LANES)))
 
-# Every `x ∈ 0:2S·d·(d-1)` reduces to `mod(x, d)` in the lane chosen for `(S, d)`.
+# Every `x ∈ 0:2S·d·(d-1)` reduces to `mod(x, d)` in the lane chosen for `(S, d)`,
+# with the constant `_clifford_lane` returns.
 function ly_lane_reduces_exactly(S, d)
     T = ly_lane_type(S, d)
-    M, s = ly_QC._clifford_barrett(T, S, d)
+    _, M64, s, wide = ly_QC._clifford_lane(S, d)
+    W = ly_product_type(T, wide)
+    M = M64 % W
+    (M, s) == ly_QC._clifford_barrett(W, S, d) || return false
     for x in 0:(2S * d * (d - 1))
         ly_reduce(T, x, d, M, s) == mod(x, d) || return false
     end
@@ -258,21 +276,33 @@ function ly_lane_reduces_exactly(S, d)
 end
 
 @testset "lane selection" begin
-    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031), [4093, 16381, 32749, 65521])
+    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031), [4093, 13399, 16381, 23189, 32749, 65521])
+    nwide = 0
     for S in (2, 4, 6), d in ds
-        b = ly_QC._clifford_lane_bytes(S, d)
+        b, M, s, wide = ly_QC._clifford_lane(S, d)
+        @test b == ly_QC._clifford_lane_bytes(S, d)
         @test b in (0, 2, 4, 8)
         # Every prime up to 1031 has a lane.
         d <= 1031 && @test b != 0
         for T in ly_LANES
-            has = ly_QC._clifford_barrett(T, S, d)[1] != 0
             if b == 0 || sizeof(T) < b
-                @test !has
+                @test !ly_lane_ok(T, S, d)
             elseif sizeof(T) == b
-                @test has
+                @test ly_holds(T, S, d)
+                # The lane's own constant when it has one, else the widened one.
+                @test wide == !ly_has_constant(T, S, d)
+                @test (M, s) == Tuple(Int64.(ly_QC._clifford_barrett(ly_product_type(T, wide), S, d)))
+                @test M != 0
+                @test !(T === Int64 && wide)
+                nwide += wide
             end
         end
     end
+    @test nwide > 0
+    # The lanes of the boundary d in "qudit-major gate kernel".
+    @test [ly_QC._clifford_lane_bytes(2, d) for d in (89, 97, 23189)] == [2, 4, 8]
+    @test [ly_QC._clifford_lane_bytes(4, d) for d in (61, 67)] == [2, 4]
+    @test [ly_QC._clifford_lane_bytes(6, d) for d in (43, 47, 13399)] == [2, 4, 8]
     for S in (2, 6), d in filter(ly_QC.Primes.isprime, 2:251)
         @test ly_lane_reduces_exactly(S, d)
     end
@@ -309,7 +339,7 @@ function ly_same_state(g, q)
     return true
 end
 
-# Gate `i` of a seeded stream on `n` qudits at dimension `d`. Gate 7 is a dense
+# Gate `i` of a seeded stream on `n` qudits at dimension `d`. Gate 8 is a dense
 # 4-qudit operator when `n ≥ 4`.
 function ly_stream_gate(rng, d, n, i)
     kmax = min(n, 3)
@@ -354,10 +384,12 @@ function ly_check_gate_stream(TT, d, E, n, storephase, seed)
 end
 
 @testset "qudit-major gate kernel" begin
-    # Lane boundaries of "lane selection": the largest Int16 d for S = 6 (3)
-    # and S = 2 (5), the first Int32 d (5 for S = 4, 6; 7 for S = 2), the first
-    # Int64 d (47, 67, 97 for S = 6, 4, 2) and the largest Int32 d (109, 179).
-    ds = [2, 3, 5, 7, 47, 61, 67, 97, 109, 179, 251, 257]
+    # Lane boundaries of "lane selection": the largest Int16 d for S = 6, 4, 2
+    # (43, 61, 89), the first Int32 d (47, 67, 97), Int32 lanes with `UInt16`
+    # storage (4093) and Int64 lanes (13399 for S = 6, 23189 for S = 2). Each
+    # lane runs with its own constant (d = 3; 101 and 61 at S = 6 in Int32)
+    # and with the widened one (d = 5 at S = 4, 6; 43-97, 251, 4093).
+    ds = [2, 3, 5, 43, 47, 61, 67, 89, 97, 101, 251, 257, 4093, 13399, 23189]
     Sys.WORD_SIZE == 64 && push!(ds, 65521)
     seed = 1
     for TT in (StabilizerTableau, DestabilizerTableau), storephase in (true, false),

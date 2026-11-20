@@ -6,11 +6,13 @@
 # generators is one contiguous column, so a gate on `K` qudits reads and writes
 # `2K` columns, and one SIMD loop over the generators does the whole gate. The
 # loop runs in a lane type `T ∈ (Int16, Int32, Int64)` chosen by
-# `_clifford_lane_bytes`: entries are widened to `T`, every product and sum is
-# formed in `T` and reduced by `_barrett_reduce` under the constant `(M, s)` of
-# `_clifford_barrett(T, S, d)`, so every unreduced value stays at most
-# `X = 2S·d·(d-1)`, and results are stored back as `E`. The formulas are those
-# of `_matvec`, `_phase_odd_barrett`, `_phase_qubit_closed` and
+# `_clifford_lane`: entries are widened to `T`, every product and sum is formed
+# in `T`, every unreduced value stays at most `X = 2S·d·(d-1) <= typemax(T)`,
+# and `_barrett_reduce` forms only its product `x * M` in the type of the
+# lane's constant, `T` itself or `widen(T)`. Results are stored back as `E`.
+# At `d = 2` the values are bits and sums of at most `3S + 2 <= X`, so the loop
+# runs in `Int16` whenever it holds `X`, and reduces with `&` and `⊻`. The
+# formulas are those of `_matvec`, `_phase_odd_barrett`, `_phase_qubit_closed` and
 # `_col_xdotz_prepared` on the Barrett tier, so the results are identical to
 # the per-generator path.
 #
@@ -27,20 +29,22 @@
 # One gate on the `m` active generators of the qudit-major block `b`. `phase`
 # is the phase vector, or `nothing` for no phase work; `cache` is the
 # `xdotz_cache`, or `nothing` when there is none. `ws` is the tableau's
-# `coeff_workspace`. Requires `prep.bm != 0` and `(M, s) =
-# _clifford_barrett(T, S, prep.d)` with `M != 0`; at `d = 2` the lane is not
-# used for reductions and any `T` holds every value (`<= 3S`).
+# `coeff_workspace`. At odd `d`, `(T, M, s)` come from `_clifford_lane` with
+# `M` converted to its product type; `M === nothing` selects the `d = 2` pass
+# (with `prep.bm != 0`, which builds `prep.Q`), so only that instance compiles
+# it.
 @inline function _qm_tuple_kernel!(b::_QMBlock, phase::Union{Nothing,Vector{Int}},
                                    cache::Union{Nothing,Vector{Int}},
                                    ws::Matrix{E}, m::Int,
-                                   prep::PreparedClifford{K,S}, ::Type{T}, M::T,
+                                   prep::PreparedClifford{K,S}, ::Type{T},
+                                   M::Union{Nothing,Signed},
                                    s::Int) where {E,K,S,T<:Signed}
     t = prep.targets
     xc = ntuple(i -> view(b.x, :, t[i]), Val(K))
     zc = ntuple(i -> view(b.z, :, t[i]), Val(K))
     wp = view(ws, :, 1)
     wc = view(ws, :, 2)
-    if prep.d == 2
+    if M === nothing
         _qm_pass_qubit!(xc, zc, wp, wc, m, prep, T, phase !== nothing, cache !== nothing)
     else
         _qm_pass_odd!(xc, zc, wp, wc, m, prep, T, M, s, phase !== nothing, cache !== nothing)
@@ -105,7 +109,7 @@ end
 # each combination compiles to its own loop.
 @inline function _qm_pass_odd!(xc::NTuple{K}, zc::NTuple{K}, wp::AbstractVector{E},
                                wc::AbstractVector{E}, m::Int,
-                               prep::PreparedClifford{K,S}, ::Type{T}, M::T, s::Int,
+                               prep::PreparedClifford{K,S}, ::Type{T}, M::Signed, s::Int,
                                dophase::Bool, docache::Bool) where {E,K,S,T<:Signed}
     di = prep.d
     d = di % T
@@ -114,9 +118,10 @@ end
     D = _lane_tuple(T, prep.D)
     inv2 = prep.inv2 % T
     # Multiples of `d` no smaller than `x·z + D·v <= (K+S)(d-1)^2` and
-    # `x·z <= K(d-1)^2`; both are at most `X`, so they fit in `T`.
-    C = ((K + S) * (di - 1) * di) % T
-    Cc = (K * (di - 1) * di) % T
+    # `x·z <= K(d-1)^2`; both are at most `X`, so they fit in `T`. They are
+    # formed in `Int64`, which holds `X` for every lane.
+    C = (Int64(K + S) * (di - 1) * di) % T
+    Cc = (Int64(K) * (di - 1) * di) % T
     @inbounds @simd ivdep for j in 1:m
         v = _qm_gather(xc, zc, j, T, Val(S))
         # Each row sum is at most S(d-1)^2 <= X.
@@ -172,9 +177,9 @@ end
 
 # The whole gate on a qudit-major tableau in lane `T`: the stabilizer block with
 # its phase and cache, then the destabilizer block of a `DestabilizerTableau`.
-@inline function _qm_apply!(tab::AbstractTableau, prep::PreparedClifford{K,S},
-                            L::QuditMajor, ::Type{T}) where {K,S,T<:Signed}
-    M, s = _clifford_barrett(T, S, prep.d)
+@inline function _qm_apply!(tab::AbstractTableau, prep::PreparedClifford,
+                            L::QuditMajor, ::Type{T}, M::Union{Nothing,Signed},
+                            s::Int) where {T<:Signed}
     stab = _stab(tab, L)
     cache = _qm_cache(tab)
     if prep.storephase
