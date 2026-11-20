@@ -9,7 +9,8 @@ A tableau represents a stabilizer state, pure or mixed, on `n` qudits of prime
 dimension `d`. This page covers the choice between the two tableau types, how
 to build a tableau from preset states or from a raw matrix, the contract its
 generators satisfy, copying, comparing and resetting, and the storage element
-type. The storage layout is defined in [Tableau layout](@ref).
+type and the storage layout. The matrix layout of the generators is defined
+in [Tableau layout](@ref).
 
 ## Choosing a tableau type
 
@@ -203,6 +204,71 @@ The generators alone take 2 bytes per `n²` (4 with destabilizers) in `UInt8`.
 At `d ≥ 3` the rank workspace adds as much again for a `StabilizerTableau`,
 and the padding of the generator blocks adds the rest, most of it at small
 `n`.
+
+## Storage layout
+
+The generators of a tableau are stored in one of two layouts, which differ in
+which exponents are contiguous in memory:
+
+- **Generator-major** (`:generator`, the default): the exponents of one
+  generator across all qudits are contiguous. Operations that touch a few
+  generators, such as the row operations of a measurement, read short runs.
+- **Qudit-major** (`:qudit`): the exponents of one qudit across all generators
+  are contiguous. A gate on qudits `i` and `j` combines two such columns, so it
+  runs over two contiguous vectors with SIMD lanes along the generators.
+
+The `layout` keyword of every constructor selects the layout, `:generator` by
+default. [`qudit_major!`](@ref) and [`generator_major!`](@ref) switch an
+existing tableau in place, and [`tableau_layout`](@ref) returns `:generator` or
+`:qudit`. `show` prints the layout on its `Storage` line. No operation changes
+the layout on its own, and `copy!(dst, src)` gives `dst` the layout of `src`.
+
+The layout affects speed, never a result: generators, phases, `m`, measurement
+outcomes drawn from the same `rng`, entropies and the matrices returned by
+[`stabilizer_matrix`](@ref) and [`destabilizer_matrix`](@ref) are identical in
+both layouts and in every element type, and `==` and `hash` compare tableaux
+across layouts.
+
+A switch transposes each `n × n` block inside its existing array and allocates
+nothing. On a `UInt8` block at `n = 2048` it takes under a millisecond
+(preliminary measurement on an Apple M3 Pro), so it is cheap next to a phase of
+many gates.
+
+Which layout is faster depends on the operation (preliminary measurements on an
+Apple M3 Pro at `n = 2048`):
+
+- Two-qudit gates are much faster qudit-major: about 13–19× at `d = 3`–`31`,
+  and about 5× at `d = 251`.
+- Random-outcome measurements are faster qudit-major as well: 1.5–1.9× on
+  monitored states, and about 5× on random states at `d = 3`.
+- [`canonicalize!`](@ref) and some channels are currently slower qudit-major.
+
+Keep the default generator-major layout unless a phase of the computation is
+dominated by gates and measurements, and switch at the phase boundaries. For
+example, run the measurement-only evolution qudit-major, switch back, and
+compute [`entanglement_profile`](@ref) generator-major:
+
+```jldoctest layout
+julia> tab = DestabilizerTableau(3, 6; state = :ghz, layout = :qudit);
+
+julia> measure!(tab, SinglePauli(3, 1, 0); outcome = 0);
+
+julia> tableau_layout(tab)
+:qudit
+
+julia> generator_major!(tab); entanglement_profile(tab)
+7-element Vector{Int64}:
+ 0
+ 1
+ 1
+ 1
+ 1
+ 1
+ 0
+
+julia> tableau_layout(tab)
+:generator
+```
 
 ## Mutating operations
 
