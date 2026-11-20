@@ -152,7 +152,7 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
     storephase::Bool=true,
     inversemod::T=PrecomputedInvMod(d),
     eltype::Type{E}=_default_eltype(d),
-    layout::Symbol=:generator,
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
@@ -171,7 +171,7 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     inversemod::T=PrecomputedInvMod(d),
     check::Bool=true,
     eltype::Type{E}=_default_eltype(d),
-    layout::Symbol=:generator,
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
@@ -673,7 +673,12 @@ function Base.show(io::IO, tab::DestabilizerTableau)
         return
     end
 
-    L = _layout_marker(tab)
+    _show_generators(io, tab, _layout_marker(tab))
+end
+
+# The stabilizer and destabilizer rows of `show` for a tableau with `m ≥ 1` and
+# layout marker `L`.
+function _show_generators(io::IO, tab::DestabilizerTableau, L::TableauLayout)
     stab, destab = _stab(tab, L), _destab(tab, L)
     maxstab = _max_abs_entry(stab, _phase(tab), tab.m)
     maxdest = _max_abs_entry(destab, Int[], tab.m)
@@ -707,4 +712,5 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     for col in 1:tab.m
         _print_generator_row(io, destab, Int[], col, N + 2)
     end
+    return nothing
 end

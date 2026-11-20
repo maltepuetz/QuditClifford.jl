@@ -116,13 +116,18 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 
+# The layout a constructor uses when no `layout` keyword is given. Always
+# `:generator` for users; the test suite sets it to run every test file in
+# either layout (`QC_TEST_LAYOUT`).
+const _DEFAULT_LAYOUT = Ref(:generator)
+
 Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
     inversemod::T=PrecomputedInvMod(d),
     eltype::Type{E}=_default_eltype(d),
-    layout::Symbol=:generator,
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
@@ -140,7 +145,7 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     inversemod::T=PrecomputedInvMod(d),
     check::Bool=true,
     eltype::Type{E}=_default_eltype(d),
-    layout::Symbol=:generator,
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
@@ -622,7 +627,12 @@ function Base.show(io::IO, tab::StabilizerTableau)
         return
     end
 
-    stab = _stab(tab, _layout_marker(tab))
+    _show_generators(io, tab, _layout_marker(tab))
+end
+
+# The generator rows of `show` for a tableau with `m ≥ 1` and layout marker `L`.
+function _show_generators(io::IO, tab::StabilizerTableau, L::TableauLayout)
+    stab = _stab(tab, L)
     N = ndigits(_max_abs_entry(stab, _phase(tab), tab.m)) - 1
     extraspace = 0
     isodd(N) && isodd(tab.n) && (extraspace += 1)
@@ -641,6 +651,7 @@ function Base.show(io::IO, tab::StabilizerTableau)
     for col in 1:tab.m
         _print_generator_row(io, stab, _phase(tab), col, N + 2)
     end
+    return nothing
 end
 
 # The largest absolute entry of generators `1:m` of `b` and of `phase[1:m]`

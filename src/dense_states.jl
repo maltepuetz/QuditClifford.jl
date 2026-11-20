@@ -203,7 +203,11 @@ StabilizerKet (d = 3, n = 100, 3 terms):
 """
 function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    L = _layout_marker(tab)
+    return _ket(tab, _layout_marker(tab), maxentries)
+end
+
+# `ket` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _ket(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
     _check_convertible(tab, L, "ket", true)
     n, d = tab.n, tab.d
     # n + 1 cannot overflow: the tableau already holds (2n + 1) × n entries.
@@ -323,7 +327,11 @@ true
 """
 function state_vector(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    L = _layout_marker(tab)
+    return _state_vector(tab, _layout_marker(tab), maxentries)
+end
+
+# `state_vector` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _state_vector(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
     _check_convertible(tab, L, "state_vector", true)
     n, d = tab.n, tab.d
     D = _bounded_pow(d, n, maxentries)
@@ -415,7 +423,11 @@ julia> real(density_matrix(tab))   # (|00⟩ + |11⟩)(⟨00| + ⟨11|) / 2
 """
 function density_matrix(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    L = _layout_marker(tab)
+    return _density_matrix(tab, _layout_marker(tab), maxentries)
+end
+
+# `density_matrix` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _density_matrix(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
     _check_convertible(tab, L, "density_matrix", false)
     n, d, m = tab.n, tab.d, tab.m
     D = _bounded_pow(d, n, maxentries)

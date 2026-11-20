@@ -408,14 +408,14 @@ end
     for (TT, head) in ((StabilizerTableau, "Stabilizer"), (DestabilizerTableau, "Destabilizer")),
         (d, kw, E) in ((3, (;), UInt8), (257, (;), UInt16), (3, (; eltype=Int), Int))
 
-        text = sprint(show, TT(d, 2; state=:product, kw...))
+        text = sprint(show, TT(d, 2; state=:product, layout=:generator, kw...))
         @test startswith(text, "$head Tableau:\n" *
                                "    Qudit dimension:  d = $d\n" *
                                "    Number of Qudits: n = 2\n" *
                                "    Generators:       m = 2\n" *
                                "    Storage:          generator-major, $(string(E))\n" *
                                "    Tableau:\n")
-        large_text = sprint(show, TT(d, 30; kw...))
+        large_text = sprint(show, TT(d, 30; layout=:generator, kw...))
         @test occursin("    Generators:       m = 0\n" *
                        "    Storage:          generator-major, $(string(E))\n" *
                        "    Tableau is too large to display.", large_text)

@@ -45,16 +45,17 @@ end
             (; state = :ghz),
         )
         for kw in presets
-            g = TT(d, n; kw..., eltype = E)
+            g = TT(d, n; kw..., eltype = E, layout = :generator)
             q = TT(d, n; kw..., eltype = E, layout = :qudit)
             @test tableau_layout(g) === :generator
+            @test tableau_layout(TT(d, n; kw..., eltype = E)) === ly_QC._DEFAULT_LAYOUT[]
             @test tableau_layout(TT(d, n; kw..., eltype = E, layout = :generator)) === :generator
             @test tableau_layout(q) === :qudit
             @test q isa typeof(g)
             @test ly_matrices(q) == ly_matrices(g)
         end
         raw = stabilizer_matrix(TT(d, n; state = :ghz))
-        g = TT(d, raw; eltype = E)
+        g = TT(d, raw; eltype = E, layout = :generator)
         q = TT(d, raw; eltype = E, layout = :qudit)
         qt = TT(d, permutedims(raw); eltype = E, layout = :qudit)
         @test tableau_layout(g) === :generator
@@ -78,7 +79,7 @@ end
     )
     rng = Xoshiro(20261120)
     for TT in (StabilizerTableau, DestabilizerTableau), (E, d, n) in cases
-        tab = TT(d, n; eltype = E)
+        tab = TT(d, n; eltype = E, layout = :generator)
         random_state!(rng, tab; m = n ÷ 2)
         P = map(b -> copy(parent(b)), ly_blocks(tab))
         X0 = map(copy, ly_blocks(tab))
@@ -114,7 +115,7 @@ end
 @testset "copy and copy! across layouts" begin
     rng = Xoshiro(7)
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), n in (5, 300)
-        src = TT(d, n)
+        src = TT(d, n; layout = :generator)
         random_state!(rng, src; m = n ÷ 2)
         q = qudit_major!(copy(src))
         @test tableau_layout(q) === :qudit
@@ -123,7 +124,7 @@ end
         @test ly_matrices(c) == ly_matrices(src)
         @test all(map(==, ly_blocks(c), ly_blocks(q)))
 
-        g = TT(d, n)
+        g = TT(d, n; layout = :generator)
         copy!(g, q)
         @test tableau_layout(g) === :qudit
         @test ly_matrices(g) == ly_matrices(src)
@@ -168,9 +169,9 @@ end
     @test occursin("Storage:          qudit-major, UInt8",
                    sprint(show, StabilizerTableau(3, 2; layout = :qudit)))
     @test occursin("Storage:          generator-major, UInt8",
-                   sprint(show, StabilizerTableau(3, 2)))
+                   sprint(show, StabilizerTableau(3, 2; layout = :generator)))
     for TT in (StabilizerTableau, DestabilizerTableau), state in (:ghz, :mixed)
-        g = TT(3, 4; state, eltype = Int)
+        g = TT(3, 4; state, eltype = Int, layout = :generator)
         q = TT(3, 4; state, eltype = Int, layout = :qudit)
         sg, sq = sprint(show, g), sprint(show, q)
         @test occursin("Storage:          qudit-major, $Int", sq)
@@ -199,13 +200,15 @@ end
 @testset "dense states of a qudit-major tableau" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
         n = 4
-        g = TT(d, n)
+        g = TT(d, n; layout = :generator)
         random_state!(Xoshiro(20261120 + d), g)
         q = qudit_major!(copy(g))
         @test state_vector(q) == state_vector(g)
         @test ket(q) == ket(g)
-        # The group walk behind `density_matrix` has no qudit-major method yet.
-        @test_throws MethodError density_matrix(q)
+        @test density_matrix(q) == density_matrix(g)
+        traceout!(g, 2)
+        traceout!(q, 2)
+        @test density_matrix(q) == density_matrix(g)
         @test tableau_layout(q) === :qudit
         @test ly_matrices(q) == ly_matrices(g)
     end

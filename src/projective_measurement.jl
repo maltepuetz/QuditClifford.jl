@@ -46,7 +46,7 @@ end
     return comm
 end
 
-@inline function commutation_col(b::_GMBlock, col::Int, s::AbstractVector{<:Integer})
+@inline function commutation_col(b::XZBlock, col::Int, s::AbstractVector{<:Integer})
     N = _nq(b)
     xg = _xgen(b, col)
     zg = _zgen(b, col)
@@ -60,21 +60,21 @@ end
     end
     comm
 end
-@inline function commutation_col(b::_GMBlock, col::Int, op::GeneralPauli)
+@inline function commutation_col(b::XZBlock, col::Int, op::GeneralPauli)
     return commutation_col(b, col, op.xz)
 end
 
-@inline function commutation_col(b::_GMBlock, col::Int, op::SinglePauli)
+@inline function commutation_col(b::XZBlock, col::Int, op::SinglePauli)
     comm = _xget(b, op.qudit, col) * op.z - _zget(b, op.qudit, col) * op.x
     comm
 end
-@inline function commutation_col(b::_GMBlock, col::Int, op::DoublePauli)
+@inline function commutation_col(b::XZBlock, col::Int, op::DoublePauli)
     comm = 0
     comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
     comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
     comm
 end
-@inline function commutation_col(b::_GMBlock, col::Int, op::TriplePauli)
+@inline function commutation_col(b::XZBlock, col::Int, op::TriplePauli)
     comm = 0
     comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
     comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
@@ -85,7 +85,7 @@ end
 # generator-major layout each entry it reads sits in a different cache line. A
 # zero exponent skips its load, which halves the misses of a pure Z or X
 # operand. Callers validate the qudit indices before the scan.
-@inline function commutation_col(b::_GMBlock, col::Int, op::NPauli{D}) where D
+@inline function commutation_col(b::XZBlock, col::Int, op::NPauli{D}) where D
     comm = 0
     @inbounds for i in 1:D
         q = op.qudits[i]

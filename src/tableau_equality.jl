@@ -14,8 +14,8 @@
 
 # Generator columns `1:m` of `a` and `b`, with phases `pa` and `pb` when
 # `storephase`, agree entry for entry.
-function _active_columns_equal(a::_GMBlock, pa::AbstractVector{Int},
-                               b::_GMBlock, pb::AbstractVector{Int},
+function _active_columns_equal(a::XZBlock, pa::AbstractVector{Int},
+                               b::XZBlock, pb::AbstractVector{Int},
                                m::Int, storephase::Bool)
     n = _nq(a)
     @inbounds for j in 1:m
@@ -110,7 +110,7 @@ end
 
 # Mix the active generators `1:m` of `S` into `h`: per generator the X entries,
 # then the Z entries, then the phase when `storephase`.
-function _hash_active(h::UInt, S::_GMBlock, phase::AbstractVector{Int},
+function _hash_active(h::UInt, S::XZBlock, phase::AbstractVector{Int},
                       m::Int, storephase::Bool)
     n = _nq(S)
     @inbounds for j in 1:m

@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}${{ matrix.layout && format(' - {0}-major', matrix.layout) || '' }}
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.experimental }}
     timeout-minutes: 60
@@ -52,6 +52,11 @@ jobs:
             os: ubuntu-latest
             arch: x64
             experimental: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            experimental: false
+            layout: qudit
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -61,10 +66,12 @@ jobs:
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+        env:
+          QC_TEST_LAYOUT: ${{ matrix.layout || 'generator' }}
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
+        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64' && !matrix.layout
       - uses: codecov/codecov-action@v7
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
+        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64' && !matrix.layout
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

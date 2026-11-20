@@ -4,7 +4,7 @@
 # `1:2n` in order, X rows first, so a column's pivot row decides whether its X
 # block is zero.
 @inline function _canonicalize_tableau!(
-    b::_GMBlock,
+    b::XZBlock,
     phase::AbstractVector{Int},
     m::Int,
     d::Int,
@@ -126,9 +126,9 @@ end
 # `_canonicalize_tableau!` that also carries the destabilizer block `db` through
 # the same column operations, keeping `⟨D_j, S_k⟩ = δ_jk`.
 @inline function _canonicalize_tableau_with_destab!(
-    b::_GMBlock,
+    b::XZBlock,
     phase::AbstractVector{Int},
-    db::_GMBlock,
+    db::XZBlock,
     m::Int,
     d::Int,
     storephase::Bool,

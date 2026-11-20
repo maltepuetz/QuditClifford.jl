@@ -134,9 +134,9 @@ end
             P[j, i] = s
         end
     else
-        fill!(P, zero(T))
+        fill!(view(P, 1:m, 1:m), zero(T))
         @inbounds for i in 1:m
-            Pi = view(P, :, i)
+            Pi = view(P, 1:m, i)
             for q in 1:n
                 addmul_mod!(Pi, view(x, 1:m, q), Int(z[i, q]), d)
             end

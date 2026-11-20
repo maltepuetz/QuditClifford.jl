@@ -80,6 +80,10 @@ function _stabilizer_generator_matrix(tab::AbstractTableau, L::TableauLayout)
     return S
 end
 
+# The stacked destabilizer matrix of `tab`, generator-major in either storage layout.
+_destabilizer_generator_matrix(tab::DestabilizerTableau, L::TableauLayout) =
+    _stacked_int_matrix(_destab(tab, L), 0)
+
 function _check_layout(layout::Symbol)
     layout === :generator || layout === :qudit ||
         throw(ArgumentError("layout must be :generator or :qudit, got :$layout"))
@@ -134,7 +138,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    D = _stacked_int_matrix(_destab(tab, _layout_marker(tab)), 0)
+    D = _destabilizer_generator_matrix(tab, _layout_marker(tab))
     return layout === :generator ? D : permutedims(D)
 end
 
