@@ -1,7 +1,7 @@
 """
-    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d))
+    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type=Int)
     StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type=Int)
 
 Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -30,6 +30,12 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
   `O(n^3)` validation and builds the tableau regardless -- every later operation
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
+- `eltype::Type=Int`: Element type of the stored X and Z exponents: `UInt8`
+  for `d ≤ 251`, `UInt16` for `d ≤ 65521`, or `Int` for every `d`. Another
+  type, or one too narrow for `d`, throws an `ArgumentError`. The choice
+  affects memory and speed only: every result, and every matrix the tableau
+  returns, is the same `Int` value in each element type. Phases are always
+  stored as `Int`.
 
 # Examples
 ```jldoctest
@@ -74,16 +80,16 @@ If `storephase=true`, the phase vector stores the phase exponent `k` of each gen
 
 See also [`reset!`](@ref).
 """
-mutable struct StabilizerTableau{T<:InverseMod} <: AbstractTableau
+mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{Int}              # n×n X exponents, generator j in column j (see _padded_block)
-    stab_z::_BlockMatrix{Int}              # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{E}            # n×n X exponents, generator j in column j (see _padded_block)
+    stab_z::_BlockMatrix{E}            # n×n Z exponents, generator j in column j
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
-    inversemod::T                      # inverse mod function for dimension d
+    inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
     workspace::Matrix{Int}             # 2n×n (rank eliminations for d > 255, commutation checks)
@@ -107,11 +113,13 @@ function StabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
-    inversemod::T=PrecomputedInvMod(d)
-) where {T<:InverseMod}
+    inversemod::T=PrecomputedInvMod(d),
+    eltype::Type{E}=Int,
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
-    b, phase, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
-    return _build_stabilizer_tableau(d, n, m, (b, phase), storephase, inversemod; preset=true)
+    b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
+    return _build_stabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod; preset=true)
 end
 
 StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = StabilizerTableau(d, n; state=state, kwargs...)
@@ -120,8 +128,10 @@ function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     m::Union{Int,Nothing}=nothing,
     storephase::Union{Bool,Nothing}=nothing,
     inversemod::T=PrecomputedInvMod(d),
-    check::Bool=true
-) where {T<:InverseMod}
+    check::Bool=true,
+    eltype::Type{E}=Int,
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     layout === nothing && throw(ArgumentError(
@@ -132,11 +142,12 @@ function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     # never writes to its input.
     tab_in = layout.transpose ? permutedims(tableau) : tableau
 
-    return _build_stabilizer_tableau(d, layout.n, layout.m, tab_in, layout.storephase, inversemod;
-                                    check=check)
+    return _build_stabilizer_tableau(eltype, d, layout.n, layout.m, tab_in, layout.storephase,
+                                     inversemod; check=check)
 end
 
 function _build_stabilizer_tableau(
+    ::Type{E},
     d::Int,
     n::Int,
     m::Int,
@@ -145,15 +156,15 @@ function _build_stabilizer_tableau(
     inversemod::T;
     preset::Bool=false,
     check::Bool=true,
-) where {T<:InverseMod}
+) where {E<:_StorageEltype, T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
-    b, phase = _generator_storage(tableau_in, d, n, m, storephase)
+    b, phase = _generator_storage(tableau_in, E, d, n, m, storephase)
 
-    out = StabilizerTableau{T}(
+    out = StabilizerTableau{T, E}(
         d,
         n,
         m,
@@ -182,15 +193,18 @@ function _build_stabilizer_tableau(
     return out
 end
 
-# The generator storage of a new tableau: an `n × n` X block, an `n × n` Z
-# block and the phase vector. A preset arrives already split, zero-padded and
-# reduced.
-_generator_storage(pre::Tuple{_GMBlock, Vector{Int}}, d::Int, n::Int, m::Int, storephase::Bool) = pre
+# The generator storage of a new tableau: an `n × n` X block and an `n × n` Z
+# block of element type `E`, and the phase vector. A preset arrives already
+# split, zero-padded and reduced, in blocks of type `E`.
+_generator_storage(pre::Tuple{_GMBlock, Vector{Int}}, ::Type{E}, d::Int, n::Int, m::Int,
+                   storephase::Bool) where {E} = pre
 
 # A raw `(2n + storephase) × n` or `(2n + storephase) × m` matrix is copied into
-# fresh arrays: entries reduced mod `d`, phases mod `phase_modulus(d)`, and the
-# columns `m+1:n` zero whatever the input holds there.
-function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, d::Int, n::Int, m::Int, storephase::Bool)
+# fresh arrays: entries reduced mod `d` in `Int` and then stored as `E`, phases
+# reduced mod `phase_modulus(d)`, and the columns `m+1:n` zero whatever the
+# input holds there.
+function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d::Int, n::Int, m::Int,
+                            storephase::Bool) where {E}
     nrows = 2n + (storephase ? 1 : 0)
     size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
     size(tableau_in, 2) == n || size(tableau_in, 2) == m ||
@@ -199,14 +213,15 @@ function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, d::Int, n::In
     S = tableau_in isa Matrix{Int} ? tableau_in : Matrix{Int}(tableau_in)
     src, src_phase = _stacked_views(S, n, storephase)
     sx, sz = src.x, src.z
-    x, z = _stab_blocks(n)
+    x, z = _stab_blocks(E, n)
     phase = zeros(Int, storephase ? n : 0)
 
     # The `m > 0` guard (so also n > 0) is load-bearing: `@turbo` does not
-    # terminate on an empty nest of this shape.
+    # terminate on an empty nest of this shape. `E(r)` is exact: `0 ≤ r < d`
+    # and `E` holds every residue mod `d`.
     m > 0 && @turbo for j in 1:m, q in 1:n
-        x[q, j] = mod(sx[q, j], d)
-        z[q, j] = mod(sz[q, j], d)
+        x[q, j] = E(mod(sx[q, j], d))
+        z[q, j] = E(mod(sz[q, j], d))
     end
     if storephase
         d_phase = phase_modulus(d)
@@ -305,9 +320,10 @@ end
 
 An independent tableau holding the same state in the same generator basis.
 
-The copy has the same type, `d`, `n`, `m`, `storephase` and `iscanonical`, and
-equal generator columns, phases and (for a [`DestabilizerTableau`](@ref))
-destabilizers, so it continues exactly where `tab` stands. It shares no arrays
+The copy has the same type (so the same storage element type), `d`, `n`, `m`,
+`storephase` and `iscanonical`, and equal generator columns, phases and (for a
+[`DestabilizerTableau`](@ref)) destabilizers, so it continues exactly where
+`tab` stands. It shares no arrays
 with `tab`: measuring or applying gates to one leaves the other unchanged. The
 inversion strategy, which is never mutated, is shared. Workspaces start zeroed.
 
@@ -329,8 +345,8 @@ julia> branch == tab
 false
 ```
 """
-function Base.copy(tab::StabilizerTableau{T}) where {T}
-    return StabilizerTableau{T}(
+function Base.copy(tab::StabilizerTableau{IM, E}) where {IM, E}
+    return StabilizerTableau{IM, E}(
         tab.d,
         tab.n,
         tab.m,
@@ -364,8 +380,9 @@ Afterwards `dst` matches `copy(src)` in everything but identity: same `m`, `isca
 inversion strategy and workspaces. Both tableaux must be of the same kind.
 
 # Throws
-`ArgumentError` unless `dst` and `src` have the same `d`, `n` and `storephase`,
-before `dst` is modified.
+`ArgumentError` unless `dst` and `src` have the same `d`, `n`, `storephase`
+and storage element type (the `eltype` keyword of the constructors), before
+`dst` is modified.
 
 # Examples
 ```jldoctest
@@ -446,8 +463,8 @@ end
     throw(ArgumentError("Unknown state: $state. Use :mixed, :product, or :ghz."))
 end
 
-function _preset_tableau(d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
-    b = XZBlock{GeneratorMajor}(_stab_blocks(n)...)
+function _preset_tableau(::Type{E}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool) where {E}
+    b = XZBlock{GeneratorMajor}(_stab_blocks(E, n)...)
     phase = zeros(Int, storephase ? n : 0)
 
     m = _fill_preset!(b, phase, d, n, state, basis_spec, storephase)

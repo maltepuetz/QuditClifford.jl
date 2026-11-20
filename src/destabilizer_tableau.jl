@@ -1,7 +1,7 @@
 """
-    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d))
+    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type=Int)
     DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true)
+    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type=Int)
 
 Construct a destabilizer tableau for an `n`-qudit *stabilizer density operator*
 (mixed-state stabilizer formalism).
@@ -45,6 +45,12 @@ without first canonicalizing the stabilizer generators.
   `O(n^3)` validation and builds the tableau regardless -- every later operation
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
+- `eltype::Type=Int`: Element type of the stored X and Z exponents of the
+  stabilizers and destabilizers: `UInt8` for `d ≤ 251`, `UInt16` for
+  `d ≤ 65521`, or `Int` for every `d`. Another type, or one too narrow for
+  `d`, throws an `ArgumentError`. The choice affects memory and speed only:
+  every result, and every matrix the tableau returns, is the same `Int` value
+  in each element type. Phases are always stored as `Int`.
 
 # Examples
 ```jldoctest
@@ -97,18 +103,18 @@ If `storephase=true`, the phase vector stores the phase exponent `k` of each sta
 Use [`StabilizerTableau`](@ref) instead when compact storage is more important
 than maintaining the dual basis. See also [`reset!`](@ref).
 """
-mutable struct DestabilizerTableau{T<:InverseMod} <: AbstractTableau
+mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{Int}              # n×n X exponents, generator j in column j (see _padded_block)
-    stab_z::_BlockMatrix{Int}              # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{E}            # n×n X exponents, generator j in column j (see _padded_block)
+    stab_z::_BlockMatrix{E}            # n×n Z exponents, generator j in column j
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
-    destab_x::_BlockMatrix{Int}            # n×n X exponents of the destabilizers (no phases)
-    destab_z::_BlockMatrix{Int}            # n×n Z exponents of the destabilizers
+    destab_x::_BlockMatrix{E}          # n×n X exponents of the destabilizers (no phases)
+    destab_z::_BlockMatrix{E}          # n×n Z exponents of the destabilizers
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
-    inversemod::T                      # inverse mod function for dimension d
+    inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
     workspace::Matrix{Int}             # 2n×n (rank eliminations for d > 255, commutation checks)
@@ -135,11 +141,13 @@ function DestabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
-    inversemod::T=PrecomputedInvMod(d)
-) where {T<:InverseMod}
+    inversemod::T=PrecomputedInvMod(d),
+    eltype::Type{E}=Int,
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
-    b, phase, m = _preset_tableau(d, n, state_norm, basis_spec, storephase)
-    return _build_destabilizer_tableau(d, n, m, (b, phase), storephase, inversemod;
+    b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
+    return _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
                                        preset_state=state_norm, preset_basis=basis_spec)
 end
 
@@ -149,8 +157,10 @@ function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     m::Union{Int,Nothing}=nothing,
     storephase::Union{Bool,Nothing}=nothing,
     inversemod::T=PrecomputedInvMod(d),
-    check::Bool=true
-) where {T<:InverseMod}
+    check::Bool=true,
+    eltype::Type{E}=Int,
+) where {T<:InverseMod, E}
+    _check_eltype(eltype, d)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     layout === nothing && throw(ArgumentError(
@@ -161,11 +171,12 @@ function DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     # never writes to its input.
     tab_in = layout.transpose ? permutedims(tableau) : tableau
 
-    return _build_destabilizer_tableau(d, layout.n, layout.m, tab_in, layout.storephase, inversemod;
-                                      check=check)
+    return _build_destabilizer_tableau(eltype, d, layout.n, layout.m, tab_in, layout.storephase,
+                                       inversemod; check=check)
 end
 
 function _build_destabilizer_tableau(
+    ::Type{E},
     d::Int,
     n::Int,
     m::Int,
@@ -175,22 +186,22 @@ function _build_destabilizer_tableau(
     preset_state::Union{Symbol,Nothing}=nothing,
     preset_basis=nothing,
     check::Bool=true,
-) where {T<:InverseMod}
+) where {E<:_StorageEltype, T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
     (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
-    b, phase = _generator_storage(stab_in, d, n, m, storephase)
+    b, phase = _generator_storage(stab_in, E, d, n, m, storephase)
 
-    tab = DestabilizerTableau{T}(
+    tab = DestabilizerTableau{T, E}(
         d,
         n,
         m,
         b.x,
         b.z,
         phase,
-        _destab_blocks(n)...,
+        _destab_blocks(E, n)...,
         storephase,
         false,
         inversemod,
@@ -558,8 +569,8 @@ function reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
 end
 
 # Documented together with the `StabilizerTableau` methods.
-function Base.copy(tab::DestabilizerTableau{T}) where {T}
-    return DestabilizerTableau{T}(
+function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
+    return DestabilizerTableau{IM, E}(
         tab.d,
         tab.n,
         tab.m,

@@ -476,7 +476,7 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             end
         end
         # UInt16: below and above the UInt16-lane threshold 2d <= 2^16.
-        for d in (3, 251, 257, 4093, 32749, 65521)
+        for d in (3, 251, 257, 4093, 32749, 32771, 65521)
             for a in (0, 1, 2, d ÷ 2, d - 2, d - 1, rand(rng, 0:(d - 1)))
                 x = rand(rng, 0:(d - 1), 37); y = rand(rng, 0:(d - 1), 37)
                 x[1:2] .= d - 1; y[1:2] .= (d - 1, 0)
@@ -505,7 +505,7 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
             @test_throws DimensionMismatch f!(zeros(UInt8, 3), zeros(Int, 4), a, 5)
         end
 
-        for E in (UInt8, UInt16), d in (E === UInt8 ? (2, 3, 127, 131, 251) : (257, 32749, 65521)),
+        for E in (UInt8, UInt16), d in (E === UInt8 ? (2, 3, 127, 131, 251) : (257, 32749, 32771, 65521)),
             a in unique((0, 1, d ÷ 2, d - 1))
             q = QC._shoup_q(E, a, d)
             @test q isa widen(E)

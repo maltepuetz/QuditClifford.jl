@@ -10,11 +10,16 @@
 # Methods are written for `XZBlock{GeneratorMajor}` only; another layout gets a
 # `MethodError`. This file touches only `b.x`, `b.z` and plain arrays, never a
 # tableau.
+#
+# The matrices hold one of the storage element types `E` (`_StorageEltype`).
+# Single entries go in and out as `Int` (`_xget`, `_xset!` and their kin), so
+# callers do their arithmetic in `Int` whatever `E` is; the generator views
+# `_xgen` and `_zgen` expose the raw `E` storage.
 
 abstract type TableauLayout end
 struct GeneratorMajor <: TableauLayout end
 
-struct XZBlock{L<:TableauLayout, M<:AbstractMatrix{Int}}
+struct XZBlock{L<:TableauLayout, M<:AbstractMatrix{<:_StorageEltype}}
     x::M
     z::M
 end
@@ -86,8 +91,8 @@ _block_slot(A::_BlockMatrix) =
 
 # The stabilizer X and Z blocks, and the destabilizer blocks of a
 # `DestabilizerTableau`, in the line slots between them.
-_stab_blocks(n::Int) = (_padded_block(Int, n, 0), _padded_block(Int, n, 2048))
-_destab_blocks(n::Int) = (_padded_block(Int, n, 1024), _padded_block(Int, n, 3072))
+_stab_blocks(::Type{E}, n::Int) where {E} = (_padded_block(E, n, 0), _padded_block(E, n, 2048))
+_destab_blocks(::Type{E}, n::Int) where {E} = (_padded_block(E, n, 1024), _padded_block(E, n, 3072))
 
 # Copy the entries of block `src` into block `dst` of the same size, one
 # contiguous column at a time.
@@ -102,11 +107,12 @@ end
 _copy_block(A::_BlockMatrix{T}) where {T} =
     _copy_block!(_padded_block(T, size(A, 1), _block_slot(A)), A)
 
-# Zero an `Int` array of any layout; the `Array{Int}` method in helper.jl is one `memset`.
-_zero!(A::AbstractArray{Int}) = fill!(A, 0)
+# Zero an array of a storage element type in any layout; the `Array{Int}`
+# method in helper.jl is one `memset`.
+_zero!(A::AbstractArray{<:_StorageEltype}) = fill!(A, zero(eltype(A)))
 
 # One `memset` per column of a block.
-function _zero!(A::_BlockMatrix{T}) where {T}
+function _zero!(A::_BlockMatrix{T}) where {T<:_StorageEltype}
     P = parent(A)
     L = size(P, 1)
     nb = size(A, 1) * sizeof(T)
@@ -140,10 +146,19 @@ const _GMBlock = XZBlock{GeneratorMajor}
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)
 
-@inline _xget(b::_GMBlock, q::Int, j::Int) = @inbounds b.x[q, j]
-@inline _zget(b::_GMBlock, q::Int, j::Int) = @inbounds b.z[q, j]
-@inline _xset!(b::_GMBlock, v::Int, q::Int, j::Int) = @inbounds b.x[q, j] = v
-@inline _zset!(b::_GMBlock, v::Int, q::Int, j::Int) = @inbounds b.z[q, j] = v
+# Entries are read as `Int` and written from an `Int` `v` with `0 ≤ v < d`,
+# which every storage element type of the block holds (see `_eltype_admissible`),
+# so the conversion `v % E` is exact.
+@inline _xget(b::_GMBlock, q::Int, j::Int) = @inbounds b.x[q, j] % Int
+@inline _zget(b::_GMBlock, q::Int, j::Int) = @inbounds b.z[q, j] % Int
+@inline function _xset!(b::_GMBlock, v::Int, q::Int, j::Int)
+    @inbounds b.x[q, j] = v % eltype(b.x)
+    return v
+end
+@inline function _zset!(b::_GMBlock, v::Int, q::Int, j::Int)
+    @inbounds b.z[q, j] = v % eltype(b.z)
+    return v
+end
 
 # Combined row `r` in `1:2n`, X rows first.
 @inline function _rget(b::_GMBlock, r::Int, j::Int)
@@ -289,12 +304,14 @@ end
 # part of generator `i` with the Z part of generator `j`, `dot_xz_ws_vs_col` a
 # stacked workspace's X part with the Z part of generator `tgt`, and
 # `dot_xz_col_vs_zacc` the X part of generator `j` with a Z vector of length `n`.
+# Entries are widened to `Int` before they multiply, so narrow storage cannot
+# wrap the products.
 @inline function dot_xz_col(b::_GMBlock, i::Int, j::Int, d::Int)
     s = 0
     x = b.x
     z = b.z
     @turbo for q in 1:size(x, 1)
-        s += x[q, i] * z[q, j]
+        s += Int(x[q, i]) * Int(z[q, j])
     end
     return mod(s, d)
 end
@@ -304,7 +321,7 @@ end
     s = 0
     z = b.z
     @turbo for q in 1:size(z, 1)
-        s += genws[q] * z[q, tgt]
+        s += genws[q] * Int(z[q, tgt])
     end
     return mod(s, d)
 end
@@ -313,7 +330,7 @@ end
     s = 0
     x = b.x
     @turbo for q in 1:size(x, 1)
-        s += x[q, j] * zacc[q]
+        s += Int(x[q, j]) * zacc[q]
     end
     return mod(s, d)
 end

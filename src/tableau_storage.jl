@@ -5,6 +5,34 @@
 # parent of its own, laid out by `_padded_block` (src/xz_block.jl). Only this
 # file and the two constructor files touch those fields; algorithms go through
 # `_stab`, `_destab` and `_phase`.
+#
+# The four blocks share the element type `E`, the second type parameter of both
+# tableau types; the phase vector is always `Int`.
+
+# The storage element type of a tableau's X and Z blocks.
+_storage_eltype(::StabilizerTableau{IM, E}) where {IM, E} = E
+_storage_eltype(::DestabilizerTableau{IM, E}) where {IM, E} = E
+
+# Whether `E` can store a tableau at dimension `d`: `Int` always, `UInt8` and
+# `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`, any
+# other type never.
+_eltype_admissible(::Type, ::Int) = false
+_eltype_admissible(::Type{Int}, ::Int) = true
+_eltype_admissible(::Type{E}, d::Int) where {E<:_NarrowEltype} =
+    d - 1 <= typemax(E) && phase_modulus(d) - 1 <= typemax(E)
+
+# The narrowest admissible storage element type for dimension `d`.
+function _default_eltype(d::Int)
+    _eltype_admissible(UInt8, d) && return UInt8
+    _eltype_admissible(UInt16, d) && return UInt16
+    return Int
+end
+
+function _check_eltype(E::Type, d::Int)
+    _eltype_admissible(E, d) && return nothing
+    ok = join(filter(T -> _eltype_admissible(T, d), (UInt8, UInt16, Int)), ", ")
+    throw(ArgumentError("eltype = $E cannot hold entries mod d = $d; use one of $ok."))
+end
 
 # The stabilizer and destabilizer blocks and the phase vector of a tableau. They
 # share the tableau's arrays, so writing through them changes the tableau.
@@ -26,10 +54,21 @@ end
     return getfield(tab, s)
 end
 
+# The blocks of `b` stacked as a fresh `Int` matrix, X rows first, with `extra`
+# further rows left for the caller to fill.
+function _stacked_int_matrix(b::_GMBlock, extra::Int)
+    n = _nq(b)
+    S = Matrix{Int}(undef, 2n + extra, _ncap(b))
+    S[1:n, :] .= b.x
+    S[n+1:2n, :] .= b.z
+    return S
+end
+
 # The generator matrix of `tab` in generator-major layout.
 function _stabilizer_generator_matrix(tab::AbstractTableau)
-    b, phase = _stab(tab), _phase(tab)
-    return tab.storephase ? vcat(b.x, b.z, permutedims(phase)) : vcat(b.x, b.z)
+    S = _stacked_int_matrix(_stab(tab), tab.storephase ? 1 : 0)
+    tab.storephase && (S[2tab.n+1, :] .= _phase(tab))
+    return S
 end
 
 function _check_layout(layout::Symbol)
@@ -86,8 +125,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    b = _destab(tab)
-    D = vcat(b.x, b.z)
+    D = _stacked_int_matrix(_destab(tab), 0)
     return layout === :generator ? D : permutedims(D)
 end
 
@@ -97,22 +135,27 @@ function _check_generator_matrix_size(src::AbstractMatrix, nrows::Int, ncols::In
     return nothing
 end
 
+# Entry `s` reduced mod `d` in `Int` and stored as `E`, which holds every
+# residue mod `d` of an admissible `d`.
+@inline _reduced_entry(::Type{E}, s::Integer, d::Int) where {E} = mod(Int(s), d) % E
+
 # Overwrite the generators of a tableau with a generator-major matrix of exactly
-# the shape `stabilizer_matrix` or `destabilizer_matrix` returns. `m`,
-# `iscanonical` and the caches are left alone.
+# the shape `stabilizer_matrix` or `destabilizer_matrix` returns, reducing its
+# entries mod `d` and its phases mod `phase_modulus(d)`. `m`, `iscanonical` and
+# the caches are left alone.
 function _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer})
-    n = tab.n
+    n, d, E = tab.n, tab.d, _storage_eltype(tab)
     _check_generator_matrix_size(S, 2n + (tab.storephase ? 1 : 0), n)
-    tab.stab_x .= view(S, 1:n, :)
-    tab.stab_z .= view(S, n+1:2n, :)
-    tab.storephase && (tab.phase .= view(S, 2n + 1, :))
+    tab.stab_x .= _reduced_entry.(E, view(S, 1:n, :), d)
+    tab.stab_z .= _reduced_entry.(E, view(S, n+1:2n, :), d)
+    tab.storephase && (tab.phase .= _reduced_entry.(Int, view(S, 2n + 1, :), phase_modulus(d)))
     return tab
 end
 
 function _load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{<:Integer})
-    n = tab.n
+    n, d, E = tab.n, tab.d, _storage_eltype(tab)
     _check_generator_matrix_size(D, 2n, n)
-    tab.destab_x .= view(D, 1:n, :)
-    tab.destab_z .= view(D, n+1:2n, :)
+    tab.destab_x .= _reduced_entry.(E, view(D, 1:n, :), d)
+    tab.destab_z .= _reduced_entry.(E, view(D, n+1:2n, :), d)
     return tab
 end

@@ -24,8 +24,9 @@
 # Phase rows use a different modulus (`phase_modulus`) and are deliberately not
 # handled here.
 
-# Element types of tableau storage: `Int` for every d, and the two unsigned
-# types for the d they hold.
+# Element types of the X and Z blocks of a tableau (the second type parameter
+# of `StabilizerTableau` and `DestabilizerTableau`): `Int` for every d, and the
+# two unsigned types for the d they hold (see `_eltype_admissible`).
 const _NarrowEltype = Union{UInt8, UInt16}
 const _StorageEltype = Union{UInt8, UInt16, Int}
 
