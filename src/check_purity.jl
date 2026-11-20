@@ -109,6 +109,45 @@ end
     return (0, 0)
 end
 
+# Qudit-major: generator j's exponents on site q sit at `x[j, q]`, so `P` is
+# built from contiguous columns. On `Int` the products are `X Z'` as above.
+# On a narrow `T`, column i of `P` accumulates `z[i, q] * x[1:m, q]` over the
+# sites with `addmul_mod!`, so every partial sum is reduced in `T` and no
+# `Int` sum is narrowed; the residues equal those of the generator-major
+# method.
+@inline function _first_noncommuting_pair(
+    b::_QMBlock,
+    m::Int,
+    d::Int,
+    P::AbstractMatrix{T},
+) where {T<:_StorageEltype}
+    m <= 1 && return (0, 0)
+    n = _nq(b)
+    x = b.x
+    z = b.z
+    if T === Int
+        @turbo for j in 1:m, i in 1:m
+            s = 0
+            for q in 1:n
+                s += Int(x[j, q]) * Int(z[i, q])
+            end
+            P[j, i] = s
+        end
+    else
+        fill!(P, zero(T))
+        @inbounds for i in 1:m
+            Pi = view(P, :, i)
+            for q in 1:n
+                addmul_mod!(Pi, view(x, 1:m, q), Int(z[i, q]), d)
+            end
+        end
+    end
+    @inbounds for j in 1:m, i in (j+1):m
+        mod(Int(P[j, i]) - Int(P[i, j]), d) != 0 && return (j, i)
+    end
+    return (0, 0)
+end
+
 # `_first_noncommuting_pair` for d = 2 on the columns 1:m of `W`, packed by
 # `_pack_sites_gf2!` into words 1:nw: site k at bits 2k-2 (X) and 2k-1 (Z).
 # The form x_j·z_i + z_j·x_i mod 2 of a pair is the parity of the even bits of

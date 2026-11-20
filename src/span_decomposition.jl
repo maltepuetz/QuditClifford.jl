@@ -342,6 +342,58 @@ function _copy_generator_rows!(
     return ws
 end
 
+# Qudit-major: the X row of site q is the column `b.x[1:m, q]` itself, so each
+# half of a workspace column is one contiguous copy.
+function _copy_generator_rows!(
+    ws::AbstractMatrix{T},
+    b::_QMBlock,
+    m::Int,
+) where T<:_StorageEltype
+    n = _nq(b)
+    sx = b.x
+    sz = b.z
+    h = size(ws, 1) >> 1
+    (m <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
+        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
+    @inbounds for q in 1:n
+        @simd for j in 1:m
+            ws[j, q] = sx[j, q] % T
+        end
+        @simd for j in 1:m
+            ws[h + j, q] = sz[j, q] % T
+        end
+    end
+    return ws
+end
+
+# Qudit-major bits: the 64 generators of word w of site q are 64 consecutive
+# entries of column q, packed into a register and stored once.
+function _copy_generator_rows!(
+    ws::AbstractMatrix{UInt64},
+    b::_QMBlock,
+    m::Int,
+)
+    n = _nq(b)
+    sx = b.x
+    sz = b.z
+    h = size(ws, 1) >> 1
+    nw = cld(m, 64)
+    (nw <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
+        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
+    @inbounds for q in 1:n, w in 1:nw
+        j0 = 64 * (w - 1)
+        ax = zero(UInt64)
+        az = zero(UInt64)
+        @simd for t in 1:min(64, m - j0)
+            ax |= (sx[j0 + t, q] % UInt64) << (t - 1)
+            az |= (sz[j0 + t, q] % UInt64) << (t - 1)
+        end
+        ws[w, q] = ax
+        ws[h + w, q] = az
+    end
+    return ws
+end
+
 # Row r of G sits in workspace column `q` from row `off + 1` on.
 @inline _generator_row_slot(r::Int, n::Int, h::Int) = r <= n ? (r, 0) : (r - n, h)
 

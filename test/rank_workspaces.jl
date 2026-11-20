@@ -422,3 +422,109 @@ rw_types(d) = filter(E -> RW._eltype_admissible(E, d), (UInt8, UInt16, Int))
         end
     end
 end
+
+# A generator-major block with entries below `d` everywhere, and the same
+# generators qudit-major, both in padded blocks of element type `E`.
+function rw_block_pair(rng, E, d, n)
+    gx, gz = RW._padded_block(E, n, 0), RW._padded_block(E, n, 2048)
+    gx .= rand(rng, 0:(d - 1), n, n)
+    gz .= rand(rng, 0:(d - 1), n, n)
+    qx, qz = RW._padded_block(E, n, 0), RW._padded_block(E, n, 2048)
+    qx .= permutedims(gx)
+    qz .= permutedims(gz)
+    return RW.XZBlock{RW.GeneratorMajor}(gx, gz), RW.XZBlock{RW.QuditMajor}(qx, qz)
+end
+
+# A workspace filled with a pattern that no copy writes by accident.
+function rw_sentinel(T, nr, nc)
+    W = Matrix{T}(undef, nr, nc)
+    for j in 1:nc, i in 1:nr
+        W[i, j] = T === UInt64 ? 0x9e3779b97f4a7c15 * UInt64(i + 7j) : ((3i + 5j + 1) % 256) % T
+    end
+    return W
+end
+
+# Copies `f!(ws, block)` into two sentinel workspaces, one per layout, and
+# returns both workspaces and both return values.
+function rw_both(f!, T, nr, nc, gb, qb)
+    wg, wq = rw_sentinel(T, nr, nc), rw_sentinel(T, nr, nc)
+    rg = f!(wg, gb)
+    rq = f!(wq, qb)
+    return wg, wq, rg, rq
+end
+
+rw_qm_allocs(ws, bit, P, qb, m, d, sites, all_sites) = (
+    (@allocated RW._copy_sites!(ws, qb, m, sites, length(sites), 1)),
+    (@allocated RW._copy_generator_rows!(ws, qb, m)),
+    (@allocated RW._copy_sites_interleaved!(ws, qb, m, all_sites)),
+    (@allocated RW._first_noncommuting_pair(qb, m, d, P)),
+    bit === nothing ? 0 : (@allocated RW._copy_sites!(bit, qb, m, sites, length(sites), 64)),
+    bit === nothing ? 0 : (@allocated RW._pack_sites_gf2!(bit, qb, m, sites, length(sites))),
+    bit === nothing ? 0 : (@allocated RW._copy_generator_rows!(bit, qb, m)),
+)
+
+@testset "qudit-major copies match" begin
+    rng = Xoshiro(20261120)
+    for d in (2, 3, 251, 257), E in rw_types(d), n in (5, 70, 300), m in (n, n - 3)
+        gb, qb = rw_block_pair(rng, E, d, n)
+        subset = randperm(rng, n)[1:max(1, n ÷ 3)]
+        perm = randperm(rng, n)
+        nbits = cld(2n, 64) + 2
+        for sites in (1:(n ÷ 2), subset, n:-1:1), offset in (0, 3)
+            N = length(sites)
+            wg, wq, rg, rq = rw_both(E, 2n + 5, n, gb, qb) do ws, b
+                RW._copy_sites!(ws, b, m, sites, N, offset)
+            end
+            @test wg == wq
+            @test rg == rq
+            if d == 2
+                bo = 64offset
+                wg, wq, rg, rq = rw_both(UInt64, nbits + 1, n, gb, qb) do ws, b
+                    RW._copy_sites!(ws, b, m, sites, N, bo)
+                end
+                @test wg == wq
+                @test rg == rq
+                wg, wq, rg, rq = rw_both(UInt64, nbits, n, gb, qb) do ws, b
+                    RW._pack_sites_gf2!(ws, b, m, sites, N)
+                end
+                @test wg == wq
+                @test rg == rq
+            end
+        end
+        for sites in (1:n, n:-1:1, perm)
+            wg, wq, _, _ = rw_both(E, 2n, n, gb, qb) do ws, b
+                RW._copy_sites_interleaved!(ws, b, m, sites)
+            end
+            @test wg == wq
+        end
+        wg, wq, _, _ = rw_both(E, 2n, n, gb, qb) do ws, b
+            RW._copy_generator_rows!(ws, b, m)
+        end
+        @test wg == wq
+        if d == 2
+            wg, wq, _, _ = rw_both(UInt64, nbits, n, gb, qb) do ws, b
+                RW._copy_generator_rows!(ws, b, m)
+            end
+            @test wg == wq
+        end
+        wg, wq, rg, rq = rw_both(E, 2n, n, gb, qb) do ws, b
+            RW._first_noncommuting_pair(b, m, d, view(ws, 1:m, 1:m))
+        end
+        @test wg == wq
+        @test rg == rq
+        # Commuting generators: Z-type ones on any stabilizer state commute.
+        gz0, qz0 = RW.XZBlock{RW.GeneratorMajor}(RW._padded_block(E, n, 0), gb.z),
+                   RW.XZBlock{RW.QuditMajor}(RW._padded_block(E, n, 0), qb.z)
+        wg, wq, rg, rq = rw_both(E, 2n, n, gz0, qz0) do ws, b
+            RW._first_noncommuting_pair(b, m, d, view(ws, 1:m, 1:m))
+        end
+        @test wg == wq
+        @test rg == rq == (0, 0)
+
+        ws = rw_sentinel(E, 2n + 5, n)
+        bit = d == 2 ? rw_sentinel(UInt64, nbits + 1, n) : nothing
+        P = view(rw_sentinel(E, 2n, n), 1:m, 1:m)
+        rw_qm_allocs(ws, bit, P, qb, m, d, subset, perm)
+        @test rw_qm_allocs(ws, bit, P, qb, m, d, subset, perm) == ntuple(_ -> 0, 7)
+    end
+end
