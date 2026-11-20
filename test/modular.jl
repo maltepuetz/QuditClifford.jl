@@ -449,17 +449,20 @@ const SMALL_D = (2, 3, 5, 7, 11, 13, 17, 19, 127, 131, 443)
     # vector body of every lane width.
     @testset "narrow primitives" begin
         rng = Xoshiro(20261121)
+        # The references run in Int64: a * y reaches (d - 1)^2 ≈ 2^32 at
+        # d = 65521, which wraps a 32-bit Int.
         function check_all(E, d, a, x, y)
-            for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x, y, a, d)),
-                               (QC.submul_mod!, _ref_submul(x, y, a, d)),
-                               (QC.mulcopy_mod!, _ref_mulcopy(y, a, d)))
+            x64, y64, a64, d64 = Int64.(x), Int64.(y), Int64(a), Int64(d)
+            for (f!, want) in ((QC.addmul_mod!, _ref_addmul(x64, y64, a64, d64)),
+                               (QC.submul_mod!, _ref_submul(x64, y64, a64, d64)),
+                               (QC.mulcopy_mod!, _ref_mulcopy(y64, a64, d64)))
                 dst = E.(x)
                 @test f!(dst, E.(y), a, d) === dst
-                @test Int.(dst) == want
+                @test Int64.(dst) == want
             end
             dst = E.(x)
             @test QC.scale_mod!(dst, a, d) === dst
-            @test Int.(dst) == _ref_scale(x, a, d)
+            @test Int64.(dst) == _ref_scale(x64, a64, d64)
         end
 
         # Every multiplier at every prime a UInt8 holds.
