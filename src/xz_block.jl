@@ -157,6 +157,13 @@ end
 const _GMBlock = XZBlock{GeneratorMajor}
 const _QMBlock = XZBlock{QuditMajor}
 
+# A generator-major copy of `b` in fresh plain matrices, for code that works on
+# a private generator-major scratch whatever the layout of its source.
+_generator_major_copy(b::XZBlock{GeneratorMajor, <:_BlockMatrix{E}}) where {E} =
+    XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
+_generator_major_copy(b::XZBlock{QuditMajor, <:_BlockMatrix{E}}) where {E} =
+    XZBlock{GeneratorMajor}(permutedims(b.x), permutedims(b.z))
+
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)
 @inline _nq(b::_QMBlock) = size(b.x, 2)

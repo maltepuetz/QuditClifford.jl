@@ -38,7 +38,7 @@ end
 function _canonical_stab(tab::AbstractTableau, L::TableauLayout)
     b, phase = _stab(tab, L), _phase(tab)
     tab.iscanonical && return b, phase
-    S = XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
+    S = _generator_major_copy(b)
     Sphase = copy(phase)
     _canonicalize_tableau!(S, Sphase, tab.m, tab.d, tab.storephase, tab.inversemod,
                            zeros(Int, 2 * tab.n), zeros(Int, tab.n))

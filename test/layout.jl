@@ -23,9 +23,15 @@ function ly_switch_allocs(tab)
     return a, b
 end
 
-function ly_copy_allocs(dst, src)
-    copy!(dst, src)
-    return @allocated copy!(dst, src)
+# Allocations of `copy!` into `dst` from a source of the other layout, measured
+# after a warm-up; the sources alternate so every measured call switches the
+# layout of `dst`.
+function ly_copy_allocs(dst, src_a, src_b)
+    copy!(dst, src_a)
+    copy!(dst, src_b)
+    a = @allocated copy!(dst, src_a)
+    b = @allocated copy!(dst, src_b)
+    return a + b
 end
 
 @testset "layout keyword and query" begin
@@ -122,7 +128,8 @@ end
         @test tableau_layout(g) === :qudit
         @test ly_matrices(g) == ly_matrices(src)
         @test g.m == src.m
-        @test ly_copy_allocs(g, q) == 0
+        @test ly_copy_allocs(g, q, src) == 0
+        @test tableau_layout(g) === :generator
 
         g2 = TT(d, n; layout = :qudit)
         copy!(g2, src)
@@ -186,5 +193,44 @@ end
         @test P[:, setdiff(axes(P, 2), cols)] == P0[:, setdiff(axes(P, 2), cols)]
         ly_QC._transpose_block!(A)
         @test P == P0
+    end
+end
+
+@testset "dense states of a qudit-major tableau" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        n = 4
+        g = TT(d, n)
+        random_state!(Xoshiro(20261120 + d), g)
+        q = qudit_major!(copy(g))
+        @test state_vector(q) == state_vector(g)
+        @test ket(q) == ket(g)
+        # The group walk behind `density_matrix` has no qudit-major method yet.
+        @test_throws MethodError density_matrix(q)
+        @test tableau_layout(q) === :qudit
+        @test ly_matrices(q) == ly_matrices(g)
+    end
+end
+
+@testset "generator-major copy of a block" begin
+    for E in (UInt8, UInt16, Int), n in (3, 40)
+        g = ly_QC.XZBlock{ly_QC.GeneratorMajor}(ly_QC._stab_blocks(E, n)...)
+        rng = Xoshiro(n)
+        g.x .= rand(rng, E(0):E(2), n, n)
+        g.z .= rand(rng, E(0):E(2), n, n)
+        X0, Z0 = copy(g.x), copy(g.z)
+        cg = ly_QC._generator_major_copy(g)
+        @test cg isa ly_QC.XZBlock{ly_QC.GeneratorMajor, Matrix{E}}
+        @test cg.x == X0 && cg.z == Z0
+        @test cg.x !== g.x
+        ly_QC._transpose_block!(g.x)
+        ly_QC._transpose_block!(g.z)
+        qb = ly_QC.XZBlock{ly_QC.QuditMajor}(g.x, g.z)
+        cq = ly_QC._generator_major_copy(qb)
+        @test cq isa ly_QC.XZBlock{ly_QC.GeneratorMajor, Matrix{E}}
+        @test cq.x == X0 && cq.z == Z0
+        @test all(ly_QC._xget(cq, i, j) == ly_QC._xget(qb, i, j) &&
+                  ly_QC._zget(cq, i, j) == ly_QC._zget(qb, i, j) for i in 1:n, j in 1:n)
+        cq.x[1, 1] = E(7)
+        @test qb.x == permutedims(X0)
     end
 end

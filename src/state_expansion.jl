@@ -119,7 +119,7 @@ function _prepare_support(tab::AbstractTableau, L::TableauLayout)
     p = phase_modulus(d)
     s = p ÷ d
     S = _stab(tab, L)
-    G = XZBlock{GeneratorMajor}(copy(S.x), copy(S.z))
+    G = _generator_major_copy(S)
     Gphase = copy(_phase(tab))
     pivcol = zeros(Int, 2n)
     xdotz = zeros(Int, n)
