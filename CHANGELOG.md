@@ -32,9 +32,12 @@ dependency bump — carries the `skip-changelog` label instead.
   with `StabilizerTableau(d, S)` or `DestabilizerTableau(d, S)` instead.
 - `StabilizerTableau` and `DestabilizerTableau` take a second type parameter,
   the element type of their stored X and Z exponents
-  (`StabilizerTableau{IM, E}`). Code that names the concrete type, such as
-  `Vector{StabilizerTableau{PrecomputedInvMod}}`, must add it or leave it
-  free.
+  (`StabilizerTableau{IM, E}`). `StabilizerTableau{PrecomputedInvMod}` now
+  means `StabilizerTableau{PrecomputedInvMod, E} where E`, which is not a
+  concrete type: a struct field or container declared with it, such as
+  `Vector{StabilizerTableau{PrecomputedInvMod}}`, still accepts every tableau
+  but is no longer concretely typed. Name the element type, as in
+  `StabilizerTableau{PrecomputedInvMod, UInt8}`, where that matters.
 - Tableaux store their generators in `UInt8` for `d ≤ 251` and `UInt16` for
   `d ≤ 65521` by default, and in `Int` above. Every result is the same `Int`
   value as before; `eltype = Int` restores the previous storage. `copy!`
@@ -161,8 +164,15 @@ dependency bump — carries the `skip-changelog` label instead.
 - Tableau operations run on the narrow storage that is the default:
   generator updates in `apply!`, `measure!`, `dephase!` and `canonicalize!`
   operate on `UInt8` or `UInt16` entries, and a tableau with its workspaces
-  takes at most about twice the memory of its generators. Timings and memory
-  are reported in the pull request that introduced the narrow storage.
+  takes at most about twice the bytes of its generators: at `n = 1024`–`4096`
+  a `StabilizerTableau` takes 2.0–2.2× at `d = 3` and 1.2–1.3× at `d = 2`, a
+  `DestabilizerTableau` 1.5–1.7× and 1.1–1.25×. A `StabilizerTableau` at
+  `d = 3` and `n = 1024` takes 4.4 bytes per `n²` instead of 32.8 with `Int`
+  storage. Against the previous release, at `n = 511`–`1025` and
+  `d = 2, 3, 31`, one-qudit random gates run 1.3–7× faster, two-qudit random
+  gates 1.1–4.4×, random-outcome measurements 1.2–2.3× and `canonicalize!`
+  1.4–4.3×; at `d = 257` (`UInt16`) the half-chain entropy is 10× faster.
+  Full timings are in the pull request description.
 
 ### Documentation
 

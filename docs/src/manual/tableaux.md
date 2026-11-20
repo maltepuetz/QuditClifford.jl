@@ -187,8 +187,22 @@ true
 
 The `2n × n` rank workspace behind the entanglement measures (bits at
 `d = 2`) uses the same element type, so a narrow element type shrinks the
-whole tableau, not just its generators: workspaces included, a tableau takes
-at most about twice the memory of its generator storage.
+whole tableau, not just its generators. Measured with `Base.summarysize` on a
+fresh tableau, in bytes per `n²`:
+
+| tableau                       | `n = 256` | `n = 1024` | `n = 4096` |
+|:------------------------------|----------:|-----------:|-----------:|
+| `StabilizerTableau`, `d = 2`   |      4.01 |       2.66 |       2.35 |
+| `StabilizerTableau`, `d = 3`   |      5.70 |       4.40 |       4.10 |
+| `DestabilizerTableau`, `d = 2` |      7.41 |       4.99 |       4.43 |
+| `DestabilizerTableau`, `d = 3` |      9.09 |       6.73 |       6.18 |
+| `StabilizerTableau`, `d = 3`, `eltype = Int`   | 35.45 | 32.84 | 32.21 |
+| `DestabilizerTableau`, `d = 3`, `eltype = Int` | 54.54 | 49.59 | 48.39 |
+
+The generators alone take 2 bytes per `n²` (4 with destabilizers) in `UInt8`.
+At `d ≥ 3` the rank workspace adds as much again for a `StabilizerTableau`,
+and the padding of the generator blocks adds the rest, most of it at small
+`n`.
 
 ## Mutating operations
 

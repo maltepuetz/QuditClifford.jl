@@ -436,12 +436,14 @@ const TIER_COUNTS = zeros(Int, 2)
     end
 
     # A DestabilizerTableau is a StabilizerTableau plus its dual basis, one
-    # 2n x n Int matrix. Anything much above 1.5x means per-tableau scratch has
+    # 2n x n matrix of the storage element type. At d = 3 both also hold a
+    # 2n x n rank workspace of that type, so the destabilizer tableau takes
+    # 1.5x the bytes. Anything much above that means per-tableau scratch has
     # crept back in.
     @testset "Destabilizer memory is 1.5x stabilizer" begin
         for n in (128, 512)
-            rs = tableau_bytes(StabilizerTableau(2, n; state = :product))
-            rd = tableau_bytes(DestabilizerTableau(2, n; state = :product))
+            rs = tableau_bytes(StabilizerTableau(3, n; state = :product))
+            rd = tableau_bytes(DestabilizerTableau(3, n; state = :product))
             @test 1.35 < rd / rs < 1.65
         end
     end

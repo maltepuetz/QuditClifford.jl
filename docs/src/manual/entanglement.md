@@ -197,9 +197,10 @@ rows it needs into a workspace: one bit per entry for `d = 2`, and for other
 `d` one entry of the tableau's storage element type (the `eltype` keyword of
 [`StabilizerTableau`](@ref) and [`DestabilizerTableau`](@ref)). An elimination
 streams the matrix once per pivot, so at large `n` its cost follows the bytes
-per entry rather than the arithmetic: at `n = 512`, qubits are two to four
-times faster than `d = 3` on bytes, and bytes more than ten times faster than
-`Int` entries. The workspaces are allocated with the tableau, so the calls
+per entry rather than the arithmetic. For the half-chain entropy at `n = 512`
+of a state after 64 monitored layers, qubits are about three times faster than
+`d = 3` on bytes, and bytes are about five times faster than `eltype = Int`
+at `d = 3` and eight times at `d = 31`. The workspaces are allocated with the tableau, so the calls
 themselves do not allocate. They add about 1 % to the memory of a qubit
 tableau; for other `d` the workspace holds `2n × n` entries, as many as the
 stabilizer storage.

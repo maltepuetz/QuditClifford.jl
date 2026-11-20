@@ -41,8 +41,8 @@ PrecompileTools.@setup_workload begin
             precompile(random_state!, (T,))
         end
         # The loop above stores UInt8; d = 257 stores UInt16. Int storage
-        # (`eltype = Int`) is left out: caching it beside UInt8 makes loading
-        # the package about 1 s slower.
+        # (`eltype = Int`) is left out: caching it beside UInt8 noticeably
+        # slows loading the package.
         for TT in (StabilizerTableau, DestabilizerTableau)
             tab = TT(257, 4; state=:ghz)
             apply!(tab, Fourier(1)); apply!(tab, SUM(1, 2))
