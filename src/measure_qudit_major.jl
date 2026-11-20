@@ -26,8 +26,14 @@
 # `x_i·z_p`. `apply!` borrows the same columns, and the two never nest.
 
 # Use the sparse update when at most `m ÷ _QM_SPARSE_UPDATE_DIV` generators
-# besides the pivot anticommute.
-const _QM_SPARSE_UPDATE_DIV = 16
+# besides the pivot anticommute (here and in the qudit-major `dephase!`).
+# Measured on an M3 Pro (random-branch Z measurements, UInt8, both tableau
+# types, d = 2, 3, 31, n = 1024 and 2048, monitored states at p = 0.05 and 0.15
+# and random states, mean of two runs), 32 has the smallest worst case against
+# the best divisor of 4, 8, 16, 32 and 64 on each state: 1.08x (d = 31,
+# p = 0.15), against 1.12x for 16 and 64 and 2-3.5x for 8 and 4. Random states
+# do not depend on it.
+const _QM_SPARSE_UPDATE_DIV = 32
 
 # Rows `1:m` of the X and Z columns of qudit `q`.
 @inline _qm_xcol(b::_QMBlock, q::Int, m::Int) = view(b.x, 1:m, q)
