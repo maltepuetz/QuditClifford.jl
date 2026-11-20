@@ -230,3 +230,36 @@ function _orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int
     end
     return nothing
 end
+
+# `dephase!` on a qudit-major tableau: the commutators column by column, then
+# every anticommuting generator other than the pivot absorbs the power
+# α_i = -c_i / c_p of the pivot through `_qm_absorb_pivot!`, as in the random
+# branch of `measure!`, and the pivot is dropped. The phases follow
+# `mul_col_by_workspace_power!` and the destabilizer caches the patch of
+# `_absorb_pivot_scalars!`, which equals their recomputation by
+# `_update_xdotz_cache!`, so the result is the generic one bit for bit.
+function _dephase!(tab::AbstractTableau, L::QuditMajor, op::AbstractPauli)
+    _check_pauli_support(tab, op)
+    d = tab.d
+    m = tab.m
+
+    # A dense operand lives in res_workspace, which nothing below writes.
+    opc = _commutation_operand!(tab, op)
+    comm = view(tab.coeff_workspace, 1:m, 1)
+    _qm_commutators!(comm, _stab(tab, L), opc, d)
+
+    pivot = 0
+    @inbounds for i in 1:m
+        if comm[i] != 0
+            pivot = i
+            break
+        end
+    end
+    pivot == 0 && return tab
+
+    pu = _prepare_pivot_update(tab, L, pivot, Int(comm[pivot]))
+    _qm_absorb_pivot!(tab, L, pivot, pu, _QM_SPARSE_UPDATE_DIV)
+    _drop_generator!(tab, L, pivot)
+    tab.iscanonical = false
+    return tab
+end

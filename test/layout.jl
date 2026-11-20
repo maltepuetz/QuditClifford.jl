@@ -544,6 +544,41 @@ end
     end
 end
 
+@testset "qudit-major dephase!, traceout! and reset!" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), E in ly_eltypes(d),
+        storephase in (true, false), kind in (:monitored, :random)
+        n = 48
+        g = ly_fixture(TT, d, n, E, storephase, kind, 11d)
+        q = qudit_major!(copy(g))
+        rng = Xoshiro(5d)
+        ok = true
+        for i in 1:30
+            r = rand(rng, 1:4)
+            if r == 1
+                op = ly_measure_op(rng, d, n, i)
+                dephase!(g, op)
+                dephase!(q, op)
+            elseif r == 2
+                v = rand(rng, 0:(d - 1), 2n)
+                dephase!(g, v)
+                dephase!(q, v)
+            elseif r == 3
+                s = randperm(rng, n)[1:rand(rng, 1:4)]
+                traceout!(g, s)
+                traceout!(q, s)
+            else
+                s = randperm(rng, n)[1:rand(rng, 1:4)]
+                basis = rand(rng, (:X, :Y, :Z))
+                reset!(g, s; basis)
+                reset!(q, s; basis)
+            end
+            ok &= ly_same_full(g, q)
+            ok || (@error "layouts differ" TT d E storephase kind i r; break)
+        end
+        @test ok
+    end
+end
+
 # Allocations of `f!(copy(tab), args...)`, measured after a warm-up call on
 # another copy.
 function ly_allocs(f!, tab, args...)
@@ -552,12 +587,14 @@ function ly_allocs(f!, tab, args...)
     return @allocated f!(t, args...)
 end
 
-@testset "canonicalize! allocates nothing" begin
+@testset "canonicalize!, dephase! and traceout! allocate nothing" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), E in ly_eltypes(d),
         layout in (:generator, :qudit)
         n = 48
         g = ly_fixture(TT, d, n, E, true, :mixed, 13d)
         layout === :qudit && qudit_major!(g)
         @test ly_allocs(canonicalize!, g) == 0
+        @test ly_allocs(dephase!, g, SinglePauli(5, 1, 0)) == 0
+        @test ly_allocs(traceout!, g, [3, 9]) == 0
     end
 end
