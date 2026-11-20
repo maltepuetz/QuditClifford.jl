@@ -342,7 +342,7 @@ end
 
 @testset "measure! allocates nothing in the noncommuting branch" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
-        E in (UInt8, UInt16, Int)
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int))
         n = 64
         tab = TT(d, n; state = :Z, eltype = E)
         rng = Xoshiro(3)

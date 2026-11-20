@@ -1,7 +1,7 @@
 """
-    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type=Int)
+    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type)
     StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type=Int)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type)
 
 Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -30,12 +30,12 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
   `O(n^3)` validation and builds the tableau regardless -- every later operation
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
-- `eltype::Type=Int`: Element type of the stored X and Z exponents: `UInt8`
-  for `d ≤ 251`, `UInt16` for `d ≤ 65521`, or `Int` for every `d`. Another
-  type, or one too narrow for `d`, throws an `ArgumentError`. The choice
-  affects memory and speed only: every result, and every matrix the tableau
-  returns, is the same `Int` value in each element type. Phases are always
-  stored as `Int`.
+- `eltype::Type`: Element type of the stored X and Z exponents: `UInt8`
+  for `d ≤ 251`, `UInt16` for `d ≤ 65521`, or `Int` for every `d`. The
+  default is the narrowest of these that holds `d`. Another type, or one too
+  narrow for `d`, throws an `ArgumentError`. The choice affects memory and
+  speed only: every result, and every matrix the tableau returns, is the same
+  `Int` value in each element type. Phases are always stored as `Int`.
 
 # Examples
 ```jldoctest
@@ -114,7 +114,7 @@ function StabilizerTableau(d::Int, n::Int;
     basis=:Z,
     storephase::Bool=true,
     inversemod::T=PrecomputedInvMod(d),
-    eltype::Type{E}=Int,
+    eltype::Type{E}=_default_eltype(d),
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
@@ -129,7 +129,7 @@ function StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer};
     storephase::Union{Bool,Nothing}=nothing,
     inversemod::T=PrecomputedInvMod(d),
     check::Bool=true,
-    eltype::Type{E}=Int,
+    eltype::Type{E}=_default_eltype(d),
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
@@ -583,6 +583,7 @@ function Base.show(io::IO, tab::StabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
+    println(io, "    Storage:          generator-major, ", _storage_eltype(tab))
     # println(io, "    Mixed state:      ", is_mixed(tab))
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)

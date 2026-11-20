@@ -201,7 +201,8 @@ end
         @test_throws ArgumentError TT(3, 2; eltype = Union{})
         @test_throws ArgumentError TT(257, [0 1; 1 0; 0 0; 0 0; 0 0]; eltype = UInt8)
         @test typeof(TT(3, 2; eltype = UInt16)).parameters[2] === UInt16
-        @test typeof(TT(3, 2)).parameters[2] === Int
+        @test typeof(TT(3, 2)).parameters[2] === UInt8
+        @test typeof(TT(3, 2; eltype = Int)).parameters[2] === Int
         @test st_QC._storage_eltype(TT(3, 2; eltype = UInt8)) === UInt8
     end
 end
