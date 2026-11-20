@@ -236,6 +236,28 @@ end
 # Destabilizer construction #
 #############################
 
+# Swap rows `r` and `s` of `A` over the columns `1:ncols`.
+@inline function _swap_rows!(A::AbstractMatrix, r::Int, s::Int, ncols::Int)
+    @turbo for j in 1:ncols
+        t = A[r, j]
+        A[r, j] = A[s, j]
+        A[s, j] = t
+    end
+    return A
+end
+
+# A plain loop for bytes. There `@turbo` runs 64 lanes and builds its remainder
+# mask with the 64-bit `bzhi` instruction, which LLVM cannot always compile for
+# 32-bit x86. On 64-bit machines the plain loop is also the faster one for bytes.
+@inline function _swap_rows!(A::AbstractMatrix{UInt8}, r::Int, s::Int, ncols::Int)
+    @inbounds for j in 1:ncols
+        t = A[r, j]
+        A[r, j] = A[s, j]
+        A[s, j] = t
+    end
+    return A
+end
+
 @inline function _pivot_columns!(
     A::AbstractMatrix{<:_StorageEltype},
     m::Int,
@@ -257,13 +279,7 @@ end
             continue
         end
 
-        if pivot != r
-            @turbo for j in 1:ncols
-                t = A[r, j]
-                A[r, j] = A[pivot, j]
-                A[pivot, j] = t
-            end
-        end
+        pivot != r && _swap_rows!(A, r, pivot, ncols)
 
         # Row-strided rather than column-strided, but the contract is the same:
         # `rebuild_destabilizers!` fills `A` through `mod(..., d)`, so every
@@ -309,15 +325,8 @@ function _inv_matrix_mod!(
         pivot > m && throw(ArgumentError("Matrix is singular modulo d."))
 
         if pivot != c
-            @turbo for j in 1:m
-                t = Awork[c, j]
-                Awork[c, j] = Awork[pivot, j]
-                Awork[pivot, j] = t
-
-                t2 = invA[c, j]
-                invA[c, j] = invA[pivot, j]
-                invA[pivot, j] = t2
-            end
+            _swap_rows!(Awork, c, pivot, m)
+            _swap_rows!(invA, c, pivot, m)
         end
 
         # `Awork` and `invA` are separate matrices, so scaling row `c` takes
@@ -374,10 +383,12 @@ function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}) where {IM, E}
         end
     end
 
-    Awork = zeros(E, n, 2n)
-    @turbo for j in 1:(2n), i in 1:m
-        Awork[i, j] = A[i, j]
-    end
+    # The copies below use `copy` and plain loops, not `@turbo`. On `UInt8`
+    # entries `@turbo` runs 64 lanes and builds its remainder mask with the
+    # 64-bit `bzhi` instruction, which LLVM cannot compile for 32-bit x86 once
+    # the mask is shared between loops. Each copy is O(n^2) in an O(n^3)
+    # routine.
+    Awork = copy(A)
 
     pivots = zeros(Int, n)
     pivcount = _pivot_columns!(Awork, m, 2n, d, tab.inversemod, pivots)
@@ -387,12 +398,12 @@ function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}) where {IM, E}
     A_P = zeros(E, n, n)
     @inbounds for j in 1:m
         pj = pivots[j]
-        @turbo for i in 1:m
+        for i in 1:m
             A_P[i, j] = A[i, pj]
         end
     end
 
-    @turbo for j in 1:m, i in 1:m
+    @inbounds for j in 1:m, i in 1:m
         Awork[i, j] = A_P[i, j]
     end
 
