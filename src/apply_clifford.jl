@@ -784,8 +784,36 @@ end
 # same body as the entry checks, the loop ran about 1.3x slower (two-qudit
 # brickwork gates on a `DestabilizerTableau`, n = 511, M3 Pro), and the
 # function barrier costs one call per gate.
-@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
-                                  L::TableauLayout)
+@noinline _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
+                          L::TableauLayout) = _apply_columns_generic!(tab, prep, L)
+
+# A qudit-major tableau runs the tuple backing's Barrett tier through the
+# kernel of src/apply_qudit_major.jl, one SIMD loop over the generators in the
+# narrowest lane `_clifford_lane_bytes` admits; each branch names its lane type,
+# so the kernel is compiled for it. The other tiers, and a `(S, d)` without a
+# lane, take the per-generator path.
+@noinline function _apply_columns!(tab::AbstractTableau, prep::PreparedClifford{K,S},
+                                  L::QuditMajor) where {K,S}
+    prep.bm == 0 && return _apply_columns_generic!(tab, prep, L)
+    lane = _clifford_lane_bytes(S, prep.d)
+    if lane == 2
+        _qm_apply!(tab, prep, L, Int16)
+    elseif prep.d == 2
+        return _apply_columns_generic!(tab, prep, L)
+    elseif lane == 4
+        _qm_apply!(tab, prep, L, Int32)
+    elseif lane == 8
+        _qm_apply!(tab, prep, L, Int64)
+    else
+        return _apply_columns_generic!(tab, prep, L)
+    end
+    tab.iscanonical = false
+    return tab
+end
+
+# The per-generator column loop, for every layout and backing.
+@inline function _apply_columns_generic!(tab::AbstractTableau, prep::AbstractPreparedClifford,
+                                         L::TableauLayout)
     stab = _stab(tab, L)
     phase = _phase(tab)
     @inbounds for j in 1:tab.m
@@ -832,6 +860,19 @@ function _after_clifford!(tab::DestabilizerTableau, L::TableauLayout,
         vout = _matvec_prepared!(prep, v)
         _scatter_prepared!(prep, destab, j, vout)
     end
+    return nothing
+end
+
+# The qudit-major kernel's destabilizer pass: the same kernel on the
+# destabilizer block, with neither phase nor cache.
+@inline _after_clifford!(::AbstractTableau, ::QuditMajor, ::PreparedClifford,
+                         ::Type{T}, M::T, s::Int) where {T<:Signed} = nothing
+
+@inline function _after_clifford!(tab::DestabilizerTableau, L::QuditMajor,
+                                  prep::PreparedClifford, ::Type{T}, M::T,
+                                  s::Int) where {T<:Signed}
+    _qm_tuple_kernel!(_destab(tab, L), nothing, nothing, tab.coeff_workspace, tab.m,
+                      prep, T, M, s)
     return nothing
 end
 

@@ -86,5 +86,24 @@ end
     return (M, s)
 end
 
-# `x mod d` for `0 <= x <= X` under a constant from `clifford_barrett`.
-@inline _barrett_reduce(x::Int, d::Int, M::Int, s::Int) = x - ((x * M) >> s) * d
+# The narrowest lane for the qudit-major gate kernel, as its `sizeof`: 2, 4 or
+# 8 for the first of `Int16`, `Int32`, `Int64` that has a constant from
+# `_clifford_barrett(T, S, d)`, or 0 if none has one. Every unreduced value the
+# kernel forms is at most `X = 2S·d·(d-1) < 2^(W-2)` (see `_clifford_barrett`),
+# so it holds in that lane, and so does every entry, since `d <= X`. The lanes
+# are named explicitly, never `Int`, so the choice is the same on 32- and 64-bit
+# hosts. Acceptance is not monotonic in `d` (see `_clifford_barrett`), and
+# neither is the lane.
+@inline function _clifford_lane_bytes(S::Int, d::Int)
+    _clifford_barrett(Int16, S, d)[1] != 0 && return 2
+    _clifford_barrett(Int32, S, d)[1] != 0 && return 4
+    _clifford_barrett(Int64, S, d)[1] != 0 && return 8
+    return 0
+end
+
+# `x mod d` for `0 <= x <= X` under a constant from `_clifford_barrett(T, S, d)`,
+# evaluated in `T`: `x * M < 2^(W-2)`, so nothing overflows. `1 <= s <= W-3`,
+# so masking the shift to `W-1` changes nothing; it lets the shift compile
+# without the range test of `>>`, which keeps the SIMD loops lean.
+@inline _barrett_reduce(x::T, d::T, M::T, s::Int) where {T<:Signed} =
+    x - ((x * M) >> ((s % UInt) & UInt(8 * sizeof(T) - 1))) * d

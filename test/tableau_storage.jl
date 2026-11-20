@@ -452,7 +452,7 @@ end
         "span_decomposition.jl" => 9,
         "entanglement_entropy.jl" => 6,
         "check_purity.jl" => 4,
-        "apply_qudit_major.jl" => 0,
+        "apply_qudit_major.jl" => 2,
         "measure_qudit_major.jl" => 0,
         "stabilizer_tableau.jl" => 2,
         "destabilizer_tableau.jl" => 6,

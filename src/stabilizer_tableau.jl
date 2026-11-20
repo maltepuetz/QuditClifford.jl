@@ -101,6 +101,7 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     # workspaces
     generator_workspace::Vector{Int}   # length 2n + storephase
     pivot_workspace::Vector{E}         # length 2n, [x; z] of a measure!/dephase! pivot (no phase)
+    coeff_workspace::Matrix{E}         # n×3, per-generator coefficients of apply! (phase and cache deltas) and the measure! random branch
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
@@ -195,6 +196,7 @@ function _build_stabilizer_tableau(
         inversemod,
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(E, 2n),
+        zeros(E, n, 3),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
@@ -382,6 +384,7 @@ function Base.copy(tab::StabilizerTableau{IM, E}) where {IM, E}
         tab.inversemod,
         zero(tab.generator_workspace),
         zero(tab.pivot_workspace),
+        zero(tab.coeff_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),

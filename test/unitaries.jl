@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+using Random
 
 const QC = QuditClifford
 
@@ -858,12 +859,15 @@ function clifford_apply_allocations(tab::T, g::G) where {T<:AbstractTableau,G<:A
 end
 
 @testset "Named apply! is allocation-free after warm-up" begin
-    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 67),
         storephase in (false, true), inversemod in (QC.PrecomputedInvMod(d), QC.JustInTimeInvMod()),
-        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int))
-        tab = TT(d, 12; state = :ghz, storephase = storephase, inversemod = inversemod, eltype = E)
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
+        tab = TT(d, 12; state = :ghz, storephase = storephase, inversemod = inversemod,
+                 eltype = E, layout = layout)
         for g in (Fourier(1), Phase(1), Multiplier(1, 1), PauliGate(1, 1, 1),
-                  SUM(1, 12), CPhase(1, 12), SWAP(1, 12))
+                  SUM(1, 12), CPhase(1, 12), SWAP(1, 12),
+                  random_clifford(Xoshiro(d), d, [1, 5, 12]))
             clifford_apply_allocations(tab, g)
             @test clifford_apply_allocations(tab, g) == 0
         end
