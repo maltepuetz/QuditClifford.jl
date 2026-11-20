@@ -340,16 +340,16 @@ function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_GMBlock,
     return ws
 end
 
-# Qudit-major: a transpose in tiles of 64 generators by 8 sites, as in the
-# qudit-major `_copy_sites!`.
+# Qudit-major: a transpose in tiles of 64 sites by 64 generators, sites outer,
+# as in the qudit-major `_copy_sites!`.
 function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_QMBlock,
                                   m::Int, sites::AbstractVector) where {T<:_StorageEltype}
     n = _nq(b)
     X, Z = b.x, b.z
-    @inbounds for j0 in 1:64:m
-        j1 = min(j0 + 63, m)
-        for k0 in 1:8:n
-            k1 = min(k0 + 7, n)
+    @inbounds for k0 in 1:64:n
+        k1 = min(k0 + 63, n)
+        for j0 in 1:64:m
+            j1 = min(j0 + 63, m)
             for j in j0:j1
                 @simd for k in k0:k1
                     q = sites[k]

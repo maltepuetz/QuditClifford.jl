@@ -90,9 +90,12 @@ function _copy_sites!(
 end
 
 # Qudit-major: site q's exponents over the generators are the contiguous
-# columns `b.x[:, q]` and `b.z[:, q]`. A transpose in tiles of 64 generators by
-# 8 sites: within a tile, 8 source columns are read as 64-entry runs, and the
-# workspace is written one generator column at a time.
+# columns `b.x[:, q]` and `b.z[:, q]`. A transpose in tiles of 64 sites by 64
+# generators, sites outer: within a tile, 64 source columns are read as
+# 64-entry runs, and the workspace is written one generator column at a time.
+# Measured on an M3 Pro (UInt8, d = 3, half the sites, n = 1023-2049), this
+# took 0.75-0.8x the time of tiles of 8 sites by 64 generators with the
+# generators outer, and is still 5-8x slower than the generator-major copy.
 function _copy_sites!(
     ws::AbstractMatrix{T},
     b::_QMBlock,
@@ -102,10 +105,10 @@ function _copy_sites!(
     offset::Int,
 ) where {T<:_StorageEltype}
     X, Z = b.x, b.z
-    @inbounds for j0 in 1:64:m
-        j1 = min(j0 + 63, m)
-        for r0 in 1:8:N
-            r1 = min(r0 + 7, N)
+    @inbounds for r0 in 1:64:N
+        r1 = min(r0 + 63, N)
+        for j0 in 1:64:m
+            j1 = min(j0 + 63, m)
             for j in j0:j1
                 @simd for r in r0:r1
                     q = sites[r]
