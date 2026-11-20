@@ -39,8 +39,8 @@ so whichever of `C` and `D` is smaller is traced out. This takes at most
 generators, phases, destabilizers and canonicalization caches unchanged. It
 overwrites the scratch arrays `tab.c_workspace` and `tab.zacc_workspace` and
 the rank workspace for `d` (`tab.bit_workspace` for `d = 2`, else
-`tab.rank_workspace`), and allocates nothing unless a subsystem shares memory with `tab.c_workspace`, in
-which case it is copied first.
+`tab.rank_workspace`), and allocates nothing unless a subsystem shares memory
+with `tab.c_workspace`, in which case it is copied first.
 
 # Examples
 ```jldoctest

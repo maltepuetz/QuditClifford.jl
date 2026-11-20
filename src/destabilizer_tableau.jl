@@ -118,6 +118,7 @@ mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: Abstrac
 
     # workspaces
     generator_workspace::Vector{Int}   # length 2n + storephase
+    pivot_workspace::Vector{E}         # length 2n, [x; z] of a pivot or new destabilizer (no phase)
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
@@ -205,6 +206,7 @@ function _build_destabilizer_tableau(
         false,
         inversemod,
         zeros(Int, 2n + (storephase ? 1 : 0)),
+        zeros(E, 2n),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
@@ -533,9 +535,9 @@ loaded only when the entry of `b` it pairs with is nonzero.
 end
 
 """
-The same pairing as `_symplectic_col_col_support` with a vector `vec` in
-place of generator `colA`; `supp[1:nsupp]` must cover the support of generator
-`colB` of `b`.
+The same pairing as `_symplectic_col_col_support` with a stacked vector `vec`
+of any integer type in place of generator `colA`, widened to `Int` before it
+multiplies; `supp[1:nsupp]` must cover the support of generator `colB` of `b`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
@@ -546,7 +548,7 @@ place of generator `colA`; `supp[1:nsupp]` must cover the support of generator
     s = 0
     @inbounds for k in 1:nsupp
         q = supp[k]
-        s += vec[q] * _zget(b, q, colB) - vec[n+q] * _xget(b, q, colB)
+        s += Int(vec[q]) * _zget(b, q, colB) - Int(vec[n+q]) * _xget(b, q, colB)
     end
     return s
 end
@@ -583,6 +585,7 @@ function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
         tab.iscanonical,
         tab.inversemod,
         zero(tab.generator_workspace),
+        zero(tab.pivot_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),

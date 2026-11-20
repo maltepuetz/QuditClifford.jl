@@ -151,9 +151,9 @@ not that workspace. An `order` that shares memory with `tab.c_workspace` or
 a rank workspace is copied before either is written, which allocates.
 
 The method reuses the rank workspace for `d` (`tab.bit_workspace` for `d = 2`,
-else `tab.rank_workspace`), and `tab.c_workspace` to check `order`. It preserves generators and
-canonicalization caches, and allocates nothing once compiled for ordinary
-vectors and views of independent arrays.
+else `tab.rank_workspace`), and `tab.c_workspace` to check `order`. It
+preserves generators and canonicalization caches, and allocates nothing once
+compiled for ordinary vectors and views of independent arrays.
 
 # Examples
 ```jldoctest

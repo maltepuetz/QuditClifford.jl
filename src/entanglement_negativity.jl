@@ -33,8 +33,9 @@ smaller side is used. This takes at most `O(n*m^2)` time, cubic in `n`, reads
 only the X and Z rows, and leaves the generators, phases, destabilizers and
 canonicalization caches unchanged. It overwrites the scratch arrays
 `tab.c_workspace` and `tab.zacc_workspace` and the rank workspace for `d`
-(`tab.bit_workspace` for `d = 2`, else `tab.rank_workspace`), and allocates nothing unless `A` or `B` shares memory
-with `tab.c_workspace`, in which case it is copied first.
+(`tab.bit_workspace` for `d = 2`, else `tab.rank_workspace`), and allocates
+nothing unless `A` or `B` shares memory with `tab.c_workspace`, in which case
+it is copied first.
 
 # References
 - S. Sang, Y. Li, T. Zhou, X. Chen, T. H. Hsieh and M. P. A. Fisher,

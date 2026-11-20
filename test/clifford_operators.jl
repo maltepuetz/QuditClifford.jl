@@ -77,10 +77,12 @@ end
                 @test dense_tab.xdotz_cache == tuple_tab.xdotz_cache
             end
         end
-        tab = TT(d, 12; state = :ghz, storephase = sp)
-        prep = dense_prep_from_gate(Fourier(1), d; storephase = sp)
-        dense_apply_allocations(tab, prep)
-        @test dense_apply_allocations(tab, prep) == 0
+        for E in (UInt8, UInt16, Int)
+            tab = TT(d, 12; state = :ghz, storephase = sp, eltype = E)
+            prep = dense_prep_from_gate(Fourier(1), d; storephase = sp)
+            dense_apply_allocations(tab, prep)
+            @test dense_apply_allocations(tab, prep) == 0
+        end
     end
 end
 
@@ -474,8 +476,8 @@ end
 
 @testset "Stored apply! is allocation-free after warm-up" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
-        storephase in (false, true)
-        tab = TT(d, 12; state = :ghz, storephase = storephase)
+        storephase in (false, true), E in (UInt8, UInt16, Int)
+        tab = TT(d, 12; state = :ghz, storephase = storephase, eltype = E)
         for g in (Fourier(1), Phase(1), SUM(1, 12), CPhase(1, 12), SWAP(1, 12))
             U = CliffordOperator(g, d)
             stored_apply_allocations(tab, U)
@@ -1009,9 +1011,10 @@ end
 
 @testset "Runtime supports allocate nothing during application" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3),
-        sp in (false, true), k in (0, 3, 8, 65), state in (:product, :mixed)
+        sp in (false, true), k in (0, 3, 8, 65), state in (:product, :mixed),
+        E in (UInt8, UInt16, Int)
         n = max(k, 1)
-        tab = TT(d, n; state, storephase = sp)
+        tab = TT(d, n; state, storephase = sp, eltype = E)
         U = k == 0 ? CliffordOperator(d, Int[], zeros(Int, 0, 0), Int[]) :
                      embed_named_on(Fourier(k), d, collect(1:k))
         stored_apply_allocations(tab, U)

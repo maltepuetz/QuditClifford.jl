@@ -125,11 +125,12 @@ end
 #########################################################
 
 """
-Multiply a tableau column by (generator_workspace)^a on the RIGHT, with correct phase updates.
+Multiply a tableau column by (pivot_workspace)^a on the RIGHT, with correct phase updates.
 
-This is used in the noncommuting measurement update:
+This is used in the noncommuting update of `dephase!`:
     g_i <- g_i * (g_pivot)^a
-where g_pivot is stored in generator_workspace.
+where the X and Z exponents of g_pivot are stored in pivot_workspace and its
+phase exponent is `kws` (0 without a phase row).
 
 - XZ rows are updated linearly mod d.
 - If storephase=false: no phase bookkeeping.
@@ -143,9 +144,10 @@ function mul_col_by_workspace_power!(
     tab::AbstractTableau,
     col::Int,
     a::Int,
+    kws::Int,
 )
     stab = _stab(tab)
-    genws = tab.generator_workspace
+    genws = tab.pivot_workspace
     n = tab.n
     d = tab.d
 
@@ -154,21 +156,20 @@ function mul_col_by_workspace_power!(
     # If we store phase, compute cross term using the OLD target Z (before XZ update)
     if tab.storephase
         phase = _phase(tab)
-        phase_row = 2n + 1
         d_phase = phase_modulus(d)
 
         if d == 2
             # a ∈ {0,1} and a != 0, so a == 1
             # cross = x_ws · z_col_old   (mod 2)
             cross = dot_xz_ws_vs_col(genws, stab, col, d)  # uses old tab Z entries
-            phase[col] = mod(phase[col] + genws[phase_row] + 2 * cross, d_phase)
+            phase[col] = mod(phase[col] + kws + 2 * cross, d_phase)
         else
             inv2 = tab.inversemod(2, d)
 
             # Phase of (ws)^a:
             # k_power = a*k_ws + C(a,2)*(x_ws · z_ws)  (mod d)
             xdotz_ws = dot_xz_ws(genws, n, d)
-            k_power = mod(a * genws[phase_row] + binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d_phase)
+            k_power = mod(a * kws + binom2_mod_oddprime(a, d, inv2) * xdotz_ws, d_phase)
 
             # cross = a*(x_ws · z_col_old) (mod d)
             cross_base = dot_xz_ws_vs_col(genws, stab, col, d)  # x_ws · z_col_old
@@ -179,8 +180,8 @@ function mul_col_by_workspace_power!(
     end
 
     # Now update XZ: col <- col + a*ws  (mod d)
-    # genws is a separate array from the block, and its contents were copied out of
-    # a tableau column, so they are reduced.
+    # genws is a separate array from the block of the same element type, and its
+    # contents were copied out of a tableau column, so they are reduced.
     _gen_addmul!(stab, col, genws, a, d)
 
     return nothing
@@ -191,11 +192,13 @@ end
 ##############################################################
 
 # In the noncommuting branch every later anticommuting generator absorbs a
-# power of the pivot generator g_p, held in generator_workspace:
+# power of the pivot generator g_p, whose X and Z exponents are held in
+# pivot_workspace, in the storage element type of the tableau:
 #     g_i <- g_i * g_p^a,   a = -c_i / c_p (mod d).
 # Everything that depends on g_p alone -- its phase, x_p·z_p, -1/c_p, 1/2 -- is
 # fixed for the whole measurement, so `_PivotUpdate` holds it and each
-# generator pays only for its own terms.
+# generator pays only for its own terms. Every O(n) update of a generator is a
+# vector primitive between two arrays of the storage element type.
 #
 # g_p vanishes outside its qudit support, so the XZ update of g_i, its cross
 # term x_p·z_i and (for a `DestabilizerTableau`) the change of x_i·z_i all live
@@ -220,16 +223,16 @@ end
 # random state's pivot covers about three quarters and stays dense.
 @inline _pivot_support_is_sparse(nsupp::Int, n::Int) = 2 * nsupp <= n
 
-# Copy generator `pivot` into generator_workspace and record its support in
-# zacc_workspace, which nothing else touches during a measurement. Must run
-# before the pivot column is overwritten.
+# Copy the X and Z exponents of generator `pivot` into pivot_workspace, its
+# phase into `kws`, and record its support in zacc_workspace, which nothing else
+# touches during a measurement. Must run before the pivot column is
+# overwritten.
 function _prepare_pivot_update(tab::AbstractTableau, pivot::Int, comm0::Int)
     stab = _stab(tab)
-    genws = tab.generator_workspace
+    genws = tab.pivot_workspace
     n = tab.n
     d = tab.d
     _copy_gen!(genws, stab, pivot)
-    tab.storephase && (genws[2n+1] = _phase(tab)[pivot])
     sites = tab.zacc_workspace
     nsupp = _column_support!(sites, stab, pivot)
     sparse = _pivot_support_is_sparse(nsupp, n)
@@ -237,13 +240,13 @@ function _prepare_pivot_update(tab::AbstractTableau, pivot::Int, comm0::Int)
         s = 0
         @inbounds for k in 1:nsupp
             q = sites[k]
-            s += genws[q] * genws[n+q]
+            s += Int(genws[q]) * Int(genws[n+q])
         end
         xzws = mod(s, d)
     else
         xzws = dot_xz_ws(genws, n, d)
     end
-    kws = tab.storephase ? genws[2n+1] : 0
+    kws = tab.storephase ? _phase(tab)[pivot] : 0
     inv2 = d == 2 ? 0 : tab.inversemod(2, d)
     ninv = mod(-tab.inversemod(comm0, d), d)
     return _PivotUpdate(nsupp, sparse, ninv, kws, xzws, inv2)
@@ -258,38 +261,39 @@ end
     stab = _stab(tab)
     xg = _xgen(stab, col)
     zg = _zgen(stab, col)
-    genws = tab.generator_workspace
+    genws = tab.pivot_workspace
     n = tab.n
     d = tab.d
     # Only a DestabilizerTableau keeps `xdotz_cache` valid, so only it patches it.
     track = tab isa DestabilizerTableau
     sites = tab.zacc_workspace
 
-    # cb = x_p·z_col and cz = x_col·z_p, both on the old column.
+    # cb = x_p·z_col and cz = x_col·z_p, both on the old column, with every
+    # entry widened to `Int` before it multiplies.
     cb = 0
     cz = 0
     if pu.sparse
         if track
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * (zg[q] % Int)
-                cz += (xg[q] % Int) * genws[n+q]
+                cb += Int(genws[q]) * Int(zg[q])
+                cz += Int(xg[q]) * Int(genws[n+q])
             end
         elseif tab.storephase
             @inbounds for k in 1:pu.nsupp
                 q = sites[k]
-                cb += genws[q] * (zg[q] % Int)
+                cb += Int(genws[q]) * Int(zg[q])
             end
         end
     else
         if track
             @turbo for q in 1:n
-                cb += genws[q] * Int(zg[q])
-                cz += Int(xg[q]) * genws[n+q]
+                cb += Int(genws[q]) * Int(zg[q])
+                cz += Int(xg[q]) * Int(genws[n+q])
             end
         elseif tab.storephase
             @turbo for q in 1:n
-                cb += genws[q] * Int(zg[q])
+                cb += Int(genws[q]) * Int(zg[q])
             end
         end
     end
@@ -313,9 +317,10 @@ end
         cache[col] = mod(cache[col] + lin + quad, d)
     end
 
-    # genws is a separate array from the block, and its contents were copied out
-    # of a tableau column, so they are reduced. Outside the pivot support genws
-    # is zero, so the site-restricted update gives the dense result.
+    # genws is a separate array from the block of the same element type, and its
+    # contents were copied out of a tableau column, so they are reduced. Outside
+    # the pivot support genws is zero, so the site-restricted update gives the
+    # dense result.
     if pu.sparse
         _gen_addmul_sites!(stab, col, genws, sites, pu.nsupp, a, d)
     else
@@ -377,7 +382,7 @@ end
 
     # noncommuting branch: update destabilizers
     inv_comm0 = tab.inversemod(comm0, d)
-    _gen_mulcopy!(destab, pivot, tab.generator_workspace, inv_comm0, d)
+    _gen_mulcopy!(destab, pivot, tab.pivot_workspace, inv_comm0, d)
 
     # Every dual must stay orthogonal to the newly written generator, which now
     # holds the measured operator. Pairing each dual against it over all 2n rows
@@ -439,10 +444,12 @@ end
 
     stab = _stab(tab)
     destab = _destab(tab)
-    genws = tab.generator_workspace
-    @turbo for j in eachindex(genws)
-        genws[j] = 0
-    end
+    # The new destabilizer v is built in pivot_workspace, in the storage element
+    # type, so the projection below runs on same-type vector primitives. The
+    # append branch has no pivot generator, so pivot_workspace holds nothing
+    # live here.
+    genws = tab.pivot_workspace
+    fill!(genws, zero(eltype(genws)))
     zq = res[q] != 0
     if zq
         genws[n+q] = 1  # Z_q
@@ -460,7 +467,8 @@ end
         traw = zq ? _xget(stab, q, j) : _zget(stab, q, j)
         traw == 0 && continue
         t = zq ? d - traw : traw
-        # genws is a separate array from the destabilizer block.
+        # genws is a separate array from the destabilizer block, of the same
+        # element type.
         _vec_submul!(genws, destab, j, t, d)
     end
 

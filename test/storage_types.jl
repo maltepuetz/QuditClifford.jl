@@ -275,6 +275,21 @@ end
     end
 end
 
+@testset "pivot workspace has the storage type" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d),
+        storephase in (true, false)
+        n = 5
+        tab = TT(d, n; storephase, eltype = E)
+        @test Base.eltype(tab.pivot_workspace) === E
+        @test length(tab.pivot_workspace) == 2n
+        c = copy(tab)
+        @test Base.eltype(c.pivot_workspace) === E && length(c.pivot_workspace) == 2n
+        @test c.pivot_workspace !== tab.pivot_workspace
+        raw = TT(d, stabilizer_matrix(TT(d, n; state = :ghz, storephase)); eltype = E)
+        @test Base.eltype(raw.pivot_workspace) === E && length(raw.pivot_workspace) == 2n
+    end
+end
+
 @testset "equality and hash ignore the element type" begin
     for d in (3, 251), TT in (StabilizerTableau, DestabilizerTableau)
         a = TT(d, 4; state = :ghz, eltype = UInt8)
@@ -387,8 +402,10 @@ end
         tab -> conditional_mutual_information(tab, A, B, C),
         tab -> is_pure(tab; verify = true),
     )
-    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 251, 257)
-        seed = hash((TT, d)) % UInt
+    for (TT, d, seed) in ((StabilizerTableau, 2, 2101), (StabilizerTableau, 3, 2102),
+                          (StabilizerTableau, 251, 2103), (StabilizerTableau, 257, 2104),
+                          (DestabilizerTableau, 2, 2201), (DestabilizerTableau, 3, 2202),
+                          (DestabilizerTableau, 251, 2203), (DestabilizerTableau, 257, 2204))
         ref = st_monitored(TT, d, n, Int, seed)
         @test !ref.iscanonical
         refvals = Any[]
