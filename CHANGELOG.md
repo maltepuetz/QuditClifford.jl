@@ -10,6 +10,11 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Breaking
 
+- `StabilizerTableau` and `DestabilizerTableau` have two new fields: `layout`,
+  which records the layout, and `coeff_workspace`, a coefficient workspace.
+  Code that calls the inner constructors positionally, or that builds the
+  structs with all fields, must pass both; the public constructors are
+  unchanged.
 - `measure!` on qubits returns the outcome `t ∈ {0, 1}`, meaning eigenvalue
   `(-1)^t`, in every branch. A deterministic measurement with `storephase=true`
   used to return the `i`-exponent instead, so eigenvalue `-1` came back as `1`
@@ -54,6 +59,14 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- Both tableau types can store their generators qudit-major, with the
+  exponents of one qudit across all generators contiguous, instead of the
+  default generator-major layout. The `layout = :generator | :qudit` keyword of
+  every constructor selects it, `qudit_major!(tab)` and `generator_major!(tab)`
+  switch a tableau in place without allocating, and `tableau_layout(tab)`
+  returns `:generator` or `:qudit`. Results are bit-identical in both layouts,
+  `copy!(dst, src)` gives `dst` the layout of `src`, and no operation changes
+  the layout on its own.
 - `stabilizer_matrix(tab; layout)` and `destabilizer_matrix(tab; layout)` return a
   tableau's generators as a fresh `Int` matrix, generator-major (generators in
   columns) or qudit-major.
@@ -74,6 +87,16 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- `show` of a tableau reports its actual layout, `generator-major` or
+  `qudit-major`, on the `Storage:` line.
+- Gates and random-outcome measurements are faster on a qudit-major tableau:
+  gates 4–16 times and random-outcome measurements 1.05–2.7 times at
+  n = 1023–2049 (M3 Pro, `UInt8`). `canonicalize!`, `dephase!`, `traceout!`
+  and `reset!` have qudit-major kernels and are about as fast or faster
+  qudit-major. `expect!` and `expect_int!` (up to about 4 times on a
+  `DestabilizerTableau`) and `stabilizer_matrix` and `destabilizer_matrix`
+  (1.5–2 times at `d = 3`, `n = 1024`–`2048`) are slower qudit-major;
+  generator-major stays the default. Timings are in #61.
 - A random-outcome `measure!` is faster, with identical tableaux, outcomes,
   RNG draws and no allocations. Each generator that anticommutes with the
   measured operator absorbs a power of the replaced generator. That update

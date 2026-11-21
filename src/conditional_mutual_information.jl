@@ -89,21 +89,33 @@ function conditional_mutual_information(
     # Rows are stacked as [D; X; Y] with Y the smaller of A and B, since Y is
     # eliminated twice.
     x, y = NA >= NB ? (1, 2) : (2, 1)
-    if tab.d == 2
-        return _cmi_from_groups!(tab, tab.bit_workspace, first, counts, x, y)
-    end
-    return _cmi_from_groups!(tab, tab.rank_workspace, first, counts, x, y)
+    return _cmi_from_groups!(tab, _layout_marker(tab), first, counts, x, y)
 end
 
 function _cmi_from_groups!(
     tab::AbstractTableau,
+    L::TableauLayout,
+    first::NTuple{4,Int},
+    counts::NTuple{4,Int},
+    x::Int,
+    y::Int,
+)
+    if tab.d == 2
+        return _cmi_from_groups!(tab, L, tab.bit_workspace, first, counts, x, y)
+    end
+    return _cmi_from_groups!(tab, L, tab.rank_workspace, first, counts, x, y)
+end
+
+function _cmi_from_groups!(
+    tab::AbstractTableau,
+    L::TableauLayout,
     ws::AbstractMatrix,
     first::NTuple{4,Int},
     counts::NTuple{4,Int},
     x::Int,
     y::Int,
 )
-    rank_D, rank_X, rank_XY = _traced_rank_pair!(tab, ws, first, counts, x, y)
+    rank_D, rank_X, rank_XY = _traced_rank_pair!(tab, L, ws, first, counts, x, y)
     # Every elimination after the one on D combines only the columns
     # rank_D+1:m, the basis of the stabilizers that vanish on D, so the rows
     # of Y in those columns still have the rank of K_Y.

@@ -146,16 +146,47 @@ function st_xdotz(tab)
     return [Int(mod(sum(S[q, j] * S[n+q, j] for q in 1:n), d)) for j in 1:tab.m]
 end
 
+# Whether the capacity generators `m+1:n` of `tab` are all zero, phases and
+# destabilizers included.
+function st_capacity_zero(tab)
+    m = tab.m
+    ok = all(iszero, stabilizer_matrix(tab)[:, m+1:end])
+    tab isa DestabilizerTableau && (ok &= all(iszero, destabilizer_matrix(tab)[:, m+1:end]))
+    return ok
+end
+
+# A layout change of `tab` drawn from `rng`: `qudit_major!`, `generator_major!`,
+# or `copy!` into a fresh tableau of the other layout, which then takes the
+# place of `tab`. Returns the tableau to continue with.
+function st_switch!(rng, tab)
+    c = rand(rng, 1:3)
+    c == 1 && return qudit_major!(tab)
+    c == 2 && return generator_major!(tab)
+    other = tableau_layout(tab) === :qudit ? :generator : :qudit
+    dst = typeof(tab).name.wrapper(tab.d, tab.n; storephase = tab.storephase,
+                                   eltype = Base.eltype(tab.pivot_workspace), layout = other)
+    return copy!(dst, tab)
+end
+
 # Apply `nops` operations drawn from `oprng` to every tableau in `tabs`, the
-# first being the `eltype = Int` reference, each with its own copy of `seed`
-# as RNG, and compare every tableau with the reference after every operation.
-# Returns the number of comparisons that failed.
+# first being the `eltype = Int`, generator-major reference, each with its own
+# copy of `seed` as RNG, and compare every tableau with the reference after
+# every operation. Before each operation every other tableau changes its layout
+# with probability 1/8 (`st_switch!`, drawn from an RNG of its own), so `tabs`
+# is updated in place. Returns the number of comparisons that failed.
 function st_run!(tabs, seed, oprng, nops)
     ref = tabs[1]
     rngs = [Xoshiro(seed) for _ in tabs]
+    swrng = Xoshiro(20_000 + seed)
+    layouts = [tableau_layout(tab) for tab in tabs]
     d, n = ref.d, ref.n
     bad = 0
     for i in 1:nops
+        for k in 2:length(tabs)
+            rand(swrng, 1:8) == 1 || continue
+            tabs[k] = st_switch!(swrng, tabs[k])
+            layouts[k] = tableau_layout(tabs[k])
+        end
         op = st_rand_op(oprng, ref)
         vals = [st_call(op, tab, r) for (tab, r) in zip(tabs, rngs)]
         Sref = stabilizer_matrix(ref)
@@ -166,9 +197,11 @@ function st_run!(tabs, seed, oprng, nops)
                    tab.iscanonical == ref.iscanonical && isequal(vals[k], vals[1])
             Dref === nothing || (same &= destabilizer_matrix(tab) == Dref)
             tab isa DestabilizerTableau && (same &= tab.xdotz_cache[1:tab.m] == st_xdotz(tab))
+            same &= tableau_layout(tab) === layouts[k]
+            same &= st_capacity_zero(tab)
             if !same
                 ok = false
-                @error "differs from the Int reference" i eltype = Base.eltype(tab.stab_x) vals[k] vals[1]
+                @error "differs from the Int reference" i eltype = Base.eltype(tab.pivot_workspace) layout = tableau_layout(tab) vals[k] vals[1]
             end
         end
         if ref isa DestabilizerTableau && st_duality(ref) != Matrix{Int64}(I, ref.m, ref.m)
@@ -483,7 +516,7 @@ end
     end
 end
 
-@testset "differential across element types" begin
+@testset "differential across layouts and element types" begin
     ds = Sys.WORD_SIZE == 64 ? (2, 3, 251, 257, 65521) : (2, 3, 251, 257)
     cases = [(d, n) for d in ds for n in (5, 33)]
     append!(cases, [(3, 300), (251, 300)])
@@ -492,10 +525,43 @@ end
         state in (:mixed, :product), storephase in (n == 5 ? (true, false) : (true,))
 
         seed += 1
-        Es = filter(!=(Int), st_types(d))
-        tabs = [TT(d, n; state, storephase, eltype = E) for E in (Int, Es...)]
+        variants = [(E, layout) for E in st_types(d) for layout in (:generator, :qudit)
+                    if (E, layout) != (Int, :generator)]
+        tabs = [TT(d, n; state, storephase, eltype = E, layout)
+                for (E, layout) in ((Int, :generator), variants...)]
         nops = n == 300 ? 30 : 120
         @test st_run!(tabs, seed, Xoshiro(10_000 + seed), nops) == 0
+    end
+end
+
+@testset "equality and hash across layouts" begin
+    for d in (2, 3), TT in (StabilizerTableau, DestabilizerTableau)
+        a = TT(d, 6; state = :ghz, layout = :generator)
+        b = qudit_major!(copy(a))
+        @test a == b
+        @test hash(a) == hash(b)
+        @test length(Set([a, b])) == 1
+    end
+    # A non-canonical random state, against itself and a canonical copy in the
+    # other layout, and against a different state.
+    for d in (2, 3), TT in (StabilizerTableau, DestabilizerTableau), E in st_types(d)
+        a = TT(d, 9; eltype = E, layout = :generator)
+        random_state!(Xoshiro(41 + d), a)
+        @test !a.iscanonical
+        b = qudit_major!(copy(a))
+        c = copy(b)
+        canonicalize!(c)
+        generator_major!(c)
+        @test !b.iscanonical && c.iscanonical
+        @test stabilizer_matrix(c) != stabilizer_matrix(a)
+        for (x, y) in ((a, b), (b, a), (b, c), (c, b), (a, c))
+            @test x == y
+            @test hash(x) == hash(y)
+        end
+        @test length(Set([a, b, c])) == 1
+        e = TT(d, 9; eltype = E, layout = :qudit)
+        random_state!(Xoshiro(43 + d), e)
+        @test e != a && b != e && e != c
     end
 end
 

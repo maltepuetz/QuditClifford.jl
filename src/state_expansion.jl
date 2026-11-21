@@ -37,12 +37,12 @@ end
 # z of the running product (held in `xz[n+1:2n]`) dotted with x of generator
 # `j` of `G`, unreduced. The z-workspace-by-x-generator sibling of
 # `dot_xz_ws_vs_col`, which pairs the other way round.
-@inline function _dot_zws_xcol(xz::Vector{Int}, G::_GMBlock, j::Int)
+@inline function _dot_zws_xcol(xz::Vector{Int}, G::XZBlock, j::Int)
     n = _nq(G)
-    gx = G.x
+    gx = _xgen(G, j)
     acc = 0
     @turbo for q in 1:n
-        acc += xz[n+q] * Int(gx[q, j])
+        acc += xz[n+q] * Int(gx[q])
     end
     return acc
 end
@@ -56,7 +56,7 @@ end
 # z_P · x_g ≡ x_P · z_g (mod d). What pins the X-before-Z convention here is the
 # matrix element ⟨c + x| P |c⟩ = ζ^(a + s z·c) in `_emit_support` and
 # `_add_pauli!`, and the tests break both on purpose.
-@inline function _mul_generator!(xz::Vector{Int}, a::Int, G::_GMBlock,
+@inline function _mul_generator!(xz::Vector{Int}, a::Int, G::XZBlock,
                                  Gphase::AbstractVector{Int},
                                  j::Int, d::Int, p::Int, s::Int)
     cross = _dot_zws_xcol(xz, G, j)    # read z before it changes
@@ -79,7 +79,7 @@ end
 # never emitted, and a carry off the most significant digit means every element
 # has been visited. The generators commute, so right-multiplying in this order
 # always yields the element whose exponents are `u`.
-function _walk_group(f, G::_GMBlock, Gphase::AbstractVector{Int}, ngens::Int, d::Int,
+function _walk_group(f, G::XZBlock, Gphase::AbstractVector{Int}, ngens::Int, d::Int,
                      xz::Vector{Int}, u::Vector{Int})
     p = phase_modulus(d)
     s = p ÷ d
@@ -114,12 +114,12 @@ end
 #
 # The caller's generators, `iscanonical` flag and workspaces are never touched.
 # `_check_convertible` guarantees a phase row and `m == n`.
-function _prepare_support(tab::AbstractTableau)
+function _prepare_support(tab::AbstractTableau, L::TableauLayout)
     n, d = tab.n, tab.d
     p = phase_modulus(d)
     s = p ÷ d
-    S = _stab(tab)
-    G = XZBlock{GeneratorMajor}(copy(S.x), copy(S.z))
+    S = _stab(tab, L)
+    G = _generator_major_copy(S)
     Gphase = copy(_phase(tab))
     pivcol = zeros(Int, 2n)
     xdotz = zeros(Int, n)
@@ -166,7 +166,7 @@ end
 # order on labels: if exponent vectors u and v first differ at j, every x_i
 # with i >= j vanishes before row r_j and every x_i with i > j vanishes at it,
 # so the labels agree before r_j and differ there by exactly u_j - v_j.
-function _emit_support(f, G::_GMBlock, Gphase::AbstractVector{Int}, k::Int, d::Int,
+function _emit_support(f, G::XZBlock, Gphase::AbstractVector{Int}, k::Int, d::Int,
                        cstar::Vector{Int})
     n = _nq(G)
     p = phase_modulus(d)

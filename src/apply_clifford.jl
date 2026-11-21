@@ -304,7 +304,7 @@ end
 ########################################
 
 # Target coordinates in all-X-then-all-Z order, matching the generator order.
-@inline function _gather(b::XZBlock{GeneratorMajor}, targets::NTuple{K,Int}, j::Int) where {K}
+@inline function _gather(b::XZBlock, targets::NTuple{K,Int}, j::Int) where {K}
     return ntuple(Val(2K)) do i
         @inline
         i <= K ? _xget(b, targets[i], j) : _zget(b, targets[i - K], j)
@@ -312,7 +312,7 @@ end
 end
 
 @inline function _scatter!(
-    b::XZBlock{GeneratorMajor},
+    b::XZBlock,
     targets::NTuple{K,Int},
     j::Int,
     vout::NTuple{S,Int},
@@ -334,13 +334,13 @@ end
 # bang marks that a backing MAY mutate borrowed scratch -- the tuple backing
 # does not need to.
 
-@inline _gather_prepared!(prep::PreparedClifford{K,S}, b::XZBlock{GeneratorMajor},
+@inline _gather_prepared!(prep::PreparedClifford{K,S}, b::XZBlock,
                           j::Int) where {K,S} = _gather(b, prep.targets, j)
 
 @inline _matvec_prepared!(prep::PreparedClifford{K,S},
                           v::NTuple{S,Int}) where {K,S} = _matvec(prep, v)
 
-@inline _scatter_prepared!(prep::PreparedClifford{K,S}, b::XZBlock{GeneratorMajor},
+@inline _scatter_prepared!(prep::PreparedClifford{K,S}, b::XZBlock,
                            j::Int, vout::NTuple{S,Int}) where {K,S} =
     _scatter!(b, prep.targets, j, vout)
 
@@ -476,7 +476,7 @@ struct PreparedDenseClifford <: AbstractPreparedClifford
 end
 
 @inline function _gather_prepared!(prep::PreparedDenseClifford,
-                                   b::XZBlock{GeneratorMajor}, j::Int)
+                                   b::XZBlock, j::Int)
     t = prep.targets; k = prep.k; v = prep.v
     @inbounds for i in 1:k
         v[i] = _xget(b, t[i], j)
@@ -486,7 +486,7 @@ end
 end
 
 @inline function _scatter_prepared!(prep::PreparedDenseClifford,
-                                    b::XZBlock{GeneratorMajor}, j::Int,
+                                    b::XZBlock, j::Int,
                                     vout::Vector{Int})
     t = prep.targets; k = prep.k
     @inbounds for i in 1:k
@@ -697,7 +697,7 @@ end
 # `StabilizerTableau` needs neither, because clearing `iscanonical` is the
 # existing contract for a stale cache.
 @inline _before_clifford_scatter!(::AbstractTableau, prep, j::Int, v, vout) = nothing
-@inline _after_clifford!(::AbstractTableau, prep) = nothing
+@inline _after_clifford!(::AbstractTableau, ::TableauLayout, prep) = nothing
 
 ########################################
 # apply!                               #
@@ -776,7 +776,7 @@ function _apply_prepared!(tab::AbstractTableau, prep::AbstractPreparedClifford)
         "PreparedClifford for this tableau before applying it."))
     length(prep.targets) == 0 && return tab
     _validate_clifford_targets(prep, tab.n)
-    return _apply_columns!(tab, prep)
+    return _apply_columns!(tab, prep, _layout_marker(tab))
 end
 
 # The column loop of `_apply_prepared!`, for a `prep` already checked against
@@ -784,8 +784,46 @@ end
 # same body as the entry checks, the loop ran about 1.3x slower (two-qudit
 # brickwork gates on a `DestabilizerTableau`, n = 511, M3 Pro), and the
 # function barrier costs one call per gate.
-@noinline function _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford)
-    stab = _stab(tab)
+@noinline _apply_columns!(tab::AbstractTableau, prep::AbstractPreparedClifford,
+                          L::TableauLayout) = _apply_columns_generic!(tab, prep, L)
+
+# A qudit-major tableau runs the tuple backing's `fast` tier through the
+# kernel of src/apply_qudit_major.jl, one SIMD loop over the generators in the
+# lane `_clifford_lane` chooses, derived once per gate; each branch names its
+# lane type and constant type, so the kernel is compiled for it. The kernel
+# derives its own constant, so `bm` (an `Int` constant) is needed only at
+# `d = 2`, where it gates `prep.Q`. The overflow-safe tier, and a `(S, d)`
+# without a lane, take the per-generator path.
+@noinline function _apply_columns!(tab::AbstractTableau, prep::PreparedClifford{K,S},
+                                  L::QuditMajor) where {K,S}
+    prep.fast || return _apply_columns_generic!(tab, prep, L)
+    d = prep.d
+    if d == 2
+        (prep.bm != 0 && _lane_holds(Int16, S, d)) ||
+            return _apply_columns_generic!(tab, prep, L)
+        _qm_apply!(tab, prep, L, Int16, nothing, 0)
+    else
+        lane, M, s, wide = _clifford_lane(S, d)
+        if lane == 2
+            wide ? _qm_apply!(tab, prep, L, Int16, M % Int32, s) :
+                   _qm_apply!(tab, prep, L, Int16, M % Int16, s)
+        elseif lane == 4
+            wide ? _qm_apply!(tab, prep, L, Int32, M, s) :
+                   _qm_apply!(tab, prep, L, Int32, M % Int32, s)
+        elseif lane == 8
+            _qm_apply!(tab, prep, L, Int64, M, s)
+        else
+            return _apply_columns_generic!(tab, prep, L)
+        end
+    end
+    tab.iscanonical = false
+    return tab
+end
+
+# The per-generator column loop, for every layout and backing.
+@inline function _apply_columns_generic!(tab::AbstractTableau, prep::AbstractPreparedClifford,
+                                         L::TableauLayout)
+    stab = _stab(tab, L)
     phase = _phase(tab)
     @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, stab, j)
@@ -799,7 +837,7 @@ end
         _before_clifford_scatter!(tab, prep, j, v, vout)
         _scatter_prepared!(prep, stab, j, vout)
     end
-    _after_clifford!(tab, prep)
+    _after_clifford!(tab, L, prep)
     tab.iscanonical = false
     return tab
 end
@@ -823,13 +861,27 @@ end
 # deliberately REUSES the main loop's `v`/`vout` buffers on the dense backing:
 # it runs strictly after that loop, nothing from it stays live, and this is not
 # an instance of the allocating-API scratch rule. Do not give it own buffers.
-function _after_clifford!(tab::DestabilizerTableau, prep::AbstractPreparedClifford)
-    destab = _destab(tab)
+function _after_clifford!(tab::DestabilizerTableau, L::TableauLayout,
+                         prep::AbstractPreparedClifford)
+    destab = _destab(tab, L)
     @inbounds for j in 1:tab.m
         v = _gather_prepared!(prep, destab, j)
         vout = _matvec_prepared!(prep, v)
         _scatter_prepared!(prep, destab, j, vout)
     end
+    return nothing
+end
+
+# The qudit-major kernel's destabilizer pass: the same kernel on the
+# destabilizer block, with neither phase nor cache.
+@inline _after_clifford!(::AbstractTableau, ::QuditMajor, ::PreparedClifford,
+                         ::Type{T}, M::Union{Nothing,Signed}, s::Int) where {T<:Signed} = nothing
+
+@inline function _after_clifford!(tab::DestabilizerTableau, L::QuditMajor,
+                                  prep::PreparedClifford, ::Type{T},
+                                  M::Union{Nothing,Signed}, s::Int) where {T<:Signed}
+    _qm_tuple_kernel!(_destab(tab, L), nothing, nothing, tab.coeff_workspace, tab.m,
+                      prep, T, M, s)
     return nothing
 end
 

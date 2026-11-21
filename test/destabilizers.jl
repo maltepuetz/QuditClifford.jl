@@ -297,11 +297,11 @@ end
 
                 for j in 1:tab.m
                     @test tab.xdotz_cache[j] ==
-                          QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                          QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
                 end
 
                 direct = copy(destabilizer_matrix(tab))
-                QuditClifford.rebuild_destabilizers!(tab)
+                QuditClifford.rebuild_destabilizers!(tab, QuditClifford._layout_marker(tab))
                 @test destabilizer_matrix(tab) == direct
             end
         end
@@ -418,8 +418,8 @@ end
         tab = TT(d, n; state=:product, basis=:Z)
 
         if want_mult !== nothing
-            c1 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 1, op), d)
-            c2 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab), 2, op), d)
+            c1 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), 1, op), d)
+            c2 = mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), 2, op), d)
             @test mod(-c2 * invmod(c1, d), d) == want_mult
         end
 
@@ -429,7 +429,7 @@ end
 
         # generators stay mutually commuting
         for i in 1:tab.m, j in 1:tab.m
-            @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, stabilizer_matrix(tab)[:, j]), d) == 0
+            @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), i, stabilizer_matrix(tab)[:, j]), d) == 0
         end
         # inactive capacity stays zeroed
         @test all(stabilizer_matrix(tab)[:, (tab.m + 1):end] .== 0)
@@ -437,7 +437,7 @@ end
         if TT === DestabilizerTableau
             _assert_duality(tab)
             for j in 1:tab.m
-                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):end] .== 0)
         end
@@ -495,7 +495,7 @@ end
 
             for j in 1:tab.m
                 @test tab.xdotz_cache[j] ==
-                      QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, d)
+                      QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, d)
             end
             @test all(tab.xdotz_cache[(tab.m + 1):n] .== 0)
             @test all(destabilizer_matrix(tab)[:, (tab.m + 1):n] .== 0)
@@ -704,5 +704,37 @@ end
         dephase!(tab, SinglePauli(4, 0, 1))
         _assert_duality(tab)
         _assert_active_cache(tab)
+    end
+end
+
+# Gates and measurements run generator-major; after each one the tableau is
+# switched to qudit-major, checked through the layout-independent matrices,
+# and switched back.
+@testset "duality after every switch" begin
+    for d in (2, 3)
+        n = 7
+        rng = Xoshiro(20261121 + d)
+        tab = DestabilizerTableau(d, n; state = :Z)
+        for step in 1:10
+            if isodd(step)
+                q = rand(rng, 1:(n - 1))
+                apply!(tab, random_clifford(rng, d, [q, q + 1]))
+            else
+                q = rand(rng, 1:n)
+                x = rand(rng, 0:(d - 1))
+                z = x == 0 ? rand(rng, 1:(d - 1)) : rand(rng, 0:(d - 1))
+                measure!(rng, tab, SinglePauli(q, x, z, d == 2 ? x * z : 0))
+            end
+            qudit_major!(tab)
+            @test tableau_layout(tab) === :qudit
+            S, D = stabilizer_matrix(tab), destabilizer_matrix(tab)
+            m = tab.m
+            dual = [mod(_symp(D, i, S, j, n), d) for i in 1:m, j in 1:m]
+            @test dual == [Int(i == j) for i in 1:m, j in 1:m]
+            @test tab.xdotz_cache[1:m] ==
+                  [mod(sum(S[q, j] * S[n + q, j] for q in 1:n), d) for j in 1:m]
+            generator_major!(tab)
+            @test tableau_layout(tab) === :generator
+        end
     end
 end

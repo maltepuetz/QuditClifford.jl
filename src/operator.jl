@@ -353,12 +353,12 @@ function Base.show(io::IO, op::GeneralPauli)
 end
 
 """
-    set_operator!(tab::AbstractTableau, i::Int, op::SinglePauli)
-    set_operator!(tab::AbstractTableau, i::Int, op::DoublePauli)
-    set_operator!(tab::AbstractTableau, i::Int, op::TriplePauli)
-    set_operator!(tab::AbstractTableau, i::Int, op::NPauli{D}) where D
-    set_operator!(tab::AbstractTableau, i::Int, op::GeneralPauli)
-    set_operator!(tab::AbstractTableau, i::Int, op::AbstractVector{<:Integer})
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::SinglePauli)
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::DoublePauli)
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::TriplePauli)
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::NPauli{D}) where D
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::GeneralPauli)
+    set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::AbstractVector{<:Integer})
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::SinglePauli)
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::DoublePauli)
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::TriplePauli)
@@ -366,7 +366,7 @@ end
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::GeneralPauli)
     set_operator!(dst::AbstractVector{<:Integer}, tab::StabilizerTableau, op::AbstractVector{<:Integer})
 Set the i-th stabilizer generator of the tableau to the given operator `op`, or set
-the vector dst to the given operator `op`.
+the vector dst to the given operator `op`. `L` is the tableau's layout marker.
 """
 function set_operator! end
 
@@ -529,9 +529,9 @@ end
 #######################################
 # copy into the stabilizer generators #
 #######################################
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::SinglePauli)
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::SinglePauli)
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     _zero_gen!(stab, i)
     _xset!(stab, mod(op.x, d), op.qudit, i)
     _zset!(stab, mod(op.z, d), op.qudit, i)
@@ -540,9 +540,9 @@ end
     end
     nothing
 end
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::DoublePauli)
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::DoublePauli)
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     _zero_gen!(stab, i)
     _xset!(stab, mod(op.x1, d), op.qudit1, i)
     _xset!(stab, mod(op.x2, d), op.qudit2, i)
@@ -553,9 +553,9 @@ end
     end
     nothing
 end
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::TriplePauli)
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::TriplePauli)
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     _zero_gen!(stab, i)
     _xset!(stab, mod(op.x1, d), op.qudit1, i)
     _xset!(stab, mod(op.x2, d), op.qudit2, i)
@@ -568,9 +568,9 @@ end
     end
     nothing
 end
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::NPauli{D}) where D
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::NPauli{D}) where D
     d = tab.d
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     _zero_gen!(stab, i)
     @inbounds for k in 1:D
         _xset!(stab, mod(op.xs[k], d), op.qudits[k], i)
@@ -583,15 +583,16 @@ end
     end
     nothing
 end
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::AbstractVector{<:Integer})
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::AbstractVector{<:Integer})
     n = tab.n
     d = tab.d
     len_op = length(op)
     len_op == 2n || len_op == 2n + 1 || throw(ArgumentError(
         "Pauli vector has length $len_op, expected 2n = $(2n) or 2n + 1 = $(2n + 1)."))
 
-    xg = _xgen(_stab(tab), i)
-    zg = _zgen(_stab(tab), i)
+    stab = _stab(tab, L)
+    xg = _xgen(stab, i)
+    zg = _zgen(stab, i)
     E = eltype(xg)
     @turbo for q in 1:n
         xg[q] = E(mod(op[q], d))
@@ -607,11 +608,12 @@ end
     nothing
 end
 
-@inline function set_operator!(tab::AbstractTableau, i::Int, op::GeneralPauli)
+@inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::GeneralPauli)
     n = tab.n
     d = tab.d
-    xg = _xgen(_stab(tab), i)
-    zg = _zgen(_stab(tab), i)
+    stab = _stab(tab, L)
+    xg = _xgen(stab, i)
+    zg = _zgen(stab, i)
     _check_pauli_support(op, n)
 
     E = eltype(xg)

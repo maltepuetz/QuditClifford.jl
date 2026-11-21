@@ -226,7 +226,7 @@ end
             tab = mk(TT, tbl; state=:product, basis=:X)
             @test measure!(tab, op; outcome=0) == 0
             for i in 1:tab.m, j in 1:tab.m
-                @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, stabilizer_matrix(tab)[:, j]), tab.d) == 0
+                @test mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), i, stabilizer_matrix(tab)[:, j]), tab.d) == 0
             end
             @test stabilizer_matrix(tab) == stabilizer_matrix(ctrl)
             @test tab.m == ctrl.m
@@ -241,7 +241,7 @@ end
                     @test v == (i == j ? 1 : 0)
                 end
                 for j in 1:tab.m
-                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab), j, tab.d)
+                    @test tab.xdotz_cache[j] == QuditClifford.dot_xz_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), j, tab.d)
                 end
             end
         end
@@ -408,14 +408,14 @@ end
     for (TT, head) in ((StabilizerTableau, "Stabilizer"), (DestabilizerTableau, "Destabilizer")),
         (d, kw, E) in ((3, (;), UInt8), (257, (;), UInt16), (3, (; eltype=Int), Int))
 
-        text = sprint(show, TT(d, 2; state=:product, kw...))
+        text = sprint(show, TT(d, 2; state=:product, layout=:generator, kw...))
         @test startswith(text, "$head Tableau:\n" *
                                "    Qudit dimension:  d = $d\n" *
                                "    Number of Qudits: n = 2\n" *
                                "    Generators:       m = 2\n" *
                                "    Storage:          generator-major, $(string(E))\n" *
                                "    Tableau:\n")
-        large_text = sprint(show, TT(d, 30; kw...))
+        large_text = sprint(show, TT(d, 30; layout=:generator, kw...))
         @test occursin("    Generators:       m = 0\n" *
                        "    Storage:          generator-major, $(string(E))\n" *
                        "    Tableau is too large to display.", large_text)

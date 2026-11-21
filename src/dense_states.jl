@@ -105,7 +105,7 @@ function _check_budget(maxentries::Int)
 end
 
 # Cheap contract checks shared by all three conversions, in the order they run.
-function _check_convertible(tab::AbstractTableau, fname::String, needs_pure::Bool)
+function _check_convertible(tab::AbstractTableau, L::TableauLayout, fname::String, needs_pure::Bool)
     tab.storephase || throw(ArgumentError(
         "$fname needs a tableau with storephase=true: without stored phases the " *
         "tableau does not determine a state. Track phases from state preparation " *
@@ -121,7 +121,7 @@ function _check_convertible(tab::AbstractTableau, fname::String, needs_pure::Boo
             "$fname needs exact phase arithmetic, which Int supports at n = $n " *
             "qudits only for d <= $(max_safe_dimension(n)); got d = $d."))
     end
-    d == 2 && _check_qubit_hermitian(tab, fname)
+    d == 2 && _check_qubit_hermitian(tab, L, fname)
     return nothing
 end
 
@@ -129,8 +129,8 @@ end
 # otherwise P^2 = -I and the exponent sweep 0:1 does not walk a group. Checked
 # on the caller's original columns, so the reported index is theirs, and
 # computed locally rather than read from `xdotz_cache`.
-function _check_qubit_hermitian(tab::AbstractTableau, fname::String)
-    b, phase = _stab(tab), _phase(tab)
+function _check_qubit_hermitian(tab::AbstractTableau, L::TableauLayout, fname::String)
+    b, phase = _stab(tab, L), _phase(tab)
     for j in 1:tab.m
         xz = dot_xz_col(b, j, 2)
         mod(phase[j], 2) == xz && continue
@@ -203,7 +203,12 @@ StabilizerKet (d = 3, n = 100, 3 terms):
 """
 function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    _check_convertible(tab, "ket", true)
+    return _ket(tab, _layout_marker(tab), maxentries)
+end
+
+# `ket` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _ket(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
+    _check_convertible(tab, L, "ket", true)
     n, d = tab.n, tab.d
     # n + 1 cannot overflow: the tableau already holds (2n + 1) × n entries.
     per_term = n + 1
@@ -211,7 +216,7 @@ function ket(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     # which are not exercised on empty ranges.
     n == 0 && return StabilizerKet(_TrustedKet(), d, 0, zeros(Int, 0, 1), [0])
 
-    G, Gphase, k, cstar = _prepare_support(tab)
+    G, Gphase, k, cstar = _prepare_support(tab, L)
     limit = maxentries ÷ per_term
     T = limit == 0 ? -1 : _bounded_pow(d, k, limit)
     T < 0 && throw(_size_error("ket", "($n+1)·$d^$k", maxentries))
@@ -322,14 +327,19 @@ true
 """
 function state_vector(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    _check_convertible(tab, "state_vector", true)
+    return _state_vector(tab, _layout_marker(tab), maxentries)
+end
+
+# `state_vector` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _state_vector(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
+    _check_convertible(tab, L, "state_vector", true)
     n, d = tab.n, tab.d
     D = _bounded_pow(d, n, maxentries)
     D < 0 && throw(_size_error("state_vector", "$d^$n", maxentries))
     _check_bytes(D, sizeof(ComplexF64), "state_vector")
     n == 0 && return ComplexF64[1]
 
-    G, Gphase, k, cstar = _prepare_support(tab)
+    G, Gphase, k, cstar = _prepare_support(tab, L)
     psi = zeros(ComplexF64, D)
     strides = _kron_strides(d, n)
     amp = 1 / sqrt(Float64(_bounded_pow(d, k, D)))   # d^k <= d^n = D
@@ -413,7 +423,12 @@ julia> real(density_matrix(tab))   # (|00⟩ + |11⟩)(⟨00| + ⟨11|) / 2
 """
 function density_matrix(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIES)
     _check_budget(maxentries)
-    _check_convertible(tab, "density_matrix", false)
+    return _density_matrix(tab, _layout_marker(tab), maxentries)
+end
+
+# `density_matrix` of a tableau with layout marker `L`, for a checked `maxentries`.
+function _density_matrix(tab::AbstractTableau, L::TableauLayout, maxentries::Int)
+    _check_convertible(tab, L, "density_matrix", false)
     n, d, m = tab.n, tab.d, tab.m
     D = _bounded_pow(d, n, maxentries)
     # D * D is formed only after D <= maxentries ÷ D, so it cannot overflow.
@@ -435,7 +450,7 @@ function density_matrix(tab::AbstractTableau; maxentries::Int=DEFAULT_MAX_ENTRIE
     xz = zeros(Int, 2n)
     u = zeros(Int, m)
     invD = 1 / D
-    _walk_group(_stab(tab), _phase(tab), m, d, xz, u) do xz, a
+    _walk_group(_stab(tab, L), _phase(tab), m, d, xz, u) do xz, a
         _add_pauli!(rho, xz, a, n, d, p, s, strides, c, r, invD)
     end
     return rho

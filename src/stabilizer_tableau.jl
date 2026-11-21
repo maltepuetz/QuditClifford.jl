@@ -1,7 +1,7 @@
 """
-    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type)
+    StabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type, layout::Symbol=:generator)
     StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type)
+    StabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type, layout::Symbol=:generator)
 
 Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (mixed-state stabilizer formalism).
 
@@ -36,6 +36,12 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
   narrow for `d`, throws an `ArgumentError`. The choice affects memory and
   speed only: every result, and every matrix the tableau returns, is the same
   `Int` value in each element type. Phases are always stored as `Int`.
+- `layout::Symbol=:generator`: Storage layout of the X and Z blocks:
+  `:generator` (generator `j` in column `j`) or `:qudit` (generator `j` in row
+  `j`); any other symbol throws an `ArgumentError`. It affects speed only and
+  is independent of the orientation of a raw `tableau` matrix, which is
+  inferred from its shape either way. See [`qudit_major!`](@ref),
+  [`generator_major!`](@ref) and [`tableau_layout`](@ref).
 
 # Examples
 ```jldoctest
@@ -84,16 +90,18 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{E}            # n×n X exponents, generator j in column j (see _padded_block)
-    stab_z::_BlockMatrix{E}            # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{E}            # n×n X exponents, one generator per column or row (see layout, _padded_block)
+    stab_z::_BlockMatrix{E}            # n×n Z exponents, laid out as stab_x
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
+    layout::Union{GeneratorMajor, QuditMajor}  # GeneratorMajor: generator j in column j; QuditMajor: in row j
     inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
     generator_workspace::Vector{Int}   # length 2n + storephase
     pivot_workspace::Vector{E}         # length 2n, [x; z] of a measure!/dephase! pivot (no phase)
+    coeff_workspace::Matrix{E}         # n×3, per-generator coefficients of apply! (phase and cache deltas) and the measure! random branch
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
@@ -109,17 +117,25 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractT
     bit_workspace::Matrix{UInt64}      # (cld(2n, 64) + 2)×n for d = 2, else 0×0
 end
 
+# The layout a constructor uses when no `layout` keyword is given. Always
+# `:generator` for users; the test suite sets it to run every test file in
+# either layout (`QC_TEST_LAYOUT`).
+const _DEFAULT_LAYOUT = Ref(:generator)
+
 Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
     state::Symbol=:mixed,
     basis=:Z,
     storephase::Bool=true,
     inversemod::T=PrecomputedInvMod(d),
     eltype::Type{E}=_default_eltype(d),
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
+    _check_layout(layout)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
-    return _build_stabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod; preset=true)
+    tab = _build_stabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod; preset=true)
+    return _apply_layout!(tab, layout)
 end
 
 StabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = StabilizerTableau(d, n; state=state, kwargs...)
@@ -130,20 +146,23 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     inversemod::T=PrecomputedInvMod(d),
     check::Bool=true,
     eltype::Type{E}=_default_eltype(d),
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
+    _check_layout(layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
-    layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
-    layout === nothing && throw(ArgumentError(
+    shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
+    shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
 
     # The build step copies the generators into the tableau's own arrays and
     # never writes to its input.
-    tab_in = layout.transpose ? permutedims(tableau) : tableau
+    tab_in = shape.transpose ? permutedims(tableau) : tableau
 
-    return _build_stabilizer_tableau(eltype, d, layout.n, layout.m, tab_in, layout.storephase,
-                                     inversemod; check=check)
+    tab = _build_stabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
+                                    inversemod; check=check)
+    return _apply_layout!(tab, layout)
 end
 
 function _build_stabilizer_tableau(
@@ -173,9 +192,11 @@ function _build_stabilizer_tableau(
         phase,
         storephase,
         false,
+        GeneratorMajor(),
         inversemod,
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(E, 2n),
+        zeros(E, n, 3),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
@@ -188,7 +209,7 @@ function _build_stabilizer_tableau(
     # A preset filler satisfies the generator contract by definition, so the
     # (d, n) path never pays for the check. Validating the built tableau rather
     # than the raw matrix lets the check borrow the rank workspaces.
-    check && !preset && _validate_generators!(out)
+    check && !preset && _validate_generators!(out, _layout_marker(out))
 
     return out
 end
@@ -304,7 +325,11 @@ state. See also [`StabilizerTableau`](@ref).
 """
 function reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
-    m = _preset_tableau!(_stab(tab), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+    return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
+end
+
+function _reset_preset!(tab::StabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec)
+    m = _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
     return tab
@@ -321,7 +346,7 @@ end
 An independent tableau holding the same state in the same generator basis.
 
 The copy has the same type (so the same storage element type), `d`, `n`, `m`,
-`storephase` and `iscanonical`, and equal generator columns, phases and (for a
+`storephase`, `iscanonical` and storage layout, and equal generators, phases and (for a
 [`DestabilizerTableau`](@ref)) destabilizers, so it continues exactly where
 `tab` stands. It shares no arrays with `tab`: measuring or applying gates to
 one leaves the other unchanged. The inversion strategy, which is never mutated,
@@ -355,9 +380,11 @@ function Base.copy(tab::StabilizerTableau{IM, E}) where {IM, E}
         copy(tab.phase),
         tab.storephase,
         tab.iscanonical,
+        tab.layout,
         tab.inversemod,
         zero(tab.generator_workspace),
         zero(tab.pivot_workspace),
+        zero(tab.coeff_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),
@@ -375,9 +402,12 @@ end
 Overwrite `dst` with the state and generator basis of `src`, in place and
 without allocating, and return `dst`.
 
-Afterwards `dst` matches `copy(src)` in everything but identity: same `m`, `iscanonical`, generator columns, phases and
-(for a [`DestabilizerTableau`](@ref)) destabilizers. `dst` keeps its own arrays,
-inversion strategy and workspaces. Both tableaux must be of the same kind.
+Afterwards `dst` matches `copy(src)` in everything but identity: same `m`,
+`iscanonical`, generators, phases, (for a [`DestabilizerTableau`](@ref))
+destabilizers and storage layout. `dst` takes the layout of `src` (see
+[`tableau_layout`](@ref)) whatever its own was, still without allocating; it
+keeps its own arrays, inversion strategy and workspaces. Both tableaux must be
+of the same kind.
 
 # Throws
 `ArgumentError` unless `dst` and `src` have the same `d`, `n`, `storephase`
@@ -409,6 +439,7 @@ function Base.copy!(dst::StabilizerTableau, src::StabilizerTableau)
     copyto!(dst.xdotz_cache, src.xdotz_cache)
     dst.m = src.m
     dst.iscanonical = src.iscanonical
+    dst.layout = src.layout
     return dst
 end
 
@@ -471,14 +502,14 @@ function _preset_tableau(::Type{E}, d::Int, n::Int, state::Symbol, basis_spec, s
     return b, phase, m
 end
 
-function _preset_tableau!(b::_GMBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
+function _preset_tableau!(b::XZBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     _zero!(b)
     _zero!(phase)
     return _fill_preset!(b, phase, d, n, state, basis_spec, storephase)
 end
 
 # Write the preset state into zeroed storage and return the number of active generators.
-function _fill_preset!(b::_GMBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
+function _fill_preset!(b::XZBlock, phase::Vector{Int}, d::Int, n::Int, state::Symbol, basis_spec, storephase::Bool)
     if state === :mixed
         return 0
     elseif state === :product
@@ -494,7 +525,7 @@ end
 
 # Write the single-qudit eigenstate generator of `basis` on qudit `site` into
 # generator `col`. The generator must be zero beforehand.
-@inline function _set_site_column!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, col::Int, site::Int, basis::Symbol, storephase::Bool)
+@inline function _set_site_column!(b::XZBlock, phase::AbstractVector{Int}, d::Int, col::Int, site::Int, basis::Symbol, storephase::Bool)
     if basis === :X
         _xset!(b, 1, site, col)
     elseif basis === :Z
@@ -510,11 +541,11 @@ end
     return nothing
 end
 
-@inline function _set_product_column!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, col::Int, basis::Symbol, storephase::Bool)
+@inline function _set_product_column!(b::XZBlock, phase::AbstractVector{Int}, d::Int, col::Int, basis::Symbol, storephase::Bool)
     return _set_site_column!(b, phase, d, col, col, basis, storephase)
 end
 
-function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis::Symbol, storephase::Bool)
+function _fill_product_state!(b::XZBlock, phase::AbstractVector{Int}, d::Int, basis::Symbol, storephase::Bool)
     s = _canonical_basis_symbol(basis)
 
     @inbounds for j in 1:_nq(b)
@@ -523,7 +554,7 @@ function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, b
     return nothing
 end
 
-function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis_vec::AbstractVector{<:Symbol}, storephase::Bool)
+function _fill_product_state!(b::XZBlock, phase::AbstractVector{Int}, d::Int, basis_vec::AbstractVector{<:Symbol}, storephase::Bool)
     n = _nq(b)
     length(basis_vec) == n || throw(ArgumentError("basis must have length n=$n."))
 
@@ -534,7 +565,7 @@ function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, b
     return nothing
 end
 
-function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis_tuple::Tuple, storephase::Bool)
+function _fill_product_state!(b::XZBlock, phase::AbstractVector{Int}, d::Int, basis_tuple::Tuple, storephase::Bool)
     n = _nq(b)
     length(basis_tuple) == n || throw(ArgumentError("basis must have length n=$n."))
 
@@ -547,11 +578,11 @@ function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, b
     return nothing
 end
 
-function _fill_product_state!(b::_GMBlock, phase::AbstractVector{Int}, d::Int, basis, storephase::Bool)
+function _fill_product_state!(b::XZBlock, phase::AbstractVector{Int}, d::Int, basis, storephase::Bool)
     throw(ArgumentError("basis must be a Symbol or a vector/tuple of Symbols."))
 end
 
-function _fill_ghz_state!(b::_GMBlock, d::Int)
+function _fill_ghz_state!(b::XZBlock, d::Int)
     n = _nq(b)
     n == 0 && return nothing
 
@@ -583,7 +614,7 @@ function Base.show(io::IO, tab::StabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
-    println(io, "    Storage:          generator-major, ", _storage_eltype(tab))
+    println(io, "    Storage:          ", _layout_name(tab), ", ", _storage_eltype(tab))
     # println(io, "    Mixed state:      ", is_mixed(tab))
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
@@ -599,7 +630,13 @@ function Base.show(io::IO, tab::StabilizerTableau)
         return
     end
 
-    N = ndigits(_max_abs_entry(_stab(tab), _phase(tab), tab.m)) - 1
+    _show_generators(io, tab, _layout_marker(tab))
+end
+
+# The generator rows of `show` for a tableau with `m ≥ 1` and layout marker `L`.
+function _show_generators(io::IO, tab::StabilizerTableau, L::TableauLayout)
+    stab = _stab(tab, L)
+    N = ndigits(_max_abs_entry(stab, _phase(tab), tab.m)) - 1
     extraspace = 0
     isodd(N) && isodd(tab.n) && (extraspace += 1)
     dash_len = max(0, tab.n * (N + 2) ÷ 2 - 2 + extraspace)
@@ -615,21 +652,25 @@ function Base.show(io::IO, tab::StabilizerTableau)
     println(io)
 
     for col in 1:tab.m
-        _print_generator_row(io, _stab(tab), _phase(tab), col, N + 2)
+        _print_generator_row(io, stab, _phase(tab), col, N + 2)
     end
+    return nothing
 end
 
 # The largest absolute entry of generators `1:m` of `b` and of `phase[1:m]`
 # (`phase` may be empty), for the column width of `show`. Needs `m ≥ 1`.
-function _max_abs_entry(b::_GMBlock, phase::AbstractVector{Int}, m::Int)
-    v = Int(max(maximum(abs, view(b.x, :, 1:m)), maximum(abs, view(b.z, :, 1:m))))
+function _max_abs_entry(b::XZBlock, phase::AbstractVector{Int}, m::Int)
+    v = 0
+    for j in 1:m, q in 1:_nq(b)
+        v = max(v, abs(_xget(b, q, j)), abs(_zget(b, q, j)))
+    end
     isempty(phase) || (v = max(v, maximum(abs, view(phase, 1:m))))
     return v
 end
 
 # Generator `col` as one display line: the X exponents, ` |`, the Z exponents,
 # and ` |` and the phase exponent when `phase` is nonempty, each padded to `width`.
-function _print_generator_row(io::IO, b::_GMBlock, phase::AbstractVector{Int}, col::Int, width::Int)
+function _print_generator_row(io::IO, b::XZBlock, phase::AbstractVector{Int}, col::Int, width::Int)
     print(io, "    ")
     for q in 1:_nq(b)
         print(io, lpad(_xget(b, q, col), width))

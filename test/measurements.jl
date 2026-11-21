@@ -461,7 +461,7 @@ end
             end
 
             xz = rand(rng, 0:(d - 1), 2n)
-            while all(i -> mod(QuditClifford.commutation_col(QuditClifford._stab(tab), i, xz), d) == 0, 1:n)
+            while all(i -> mod(QuditClifford.commutation_col(QuditClifford._stab(tab, QuditClifford._layout_marker(tab)), i, xz), d) == 0, 1:n)
                 xz = rand(rng, 0:(d - 1), 2n)
             end
             @test expect_int!(tab, GeneralPauli(xz, 0)) == -1

@@ -86,5 +86,66 @@ end
     return (M, s)
 end
 
-# `x mod d` for `0 <= x <= X` under a constant from `clifford_barrett`.
-@inline _barrett_reduce(x::Int, d::Int, M::Int, s::Int) = x - ((x * M) >> s) * d
+# The lane of the qudit-major gate kernel for a support of `S` coordinates at
+# dimension `d`, as `(bytes, M, s, wide)`: `bytes` is the `sizeof` of the lane
+# type `T`, or 0 when there is no lane; `(M, s)` is its Barrett constant as an
+# `Int64`, derived in `widen(T)` when `wide` and in `T` otherwise. Every
+# unreduced value the kernel forms is at most `X = 2S·d·(d-1)` (each site
+# states its bound), and every entry is below `d <= X`.
+#
+# `Int16` and `Int32` lanes are chosen by that value bound: `T` is the narrowest
+# with `X <= typemax(T)` that has a constant. Its own constant,
+# `_clifford_barrett(T, S, d)`, is preferred; it exists only for small `d`.
+# Otherwise the reduction forms only the product `x * M` in `widen(T)`, under
+# `(M, s) = _clifford_barrett(widen(T), S, d)`, whose derivation makes `x * M`
+# fit `widen(T)` and the quotient exact for every `0 <= x <= X`; the quotient
+# is at most `x ÷ d`, so it and `x - q·d` fit `T`. Measured per two-qudit gate
+# (Stab, `UInt8`, n = 2048, M3 Pro), the widened product cost 1.37x at d = 3
+# (1842 ns against 1345 ns with Int16's own constant) and 2.0x in the Int32 lane
+# at d = 71, 101, 109 (about 4660 ns against 2310 ns), while the widened Int16
+# lane beat the Int32 lane with its own constant 1.24x at d = 5-61 (about 1960
+# ns against 2430 ns) and the widened Int32 lane beat the scalar Int64 lane
+# 3.3-3.5x at d = 67, 97, 251 (about 4800 ns against 16500 ns). An `Int64` lane
+# reduces in `Int64` itself, under `_clifford_barrett(Int64, S, d)`. Each test
+# falls through to the next when its constant is missing (acceptance is not
+# monotonic in `d`). The lanes are named explicitly, never `Int`, so a 32-bit
+# host chooses the same lane as a 64-bit one.
+@inline function _clifford_lane(S::Int, d::Int)
+    if _lane_holds(Int16, S, d)
+        M, s = _clifford_barrett(Int16, S, d)
+        M != 0 && return (2, Int64(M), s, false)
+        M, s = _clifford_barrett(Int32, S, d)
+        M != 0 && return (2, Int64(M), s, true)
+    end
+    if _lane_holds(Int32, S, d)
+        M, s = _clifford_barrett(Int32, S, d)
+        M != 0 && return (4, Int64(M), s, false)
+        M, s = _clifford_barrett(Int64, S, d)
+        M != 0 && return (4, M, s, true)
+    end
+    M, s = _clifford_barrett(Int64, S, d)
+    M != 0 && return (8, M, s, false)
+    return (0, Int64(0), 0, false)
+end
+
+@inline _clifford_lane_bytes(S::Int, d::Int) = _clifford_lane(S, d)[1]
+
+# `X = 2S·d·(d-1) <= typemax(T)` for `T ∈ (Int16, Int32)`. With `S` and `d`
+# at most `typemax(T) < 2^31`, `X < 2^94` is formed in `Int128` without
+# overflow on any host.
+@inline function _lane_holds(::Type{T}, S::Int, d::Int) where {T<:Union{Int16,Int32}}
+    (1 <= S <= typemax(T) && 2 <= d <= typemax(T)) || return false
+    return Int128(2S) * d * (d - 1) <= typemax(T)
+end
+
+# `x mod d` for `0 <= x <= X` under a constant `(M, s)` from
+# `_clifford_barrett(W, S, d)`, with `x` and `d` in a lane type `T` no wider
+# than `W`: `x * M < 2^(W-2)` is formed in `W` and the quotient is exact, so
+# it and the result fit `T`. With `W = T = Int` this is the reduction of the
+# tuple kernels. `1 <= s <= W-3`, so masking the shift to `W-1` changes
+# nothing; it lets the shift compile without the range test of `>>`, which
+# keeps the SIMD loops lean.
+@inline function _barrett_reduce(x::T, d::T, M::W, s::Int) where {T<:Signed,W<:Signed}
+    q = ((x % W) * M) >> ((s % UInt) & UInt(8 * sizeof(W) - 1))
+    return x - (q % T) * d
+end

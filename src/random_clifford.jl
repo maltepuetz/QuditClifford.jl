@@ -403,9 +403,16 @@ function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
             α[j] = d == 2 ? β[j] + 2 * _draw(rng, 2) : _draw(rng, d)
         end
     end
-    # Commit. Stabilizer j is the Z image G[:, n + j] and its dual the X image
-    # G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without any repair pass.
-    stab = _stab(tab)
+    return _commit_random_state!(tab, _layout_marker(tab), G, m, α, β)
+end
+
+# Write the sampled state into `tab`: stabilizer j is the Z image G[:, n + j]
+# and its dual the X image G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without
+# any repair pass. `α[j]` is stabilizer j's phase and `β[j]` its x·z.
+function _commit_random_state!(tab::AbstractTableau, L::TableauLayout, G::Matrix{Int}, m::Int,
+                               α::Vector{Int}, β::Vector{Int})
+    n = tab.n
+    stab = _stab(tab, L)
     phase = _phase(tab)
     _zero!(stab)
     fill!(phase, 0)
@@ -416,7 +423,7 @@ function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
         end
         tab.storephase && (phase[j] = α[j])
     end
-    _write_random_duals!(tab, G, m, β)
+    _write_random_duals!(tab, L, G, m, β)
     tab.m = m
     tab.iscanonical = false
     return tab
@@ -426,13 +433,13 @@ random_state!(tab::AbstractTableau; m::Int = tab.n) =
     random_state!(Random.default_rng(), tab; m = m)
 
 # Dual-basis bookkeeping for `random_state!`: nothing for a plain tableau.
-_write_random_duals!(::AbstractTableau, G::Matrix{Int}, m::Int, D::Vector{Int}) = nothing
+_write_random_duals!(::AbstractTableau, ::TableauLayout, G::Matrix{Int}, m::Int, D::Vector{Int}) = nothing
 
 # The first m X images become the destabilizers, and D[1:m] the stabilizers'
 # x·z values; the unused columns and cache entries are zeroed.
-function _write_random_duals!(tab::DestabilizerTableau, G::Matrix{Int}, m::Int,
+function _write_random_duals!(tab::DestabilizerTableau, L::TableauLayout, G::Matrix{Int}, m::Int,
                               D::Vector{Int})
-    destab = _destab(tab)
+    destab = _destab(tab, L)
     cache = tab.xdotz_cache
     _zero!(destab)
     fill!(cache, 0)

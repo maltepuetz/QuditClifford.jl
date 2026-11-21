@@ -475,11 +475,13 @@ function stored_apply_allocations(tab, U)
 end
 
 @testset "Stored apply! is allocation-free after warm-up" begin
-    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5),
-        storephase in (false, true), E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int))
-        tab = TT(d, 12; state = :ghz, storephase = storephase, eltype = E)
-        for g in (Fourier(1), Phase(1), SUM(1, 12), CPhase(1, 12), SWAP(1, 12))
-            U = CliffordOperator(g, d)
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 67, 101, 23189),
+        storephase in (false, true), E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
+        tab = TT(d, 12; state = :ghz, storephase = storephase, eltype = E, layout = layout)
+        for g in (Fourier(1), Phase(1), SUM(1, 12), CPhase(1, 12), SWAP(1, 12),
+                  random_clifford(Xoshiro(d), d, [1, 5, 12]))
+            U = g isa CliffordOperator ? g : CliffordOperator(g, d)
             stored_apply_allocations(tab, U)
             @test stored_apply_allocations(tab, U) == 0
         end

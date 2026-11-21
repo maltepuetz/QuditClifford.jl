@@ -43,7 +43,7 @@ function cmref_after_append!(tab::DestabilizerTableau, newcol::Int, res::Abstrac
         D[1:(2n), j] .= mod.(D[1:(2n), j] .- t .* D[1:(2n), newcol], d)
     end
     QuditClifford._load_destabilizer_matrix!(tab, D)
-    tab.xdotz_cache[newcol] = CM.dot_xz_col(CM._stab(tab), newcol, d)
+    tab.xdotz_cache[newcol] = CM.dot_xz_col(CM._stab(tab, CM._layout_marker(tab)), newcol, d)
     return nothing
 end
 
@@ -57,11 +57,11 @@ function cmref_commuting!(rng, tab, op; outcome = nothing, phase_policy = 0)
     kop = tab.storephase ? CM._effective_measurement_phase(op, d, phase_policy) : op.phase
     kop = mod(kop, CM.phase_modulus(d))
     tab.m == n && !tab.storephase && return 0
-    in_span = CM.in_span_and_coeffs!(tab, op)
+    in_span = CM.in_span_and_coeffs!(tab, CM._layout_marker(tab), op)
     res = tab.res_workspace
     if in_span
         tab.storephase || return 0
-        kacc = CM.phase_exponent_from_coeffs!(tab)
+        kacc = CM.phase_exponent_from_coeffs!(tab, CM._layout_marker(tab))
         if d == 2
             k = mod(-kacc + kop, 4)
             isodd(k) && throw(ArgumentError(
@@ -77,7 +77,7 @@ function cmref_commuting!(rng, tab, op; outcome = nothing, phase_policy = 0)
     t = CM._random_outcome(rng, outcome, d)
     newcol = m + 1
     tab.m = newcol
-    CM.set_operator!(tab, newcol, op)
+    CM.set_operator!(tab, CM._layout_marker(tab), newcol, op)
     if tab.storephase
         S = stabilizer_matrix(tab)
         S[2n+1, newcol] = CM._measured_generator_phase(t, kop, d)
@@ -199,7 +199,7 @@ function cmref_fuzz(TT, d, n, flavor, storephase, nsteps, seed)
         op = cmref_op(rng, tab)
         policy = rand(rng, 0:2)
         out = rand(rng) < 0.5 ? nothing : rand(rng, 0:(d - 1))
-        if !CM._commutes_with_generators(tab, op)
+        if !CM._commutes_with_generators(tab, CM._layout_marker(tab), op)
             # The random branch only moves the state along; test/measurement_kernel.jl
             # checks it.
             measure!(rng, tab, op; phase_policy = 1)
@@ -291,11 +291,11 @@ end
                 xz .= mod.(xz .+ rand(rng, 0:(d - 1)) .* stabilizer_matrix(D)[1:(2n), j], d)
             end
             op = GeneralPauli(xz, 0)
-            CM.coeffs_from_generators!(D, op)
+            CM.coeffs_from_generators!(D, CM._layout_marker(D), op)
             stab_before = copy(stabilizer_matrix(S))
-            CM._span_coeffs_keep_basis!(S, op)
+            CM._span_coeffs_keep_basis!(S, CM._layout_marker(S), op)
             @test S.c_workspace[1:m] == D.c_workspace[1:m]
-            @test CM._in_span_from_coeffs!(S, op)
+            @test CM._in_span_from_coeffs!(S, CM._layout_marker(S), op)
             @test stabilizer_matrix(S) == stab_before
             @test !S.iscanonical
         end
@@ -311,9 +311,9 @@ end
         random_state!(rng, D)
         S = StabilizerTableau(2, copy(stabilizer_matrix(D)); m = n, check = false)
         xz = mod.(stabilizer_matrix(D)[1:(2n), :] * rand(rng, 0:1, n), 2)
-        CM.coeffs_from_generators!(D, GeneralPauli(xz, 0))
+        CM.coeffs_from_generators!(D, CM._layout_marker(D), GeneralPauli(xz, 0))
         for T in (Int32, Int64)
-            CM._copy_generator_rows!(S.bit_workspace, CM._stab(S), n)
+            CM._copy_generator_rows!(S.bit_workspace, CM._stab(S, CM._layout_marker(S)), n)
             c = zeros(Int, n)
             rank = CM._solve_generator_rows!(S.bit_workspace, copy(xz), zeros(Int, n), c,
                                              zeros(T, 2n), n, n)
@@ -340,9 +340,9 @@ end
         S = StabilizerTableau(d, raw; m = n, check = false)
         S.iscanonical = false
         op = SinglePauli(1, 0, 1)
-        CM._span_coeffs_keep_basis!(S, op)
+        CM._span_coeffs_keep_basis!(S, CM._layout_marker(S), op)
         @test S.c_workspace[1:n] == [1, 0, 0, 0, 0, 0]
-        @test CM._in_span_from_coeffs!(S, op)
+        @test CM._in_span_from_coeffs!(S, CM._layout_marker(S), op)
     end
 end
 
@@ -357,7 +357,7 @@ end
             m < 0 && continue
             S.m = m
             ws = ws_of(S)
-            CM._copy_generator_rows!(ws, CM._stab(S), m)
+            CM._copy_generator_rows!(ws, CM._stab(S, CM._layout_marker(S)), m)
             h = size(ws, 1) >> 1
             for q in 1:n, j in 1:m
                 if d == 2
@@ -406,8 +406,8 @@ end
         M = StabilizerTableau(d, stabilizer_matrix(S)[:, 1:5]; m = 5, check = false)
         M.iscanonical = false
         old = copy(stabilizer_matrix(M))
-        target = findfirst(q -> CM._commutes_with_generators(M, SinglePauli(q, 0, 1)) &&
-                                !CM.in_span_and_coeffs!(copy(M), SinglePauli(q, 0, 1)), 1:n)
+        target = findfirst(q -> CM._commutes_with_generators(M, CM._layout_marker(M), SinglePauli(q, 0, 1)) &&
+                                !CM.in_span_and_coeffs!(copy(M), CM._layout_marker(M), SinglePauli(q, 0, 1)), 1:n)
         @test target !== nothing
         measure!(M, SinglePauli(target, 0, 1); outcome = 0)
         @test M.m == 6

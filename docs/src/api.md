@@ -20,6 +20,9 @@ canonicalize!
 is_pure
 stabilizer_matrix
 destabilizer_matrix
+qudit_major!
+generator_major!
+tableau_layout
 Base.copy(::StabilizerTableau)
 Base.copy!(::StabilizerTableau, ::StabilizerTableau)
 Base.:(==)(::AbstractTableau, ::AbstractTableau)

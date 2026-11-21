@@ -1,7 +1,7 @@
 """
-    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type)
+    DestabilizerTableau(d::Int, n::Int; state::Symbol=:mixed, basis=:Z, storephase::Bool=true, inversemod::InverseMod=PrecomputedInvMod(d), eltype::Type, layout::Symbol=:generator)
     DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...)
-    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type)
+    DestabilizerTableau(d::Int, tableau::AbstractMatrix{<:Integer}; m::Union{Int,Nothing}=nothing, storephase::Union{Bool,Nothing}=nothing, inversemod::InverseMod=PrecomputedInvMod(d), check::Bool=true, eltype::Type, layout::Symbol=:generator)
 
 Construct a destabilizer tableau for an `n`-qudit *stabilizer density operator*
 (mixed-state stabilizer formalism).
@@ -52,6 +52,13 @@ without first canonicalizing the stabilizer generators.
   `ArgumentError`. The choice affects memory and speed only:
   every result, and every matrix the tableau returns, is the same `Int` value
   in each element type. Phases are always stored as `Int`.
+- `layout::Symbol=:generator`: Storage layout of the X and Z blocks of the
+  stabilizers and destabilizers: `:generator` (generator `j` in column `j`) or
+  `:qudit` (generator `j` in row `j`); any other symbol throws an
+  `ArgumentError`. It affects speed only and is independent of the orientation
+  of a raw `tableau` matrix, which is inferred from its shape either way. See
+  [`qudit_major!`](@ref), [`generator_major!`](@ref) and
+  [`tableau_layout`](@ref).
 
 # Examples
 ```jldoctest
@@ -108,18 +115,20 @@ mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: Abstrac
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{E}            # n×n X exponents, generator j in column j (see _padded_block)
-    stab_z::_BlockMatrix{E}            # n×n Z exponents, generator j in column j
+    stab_x::_BlockMatrix{E}            # n×n X exponents, one generator per column or row (see layout, _padded_block)
+    stab_z::_BlockMatrix{E}            # n×n Z exponents, laid out as stab_x
     phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
-    destab_x::_BlockMatrix{E}          # n×n X exponents of the destabilizers (no phases)
-    destab_z::_BlockMatrix{E}          # n×n Z exponents of the destabilizers
+    destab_x::_BlockMatrix{E}          # n×n X exponents of the destabilizers (no phases), laid out as stab_x
+    destab_z::_BlockMatrix{E}          # n×n Z exponents of the destabilizers, laid out as stab_x
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
+    layout::Union{GeneratorMajor, QuditMajor}  # GeneratorMajor: generator j in column j; QuditMajor: in row j
     inversemod::IM                     # inverse mod function for dimension d
 
     # workspaces
     generator_workspace::Vector{Int}   # length 2n + storephase
     pivot_workspace::Vector{E}         # length 2n, [x; z] of a pivot or new destabilizer (no phase)
+    coeff_workspace::Matrix{E}         # n×3, per-generator coefficients of apply! (phase and cache deltas) and the measure! random branch
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
@@ -144,12 +153,15 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
     storephase::Bool=true,
     inversemod::T=PrecomputedInvMod(d),
     eltype::Type{E}=_default_eltype(d),
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
+    _check_layout(layout)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
-    return _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
-                                       preset_state=state_norm, preset_basis=basis_spec)
+    tab = _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
+                                      preset_state=state_norm, preset_basis=basis_spec)
+    return _apply_layout!(tab, layout)
 end
 
 DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = DestabilizerTableau(d, n; state=state, kwargs...)
@@ -160,20 +172,23 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     inversemod::T=PrecomputedInvMod(d),
     check::Bool=true,
     eltype::Type{E}=_default_eltype(d),
+    layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
+    _check_layout(layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
-    layout = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
-    layout === nothing && throw(ArgumentError(
+    shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
+    shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
 
     # The build step copies the generators into the tableau's own arrays and
     # never writes to its input.
-    tab_in = layout.transpose ? permutedims(tableau) : tableau
+    tab_in = shape.transpose ? permutedims(tableau) : tableau
 
-    return _build_destabilizer_tableau(eltype, d, layout.n, layout.m, tab_in, layout.storephase,
-                                       inversemod; check=check)
+    tab = _build_destabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
+                                      inversemod; check=check)
+    return _apply_layout!(tab, layout)
 end
 
 function _build_destabilizer_tableau(
@@ -205,9 +220,11 @@ function _build_destabilizer_tableau(
         _destab_blocks(E, n)...,
         storephase,
         false,
+        GeneratorMajor(),
         inversemod,
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(E, 2n),
+        zeros(E, n, 3),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
@@ -218,15 +235,22 @@ function _build_destabilizer_tableau(
         _bit_rank_workspace(d, n),
     )
 
+    return _init_destabilizers!(tab, _layout_marker(tab), preset_state, preset_basis, check)
+end
+
+# Fill the destabilizers and `xdotz_cache` of a new tableau: the closed-form
+# duals of a preset, or the duals of validated raw generators.
+function _init_destabilizers!(tab::DestabilizerTableau, L::TableauLayout,
+                              preset_state::Union{Symbol,Nothing}, preset_basis, check::Bool)
     if preset_state === nothing
         # Before the rebuild, not after: an invalid generator set would
         # otherwise produce a dual basis that cannot satisfy duality, and the
         # failure would surface somewhere far from its cause.
-        check && _validate_generators!(tab)
-        rebuild_destabilizers!(tab)
-        _recompute_xdotz_cache!(tab)
+        check && _validate_generators!(tab, L)
+        rebuild_destabilizers!(tab, L)
+        _recompute_xdotz_cache!(tab, L)
     else
-        _preset_destabilizers!(tab, preset_state, preset_basis)
+        _preset_destabilizers!(tab, L, preset_state, preset_basis)
     end
 
     return tab
@@ -351,12 +375,12 @@ function _inv_matrix_mod!(
     return invA
 end
 
-function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}) where {IM, E}
+function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}, L::TableauLayout) where {IM, E}
     n = tab.n
     m = tab.m
     d = tab.d
-    stab = _stab(tab)
-    destab = _destab(tab)
+    stab = _stab(tab, L)
+    destab = _destab(tab, L)
 
     _zero!(destab)
     m == 0 && return destab
@@ -432,10 +456,10 @@ chain (`:ghz`), so their duals can be written down:
 Each satisfies the duality relation `<D_j, S_k> = delta_jk` directly. `:mixed`
 has no active generators, so its dual block stays zero.
 """
-function _preset_destabilizers!(tab::DestabilizerTableau, state::Symbol, basis_spec)
+function _preset_destabilizers!(tab::DestabilizerTableau, L::TableauLayout, state::Symbol, basis_spec)
     n = tab.n
     d = tab.d
-    destab = _destab(tab)
+    destab = _destab(tab, L)
     cache = tab.xdotz_cache
 
     _zero!(destab)
@@ -475,12 +499,12 @@ end
 # Cache maintenance helpers #
 #############################
 
-@inline function _recompute_xdotz_cache!(tab::DestabilizerTableau)
+@inline function _recompute_xdotz_cache!(tab::DestabilizerTableau, L::TableauLayout)
     n = tab.n
     m = tab.m
     d = tab.d
     xdotz_cache = tab.xdotz_cache
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     @inbounds for j in 1:m
         xdotz_cache[j] = dot_xz_col(stab, j, d)
     end
@@ -490,8 +514,8 @@ end
     return nothing
 end
 
-@inline function _update_xdotz_cache!(tab::DestabilizerTableau, col::Int)
-    tab.xdotz_cache[col] = dot_xz_col(_stab(tab), col, tab.d)
+@inline function _update_xdotz_cache!(tab::DestabilizerTableau, L::TableauLayout, col::Int)
+    tab.xdotz_cache[col] = dot_xz_col(_stab(tab, L), col, tab.d)
     return nothing
 end
 
@@ -571,10 +595,14 @@ end
 
 function reset!(tab::DestabilizerTableau; state::Symbol=:mixed, basis=:Z)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
-    m = _preset_tableau!(_stab(tab), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+    return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
+end
+
+function _reset_preset!(tab::DestabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec)
+    m = _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
-    _preset_destabilizers!(tab, state_norm, basis_spec)
+    _preset_destabilizers!(tab, L, state_norm, basis_spec)
     return tab
 end
 
@@ -595,9 +623,11 @@ function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
         _copy_block(tab.destab_z),
         tab.storephase,
         tab.iscanonical,
+        tab.layout,
         tab.inversemod,
         zero(tab.generator_workspace),
         zero(tab.pivot_workspace),
+        zero(tab.coeff_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),
@@ -621,6 +651,7 @@ function Base.copy!(dst::DestabilizerTableau, src::DestabilizerTableau)
     copyto!(dst.xdotz_cache, src.xdotz_cache)
     dst.m = src.m
     dst.iscanonical = src.iscanonical
+    dst.layout = src.layout
     return dst
 end
 
@@ -630,7 +661,7 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
-    println(io, "    Storage:          generator-major, ", _storage_eltype(tab))
+    println(io, "    Storage:          ", _layout_name(tab), ", ", _storage_eltype(tab))
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
 
@@ -645,8 +676,15 @@ function Base.show(io::IO, tab::DestabilizerTableau)
         return
     end
 
-    maxstab = _max_abs_entry(_stab(tab), _phase(tab), tab.m)
-    maxdest = _max_abs_entry(_destab(tab), Int[], tab.m)
+    _show_generators(io, tab, _layout_marker(tab))
+end
+
+# The stabilizer and destabilizer rows of `show` for a tableau with `m ≥ 1` and
+# layout marker `L`.
+function _show_generators(io::IO, tab::DestabilizerTableau, L::TableauLayout)
+    stab, destab = _stab(tab, L), _destab(tab, L)
+    maxstab = _max_abs_entry(stab, _phase(tab), tab.m)
+    maxdest = _max_abs_entry(destab, Int[], tab.m)
     N = ndigits(max(maxstab, maxdest)) - 1
     extraspace = 0
     isodd(N) && isodd(tab.n) && (extraspace += 1)
@@ -667,7 +705,7 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "     Stabilizers:")
     println(io, "     ", header)
     for col in 1:tab.m
-        _print_generator_row(io, _stab(tab), _phase(tab), col, N + 2)
+        _print_generator_row(io, stab, _phase(tab), col, N + 2)
     end
 
     # Separator + Destabilizers
@@ -675,6 +713,7 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "     Destabilizers:")
     println(io, "     ", header)
     for col in 1:tab.m
-        _print_generator_row(io, _destab(tab), Int[], col, N + 2)
+        _print_generator_row(io, destab, Int[], col, N + 2)
     end
+    return nothing
 end

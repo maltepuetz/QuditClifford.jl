@@ -89,13 +89,45 @@ function _copy_sites!(
     return offset + 2N
 end
 
+# Qudit-major: site q's exponents over the generators are the contiguous
+# columns `b.x[:, q]` and `b.z[:, q]`. A transpose in tiles of 64 sites by 64
+# generators, sites outer: within a tile, 64 source columns are read as
+# 64-entry runs, and the workspace is written one generator column at a time.
+# Measured on an M3 Pro (UInt8, d = 3, half the sites, n = 1023-2049), this
+# took 0.75-0.8x the time of tiles of 8 sites by 64 generators with the
+# generators outer, and is still 5-12x slower than the generator-major copy.
+function _copy_sites!(
+    ws::AbstractMatrix{T},
+    b::_QMBlock,
+    m::Int,
+    sites::AbstractVector,
+    N::Int,
+    offset::Int,
+) where {T<:_StorageEltype}
+    X, Z = b.x, b.z
+    @inbounds for r0 in 1:64:N
+        r1 = min(r0 + 63, N)
+        for j0 in 1:64:m
+            j1 = min(j0 + 63, m)
+            for j in j0:j1
+                @simd for r in r0:r1
+                    q = sites[r]
+                    ws[offset + r, j] = X[j, q] % T
+                    ws[offset + N + r, j] = Z[j, q] % T
+                end
+            end
+        end
+    end
+    return offset + 2N
+end
+
 # On a bit-packed workspace, `offset` counts bits and is a multiple of 64. The
 # block takes rows offset+1:offset+2N as bits, packed as below, and the return
 # value is rounded up to the next multiple of 64, so that the next block
 # starts on a fresh word. The bits in between are zero.
 function _copy_sites!(
     ws::AbstractMatrix{UInt64},
-    b::_GMBlock,
+    b::XZBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
@@ -159,6 +191,40 @@ function _pack_sites_gf2!(
                        ((Z[q, j] % UInt64) << (2t - 1))
             end
             W[w, j] = acc
+        end
+    end
+    return nw
+end
+
+# Qudit-major: tiles of 64 generators by the 32 sites of one word. Within a
+# tile, each site's 64-entry runs of `b.x[:, q]` and `b.z[:, q]` are read in
+# order and OR-ed into the 64 words of the tile, which stay in L1. Measured on
+# an M3 Pro (d = 2, UInt8, n = 1024-2048, half the sites), this took 0.7x the
+# time of forming each word in a register from 32 sites, which reads 32
+# columns per generator.
+function _pack_sites_gf2!(
+    W::AbstractMatrix{UInt64},
+    b::_QMBlock,
+    m::Int,
+    sites::AbstractVector,
+    N::Int,
+)
+    nw = cld(2N, 64)
+    X, Z = b.x, b.z
+    @inbounds for j0 in 1:64:m
+        j1 = min(j0 + 63, m)
+        for w in 1:nw
+            k0 = 32 * (w - 1)
+            @simd for j in j0:j1
+                W[w, j] = zero(UInt64)
+            end
+            for t in 1:min(32, N - k0)
+                q = sites[k0 + t]
+                @simd for j in j0:j1
+                    W[w, j] |= ((X[j, q] % UInt64) << (2t - 2)) |
+                               ((Z[j, q] % UInt64) << (2t - 1))
+                end
+            end
         end
     end
     return nw

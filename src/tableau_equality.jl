@@ -14,8 +14,8 @@
 
 # Generator columns `1:m` of `a` and `b`, with phases `pa` and `pb` when
 # `storephase`, agree entry for entry.
-function _active_columns_equal(a::_GMBlock, pa::AbstractVector{Int},
-                               b::_GMBlock, pb::AbstractVector{Int},
+function _active_columns_equal(a::XZBlock, pa::AbstractVector{Int},
+                               b::XZBlock, pb::AbstractVector{Int},
                                m::Int, storephase::Bool)
     n = _nq(a)
     @inbounds for j in 1:m
@@ -32,13 +32,26 @@ function _active_columns_equal(a::_GMBlock, pa::AbstractVector{Int},
     return true
 end
 
+# The same comparison for two qudit-major blocks, walked in storage order: the
+# phases, then each site's column over generators `1:m`.
+function _active_columns_equal(a::_QMBlock, pa::AbstractVector{Int},
+                               b::_QMBlock, pb::AbstractVector{Int},
+                               m::Int, storephase::Bool)
+    if storephase
+        @inbounds for j in 1:m
+            pa[j] == pb[j] || return false
+        end
+    end
+    return _qm_generators_equal(a, b, m)
+end
+
 # The tableau's own block and phase when it is already canonical, otherwise
 # canonical copies. The scratch passed to `_canonicalize_tableau!` is fresh, so
 # the tableau's pivot table and x·z cache are left alone.
-function _canonical_stab(tab::AbstractTableau)
-    b, phase = _stab(tab), _phase(tab)
+function _canonical_stab(tab::AbstractTableau, L::TableauLayout)
+    b, phase = _stab(tab, L), _phase(tab)
     tab.iscanonical && return b, phase
-    S = XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
+    S = _generator_major_copy(b)
     Sphase = copy(phase)
     _canonicalize_tableau!(S, Sphase, tab.m, tab.d, tab.storephase, tab.inversemod,
                            zeros(Int, 2 * tab.n), zeros(Int, tab.n))
@@ -93,18 +106,24 @@ function Base.:(==)(a::AbstractTableau, b::AbstractTableau)
     a === b && return true
     (a.d == b.d && a.n == b.n && a.m == b.m && a.storephase == b.storephase) ||
         return false
+    return _tableaux_equal(a, _layout_marker(a), b, _layout_marker(b))
+end
+
+# `==` for tableaux of equal `d`, `n`, `m` and `storephase`, with `La` and `Lb`
+# the layout markers of `a` and `b`.
+function _tableaux_equal(a::AbstractTableau, La::TableauLayout, b::AbstractTableau, Lb::TableauLayout)
     m, storephase = a.m, a.storephase
-    _active_columns_equal(_stab(a), _phase(a), _stab(b), _phase(b), m, storephase) &&
+    _active_columns_equal(_stab(a, La), _phase(a), _stab(b, Lb), _phase(b), m, storephase) &&
         return true
     a.iscanonical && b.iscanonical && return false
-    ca, pa = _canonical_stab(a)
-    cb, pb = _canonical_stab(b)
+    ca, pa = _canonical_stab(a, La)
+    cb, pb = _canonical_stab(b, Lb)
     return _active_columns_equal(ca, pa, cb, pb, m, storephase)
 end
 
 # Mix the active generators `1:m` of `S` into `h`: per generator the X entries,
 # then the Z entries, then the phase when `storephase`.
-function _hash_active(h::UInt, S::_GMBlock, phase::AbstractVector{Int},
+function _hash_active(h::UInt, S::XZBlock, phase::AbstractVector{Int},
                       m::Int, storephase::Bool)
     n = _nq(S)
     @inbounds for j in 1:m
@@ -121,10 +140,14 @@ end
 
 function Base.hash(tab::AbstractTableau, h::UInt)
     h = hash(tab.storephase, hash(tab.m, hash(tab.n, hash(tab.d, hash(:AbstractTableau, h)))))
+    return _hash_tableau(tab, _layout_marker(tab), h)
+end
+
+function _hash_tableau(tab::AbstractTableau, L::TableauLayout, h::UInt)
     # A canonical tableau is hashed in place. Any other is hashed through a
     # canonical copy, which `_canonical_stab` returns with a different block
     # type, so returning here keeps this path free of allocation.
-    tab.iscanonical && return _hash_active(h, _stab(tab), _phase(tab), tab.m, tab.storephase)
-    S, phase = _canonical_stab(tab)
+    tab.iscanonical && return _hash_active(h, _stab(tab, L), _phase(tab), tab.m, tab.storephase)
+    S, phase = _canonical_stab(tab, L)
     return _hash_active(h, S, phase, tab.m, tab.storephase)
 end

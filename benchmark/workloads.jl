@@ -26,11 +26,20 @@ const READONLY_EVALS = 100
 # place.
 _wl_stab(tab) = isdefined(QuditClifford, :stabilizer_matrix) ? stabilizer_matrix(tab) : tab.stab
 _wl_destab(tab) = isdefined(QuditClifford, :destabilizer_matrix) ? destabilizer_matrix(tab) : tab.destab
+# A baseline without `_layout_marker` takes the block accessors and
+# `_commutes_with_generators` without a layout marker.
+_wl_stab_block(tab) = isdefined(QuditClifford, :_layout_marker) ?
+    QuditClifford._stab(tab, QuditClifford._layout_marker(tab)) : QuditClifford._stab(tab)
+_wl_destab_block(tab) = isdefined(QuditClifford, :_layout_marker) ?
+    QuditClifford._destab(tab, QuditClifford._layout_marker(tab)) : QuditClifford._destab(tab)
+_wl_commutes(tab, op) = isdefined(QuditClifford, :_layout_marker) ?
+    QuditClifford._commutes_with_generators(tab, QuditClifford._layout_marker(tab), op) :
+    QuditClifford._commutes_with_generators(tab, op)
 _wl_comm(tab, j, op) = isdefined(QuditClifford, :_stab) ?
-    QuditClifford.commutation_col(QuditClifford._stab(tab), j, op) :
+    QuditClifford.commutation_col(_wl_stab_block(tab), j, op) :
     QuditClifford.commutation_col(tab.stab, j, op)
 _wl_comm_destab(tab, j, op) = isdefined(QuditClifford, :_stab) ?
-    QuditClifford.commutation_col(QuditClifford._destab(tab), j, op) :
+    QuditClifford.commutation_col(_wl_destab_block(tab), j, op) :
     QuditClifford.commutation_col(tab.destab, j, op)
 _wl_load_stab!(tab, S) = isdefined(QuditClifford, :_load_stabilizer_matrix!) ?
     QuditClifford._load_stabilizer_matrix!(tab, S) : copyto!(tab.stab, S)
@@ -380,7 +389,7 @@ copy, which every revision can do.
 function first_in_branch(D::DestabilizerTableau, candidates, branch::Symbol)
     branch in (:fixed, :append) || throw(ArgumentError("unknown branch $(repr(branch))"))
     for op in candidates
-        QuditClifford._commutes_with_generators(D, op) || continue
+        _wl_commutes(D, op) || continue
         t = copy(D)
         measure!(t, op; outcome = 0, phase_policy = 1)
         (t.m > D.m) == (branch === :append) && return op

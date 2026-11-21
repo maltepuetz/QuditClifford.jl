@@ -181,14 +181,14 @@ end
             d in (2, 3), sp in (true, false)
         n = 4
         tab = TT(d, n; state = :product, basis = :Z, storephase = sp)
-        ts_QC._rset!(ts_QC._stab(tab), 1, 1, 2)
+        ts_QC._rset!(ts_QC._stab(tab, ts_QC._layout_marker(tab)), 1, 1, 2)
         Sm = stabilizer_matrix(tab)
-        b = ts_QC._stab(tab)
+        b = ts_QC._stab(tab, ts_QC._layout_marker(tab))
         @test all(ts_QC._rget(b, r, j) == Sm[r, j] for r in 1:2n, j in 1:n)
         @test ts_QC._phase(tab) == (sp ? Sm[2n+1, :] : Int[])
         if TT === DestabilizerTableau
             Dm = destabilizer_matrix(tab)
-            bd = ts_QC._destab(tab)
+            bd = ts_QC._destab(tab, ts_QC._layout_marker(tab))
             @test all(ts_QC._rget(bd, r, j) == Dm[r, j] for r in 1:2n, j in 1:n)
         end
     end
@@ -244,7 +244,7 @@ end
 
 @testset "split storage" begin
     for (label, TT) in ts_TYPES, d in (2, 3), sp in (true, false), n in (1, 4)
-        tab = TT(d, n; state = :ghz, storephase = sp)
+        tab = TT(d, n; state = :ghz, storephase = sp, layout = :generator)
         @test size(tab.stab_x) == size(tab.stab_z) == (n, n)
         @test length(tab.phase) == (sp ? n : 0)
         @test tab.phase isa Vector{Int}
@@ -415,13 +415,57 @@ end
     end
 end
 
+@testset "layout marker" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+        tab = TT(d, 5; state = :ghz, layout = :generator)
+        @test tab.layout === QuditClifford.GeneratorMajor()
+        @test fieldtype(TT, :layout) === Union{QuditClifford.GeneratorMajor, QuditClifford.QuditMajor}
+        @test QuditClifford._layout_marker(tab) === QuditClifford.GeneratorMajor()
+        @test QuditClifford._stab(tab, QuditClifford.GeneratorMajor()) isa QuditClifford.XZBlock{QuditClifford.GeneratorMajor}
+        @test !hasmethod(QuditClifford._stab, Tuple{TT})
+    end
+    @test !hasmethod(QuditClifford._destab, Tuple{DestabilizerTableau})
+end
+
 @testset "no raw storage access outside the storage files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
-    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl")
+    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl", "layout.jl")
     for f in readdir(srcdir)
         endswith(f, ".jl") || continue
         text = read(joinpath(srcdir, f), String)
         f in allowed || @test !occursin(r"\.(stab|destab)_[xz]\b", text)
         @test !occursin(r"\.(stab|destab)\b", text)
+        @test !occursin(r"\b_(de)?stab\(\s*[A-Za-z_][A-Za-z_0-9]*\s*\)", text)
+    end
+end
+
+@testset "no raw block access outside the block and kernel files" begin
+    srcdir = joinpath(pkgdir(QuditClifford), "src")
+    # Explicit layout construction: the block file, the storage files and the
+    # constructors (which build generator-major and then switch).
+    construct_ok = ("xz_block.jl", "tableau_storage.jl", "layout.jl", "stabilizer_tableau.jl")
+    # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
+    # the layout-specific kernels, and the storage files that build tableaux
+    # from blocks. Kernel files that do not exist count as zero matches.
+    raw_ok = Dict(
+        "rank_workspaces.jl" => 14,
+        "span_decomposition.jl" => 9,
+        "entanglement_entropy.jl" => 6,
+        "check_purity.jl" => 4,
+        "apply_qudit_major.jl" => 2,
+        "measure_qudit_major.jl" => 2,
+        "canonicalize_qudit_major.jl" => 4,
+        "stabilizer_tableau.jl" => 2,
+        "destabilizer_tableau.jl" => 6,
+        "tableau_storage.jl" => 4,
+    )
+    raw = r"\bb\.x\b|\bb\.z\b|\.x\[|\.z\["
+    for f in readdir(srcdir)
+        endswith(f, ".jl") || continue
+        text = read(joinpath(srcdir, f), String)
+        f in construct_ok ||
+            @test !occursin(r"XZBlock\{(GeneratorMajor|QuditMajor)\}\(", text)
+        f == "xz_block.jl" && continue
+        @test (f => count(raw, text)) == (f => get(raw_ok, f, 0))
     end
 end

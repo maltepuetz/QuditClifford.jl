@@ -58,13 +58,13 @@ function mutual_information(tab::AbstractTableau, A::AbstractVector, B::Abstract
     fill!(tab.c_workspace, 0)
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _mutual_information_from_mask!(tab, length(A), length(B))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), length(B))
 end
 
 function mutual_information(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
     _mark_with_complement!(tab, A)
-    return _mutual_information_from_mask!(tab, length(A), tab.n - length(A))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), tab.n - length(A))
 end
 
 """
@@ -144,10 +144,19 @@ function tripartite_information(
     (NA == 0 || NB == 0 || NC == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)
+    return _tripartite_from_groups!(tab, _layout_marker(tab), first, counts)
+end
+
+function _tripartite_from_groups!(
+    tab::AbstractTableau,
+    L::TableauLayout,
+    first::NTuple{4,Int},
+    counts::NTuple{4,Int},
+)
     if tab.d == 2
-        return _tripartite_from_groups!(tab, tab.bit_workspace, first, counts)
+        return _tripartite_from_groups!(tab, L, tab.bit_workspace, first, counts)
     end
-    return _tripartite_from_groups!(tab, tab.rank_workspace, first, counts)
+    return _tripartite_from_groups!(tab, L, tab.rank_workspace, first, counts)
 end
 
 # `first` and `counts` describe the site list built by `_group_sites_by_label!`
@@ -155,50 +164,52 @@ end
 # workspace to eliminate in.
 function _tripartite_from_groups!(
     tab::AbstractTableau,
+    L::TableauLayout,
     ws::AbstractMatrix,
     first::NTuple{4,Int},
     counts::NTuple{4,Int},
 )
     if tab.m == tab.n
         # S(ABC) = S(D) for a pure state.
-        return _pure_labelled_entropy(tab, ws, 0b0010, first, counts) +
-               _pure_labelled_entropy(tab, ws, 0b0100, first, counts) +
-               _pure_labelled_entropy(tab, ws, 0b1000, first, counts) -
-               _pure_labelled_entropy(tab, ws, 0b0110, first, counts) -
-               _pure_labelled_entropy(tab, ws, 0b1010, first, counts) -
-               _pure_labelled_entropy(tab, ws, 0b1100, first, counts) +
-               _pure_labelled_entropy(tab, ws, 0b0001, first, counts)
+        return _pure_labelled_entropy(tab, L, ws, 0b0010, first, counts) +
+               _pure_labelled_entropy(tab, L, ws, 0b0100, first, counts) +
+               _pure_labelled_entropy(tab, L, ws, 0b1000, first, counts) -
+               _pure_labelled_entropy(tab, L, ws, 0b0110, first, counts) -
+               _pure_labelled_entropy(tab, L, ws, 0b1010, first, counts) -
+               _pure_labelled_entropy(tab, L, ws, 0b1100, first, counts) +
+               _pure_labelled_entropy(tab, L, ws, 0b0001, first, counts)
     end
-    rD, rA, rAB = _traced_rank_pair!(tab, ws, first, counts, 1, 2)
-    _, rB, rBC = _traced_rank_pair!(tab, ws, first, counts, 2, 3)
-    _, rC, rCA = _traced_rank_pair!(tab, ws, first, counts, 3, 1)
+    rD, rA, rAB = _traced_rank_pair!(tab, L, ws, first, counts, 1, 2)
+    _, rB, rBC = _traced_rank_pair!(tab, L, ws, first, counts, 2, 3)
+    _, rC, rCA = _traced_rank_pair!(tab, L, ws, first, counts, 3, 1)
     k = tab.m - rD
     return rAB + rBC + rCA - rA - rB - rC - k
 end
 
 # `c_workspace[q]` labels site `q`: 1 for A, 2 for B and 0 for a traced-out
 # site. `NA` and `NB` are the sizes of A and B.
-function _mutual_information_from_mask!(tab::AbstractTableau, NA::Int, NB::Int)
+function _mutual_information_from_mask!(tab::AbstractTableau, L::TableauLayout, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     if tab.d == 2
-        return _mutual_information_from_mask!(tab, tab.bit_workspace, NA, NB)
+        return _mutual_information_from_mask!(tab, L, tab.bit_workspace, NA, NB)
     end
-    return _mutual_information_from_mask!(tab, tab.rank_workspace, NA, NB)
+    return _mutual_information_from_mask!(tab, L, tab.rank_workspace, NA, NB)
 end
 
-function _mutual_information_from_mask!(tab::AbstractTableau, ws::AbstractMatrix, NA::Int, NB::Int)
+function _mutual_information_from_mask!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix,
+                                        NA::Int, NB::Int)
     n, m, d = tab.n, tab.m, tab.d
     counts = (n - NA - NB, NA, NB, 0)
     first = _group_sites_by_label!(tab, counts)
     if m == n
         # S(AB) = S(D) for a pure state.
-        return _pure_labelled_entropy(tab, ws, 0b0010, first, counts) +
-               _pure_labelled_entropy(tab, ws, 0b0100, first, counts) -
-               _pure_labelled_entropy(tab, ws, 0b0001, first, counts)
+        return _pure_labelled_entropy(tab, L, ws, 0b0010, first, counts) +
+               _pure_labelled_entropy(tab, L, ws, 0b0100, first, counts) -
+               _pure_labelled_entropy(tab, L, ws, 0b0001, first, counts)
     end
-    rows_D = _copy_site_rows!(tab, ws, first[1], counts[1], 0)
-    rows_A = _copy_site_rows!(tab, ws, first[2], NA, rows_D)
-    rows = _copy_site_rows!(tab, ws, first[3], NB, rows_A)
+    rows_D = _copy_site_rows!(tab, L, ws, first[1], counts[1], 0)
+    rows_A = _copy_site_rows!(tab, L, ws, first[2], NA, rows_D)
+    rows = _copy_site_rows!(tab, L, ws, first[3], NB, rows_A)
     # Pivoting on the traced-out rows alone leaves columns piv+1:m zero there,
     # and those columns are a basis of the k stabilizers supported on A ∪ B.
     piv = _block_rank!(ws, 0, rows, 1:m, d, tab.inversemod, rows_D)
@@ -223,6 +234,7 @@ end
 # pivot counts add up to the ranks of the leading row blocks.
 function _traced_rank_pair!(
     tab::AbstractTableau,
+    L::TableauLayout,
     ws::AbstractMatrix,
     first::NTuple{4,Int},
     counts::NTuple{4,Int},
@@ -230,9 +242,9 @@ function _traced_rank_pair!(
     y::Int,
 )
     m, d = tab.m, tab.d
-    rows_D = _copy_site_rows!(tab, ws, first[1], counts[1], 0)
-    rows_X = _copy_site_rows!(tab, ws, first[x + 1], counts[x + 1], rows_D)
-    rows = _copy_site_rows!(tab, ws, first[y + 1], counts[y + 1], rows_X)
+    rows_D = _copy_site_rows!(tab, L, ws, first[1], counts[1], 0)
+    rows_X = _copy_site_rows!(tab, L, ws, first[x + 1], counts[x + 1], rows_D)
+    rows = _copy_site_rows!(tab, L, ws, first[y + 1], counts[y + 1], rows_X)
     rank_D = _block_rank!(ws, 0, rows, 1:m, d, tab.inversemod, rows_D)
     c = rank_D
     rank_X = _block_rank!(ws, rows_D, rows, (c + 1):m, d, tab.inversemod, rows_X - rows_D)
@@ -249,6 +261,7 @@ end
 # S = rank - size on that side.
 function _pure_labelled_entropy(
     tab::AbstractTableau,
+    L::TableauLayout,
     ws::AbstractMatrix,
     labels::Integer,
     first::NTuple{4,Int},
@@ -267,7 +280,7 @@ function _pure_labelled_entropy(
     rows = 0
     for l in 0:3
         (labels >> l) & 1 == 1 || continue
-        rows = _copy_site_rows!(tab, ws, first[l + 1], counts[l + 1], rows)
+        rows = _copy_site_rows!(tab, L, ws, first[l + 1], counts[l + 1], rows)
     end
     return _block_rank!(ws, 0, rows, 1:tab.m, tab.d, tab.inversemod) - N
 end

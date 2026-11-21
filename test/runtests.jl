@@ -2,6 +2,18 @@ using QuditClifford
 using Test
 using Aqua
 
+# The shipped default layout is generator-major.
+@test QuditClifford._DEFAULT_LAYOUT[] === :generator
+
+# The layout every constructor uses without a `layout` keyword, so the whole
+# suite runs generator-major (the default) or qudit-major.
+let layout = get(ENV, "QC_TEST_LAYOUT", "generator")
+    layout in ("generator", "qudit") ||
+        error("QC_TEST_LAYOUT must be \"generator\" or \"qudit\", got \"$layout\"")
+    QuditClifford._DEFAULT_LAYOUT[] = Symbol(layout)
+    println("Testing with default tableau layout :", layout)
+end
+
 @testset "QuditClifford.jl" begin
     # Aqua checks (skip piracy on Julia ≥ 1.12 because Aqua's piracy
     # checker currently fails there due to an upstream API change).
@@ -13,6 +25,7 @@ using Aqua
     include("modular.jl")
     include("tableau_storage.jl")
     include("storage_types.jl")
+    include("layout.jl")
     include("operators.jl")
     include("measurements.jl")
     include("measurement_kernel.jl")

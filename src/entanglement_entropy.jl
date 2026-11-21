@@ -42,6 +42,10 @@ function entanglement_entropy(
     # stored in any of them is copied first.
     subsystem = _unalias_rank_workspaces(tab, Base.unalias(tab.c_workspace, subsystem))
     check && _check_subsystem!(tab, subsystem)
+    return _entanglement_entropy(tab, _layout_marker(tab), subsystem)
+end
+
+function _entanglement_entropy(tab::AbstractTableau, L::TableauLayout, subsystem::AbstractVector)
     N_A = length(subsystem)
     n = tab.n
     m = tab.m
@@ -49,18 +53,18 @@ function entanglement_entropy(
     if m == n
         # Pure stabilizer state. Use smaller side since S(A) = S(B).
         if N_A <= n ÷ 2
-            rank_A = rank_subsystem_cols!(tab, subsystem, m)
+            rank_A = rank_subsystem_cols!(tab, L, subsystem, m)
             return rank_A - N_A
         end
         N_B = n - N_A
-        rank_B = rank_subsystem_cols!(tab, subsystem, m; complement=true)
+        rank_B = rank_subsystem_cols!(tab, L, subsystem, m; complement=true)
         return rank_B - N_B
     end
 
     # Mixed stabilizer state: trace out the complement B.
     # If R_B is the restriction of generators to B, then
     # m_A = m - rank(R_B), and S(ρ_A) = |A| - m_A (in log_d units).
-    rank_B = rank_subsystem_cols!(tab, subsystem, m; complement=true)
+    rank_B = rank_subsystem_cols!(tab, L, subsystem, m; complement=true)
     return N_A - m + rank_B
 end
 
@@ -195,7 +199,7 @@ julia> dest
 ```
 """
 function entanglement_profile!(profile::AbstractVector{Int}, tab::AbstractTableau)
-    return _entanglement_profile!(profile, tab, nothing)
+    return _entanglement_profile!(profile, tab, _layout_marker(tab), nothing)
 end
 
 function entanglement_profile!(
@@ -203,7 +207,7 @@ function entanglement_profile!(
     tab::AbstractTableau,
     order::AbstractVector{<:Integer},
 )
-    return _entanglement_profile!(profile, tab, order)
+    return _entanglement_profile!(profile, tab, _layout_marker(tab), order)
 end
 
 # Throw unless `order` is a permutation of `1:tab.n`. `c_workspace` serves as
@@ -266,6 +270,7 @@ end
 function _entanglement_profile!(
     profile::AbstractVector{Int},
     tab::AbstractTableau,
+    L::TableauLayout,
     order::Union{Nothing,AbstractVector{<:Integer}},
 )
     n, m, d = tab.n, tab.m, tab.d
@@ -293,9 +298,9 @@ function _entanglement_profile!(
     # contained in the prefix. The counts go into the result storage first.
     sites = order === nothing ? Base.OneTo(n) : order
     if d == 2
-        _profile_pivots_gf2!(profile, tab, sites)
+        _profile_pivots_gf2!(profile, tab, L, sites)
     else
-        _profile_pivots!(profile, tab, tab.rank_workspace, sites)
+        _profile_pivots!(profile, tab, L, tab.rank_workspace, sites)
     end
 
     contained = 0
@@ -335,17 +340,40 @@ function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_GMBlock,
     return ws
 end
 
+# Qudit-major: a transpose in tiles of 64 sites by 64 generators, sites outer,
+# as in the qudit-major `_copy_sites!`.
+function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_QMBlock,
+                                  m::Int, sites::AbstractVector) where {T<:_StorageEltype}
+    n = _nq(b)
+    X, Z = b.x, b.z
+    @inbounds for k0 in 1:64:n
+        k1 = min(k0 + 63, n)
+        for j0 in 1:64:m
+            j1 = min(j0 + 63, m)
+            for j in j0:j1
+                @simd for k in k0:k1
+                    q = sites[k]
+                    ws[2k - 1, j] = X[j, q] % T
+                    ws[2k, j] = Z[j, q] % T
+                end
+            end
+        end
+    end
+    return ws
+end
+
 # Bottom-up column elimination on the interleaved rows; `profile[l + 1]`
 # receives the number of pivots on the rows of site l. `ws` is the rank
 # workspace for d >= 3.
 function _profile_pivots!(
     profile::AbstractVector{Int},
     tab::AbstractTableau,
+    L::TableauLayout,
     ws::AbstractMatrix,
     sites::AbstractVector,
 )
     n, m, d = tab.n, tab.m, tab.d
-    _copy_sites_interleaved!(ws, _stab(tab), m, sites)
+    _copy_sites_interleaved!(ws, _stab(tab, L), m, sites)
     fill!(profile, 0)
     c = 1
     @inbounds for r in (2n):-1:1
@@ -382,11 +410,12 @@ end
 function _profile_pivots_gf2!(
     profile::AbstractVector{Int},
     tab::AbstractTableau,
+    L::TableauLayout,
     sites::AbstractVector,
 )
     n, m = tab.n, tab.m
     W = tab.bit_workspace
-    _pack_sites_gf2!(W, _stab(tab), m, sites, n)
+    _pack_sites_gf2!(W, _stab(tab, L), m, sites, n)
     fill!(profile, 0)
     c = 1
     @inbounds for r in (2n):-1:1
@@ -417,6 +446,7 @@ end
 # tableau itself is not changed.
 function rank_subsystem_cols!(
     tab::AbstractTableau,
+    L::TableauLayout,
     subsystem::AbstractVector,
     mcols::Int;
     complement::Bool=false,
@@ -442,24 +472,25 @@ function rank_subsystem_cols!(
                 mask[k] = q
             end
         end
-        return _rank_on_sites!(tab, view(mask, 1:N), N, mcols)
+        return _rank_on_sites!(tab, L, view(mask, 1:N), N, mcols)
     end
     N = length(subsystem)
     N == 0 && return 0
-    return _rank_on_sites!(tab, subsystem, N, mcols)
+    return _rank_on_sites!(tab, L, subsystem, N, mcols)
 end
 
 # Rank of the generator columns 1:mcols restricted to `sites[1:N]`.
-function _rank_on_sites!(tab::AbstractTableau, sites::AbstractVector, N::Int, mcols::Int)
+function _rank_on_sites!(tab::AbstractTableau, L::TableauLayout, sites::AbstractVector, N::Int,
+                         mcols::Int)
     d = tab.d
     mcols == 0 && return 0
     if d == 2
         W = tab.bit_workspace
-        nw = _pack_sites_gf2!(W, _stab(tab), mcols, sites, N)
+        nw = _pack_sites_gf2!(W, _stab(tab, L), mcols, sites, N)
         return _rank_gf2_cols!(view(W, 1:nw, 1:mcols), 2N)
     end
     ws = tab.rank_workspace
-    _copy_sites!(ws, _stab(tab), mcols, sites, N, 0)
+    _copy_sites!(ws, _stab(tab, L), mcols, sites, N, 0)
     return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
 end
 

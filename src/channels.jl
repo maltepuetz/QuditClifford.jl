@@ -6,14 +6,14 @@
 # Type-specific hook for removing a generator               #
 #############################################################
 
-@inline _on_generator_dropped!(::AbstractTableau, ::Int, ::Int) = nothing
+@inline _on_generator_dropped!(::AbstractTableau, ::TableauLayout, ::Int, ::Int) = nothing
 
 # The dual of the last generator takes the place of the dual of the removed one.
 # Every other dual keeps its pairings: the generators it pairs with are unchanged
 # or, after `dephase!`'s sweep, differ from the old ones only by multiples of the
 # removed generator, which is orthogonal to all of them.
-@inline function _on_generator_dropped!(tab::DestabilizerTableau, j::Int, last::Int)
-    dest = _destab(tab)
+@inline function _on_generator_dropped!(tab::DestabilizerTableau, L::TableauLayout, j::Int, last::Int)
+    dest = _destab(tab, L)
     if j != last
         _move_gen!(dest, j, last)
         tab.xdotz_cache[j] = tab.xdotz_cache[last]
@@ -25,8 +25,8 @@ end
 
 # Remove active generator `j`: the last active column takes its place, the last
 # column is zeroed and `m` shrinks by one.
-function _drop_generator!(tab::AbstractTableau, j::Int)
-    stab = _stab(tab)
+function _drop_generator!(tab::AbstractTableau, L::TableauLayout, j::Int)
+    stab = _stab(tab, L)
     last = tab.m
     _move_gen!(stab, j, last)
     _zero_gen!(stab, last)
@@ -35,7 +35,7 @@ function _drop_generator!(tab::AbstractTableau, j::Int)
         phase[j] = phase[last]
         phase[last] = 0
     end
-    _on_generator_dropped!(tab, j, last)
+    _on_generator_dropped!(tab, L, j, last)
     tab.m = last - 1
     return nothing
 end
@@ -79,7 +79,9 @@ function dephase!(tab::AbstractTableau, op::AbstractVector{<:Integer})
     return dephase!(tab, GeneralPauli(tab.n, tab.d, op))
 end
 
-function dephase!(tab::AbstractTableau, op::AbstractPauli)
+dephase!(tab::AbstractTableau, op::AbstractPauli) = _dephase!(tab, _layout_marker(tab), op)
+
+function _dephase!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     _check_pauli_support(tab, op)
     d = tab.d
     m = tab.m
@@ -87,7 +89,7 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
     # A dense operand lives in res_workspace, which nothing below writes.
     opc = _commutation_operand!(tab, op)
 
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     pivot = 0
     comm0 = 0
     kws = 0
@@ -104,13 +106,13 @@ function dephase!(tab::AbstractTableau, op::AbstractPauli)
             comm0 = c
         else
             a = mod(-c * tab.inversemod(comm0, d), d)
-            mul_col_by_workspace_power!(tab, i, a, kws)
-            _on_noncommuting_col_updated!(tab, i)
+            mul_col_by_workspace_power!(tab, L, i, a, kws)
+            _on_noncommuting_col_updated!(tab, L, i)
         end
     end
 
     pivot == 0 && return tab
-    _drop_generator!(tab, pivot)
+    _drop_generator!(tab, L, pivot)
     tab.iscanonical = false
     return tab
 end
@@ -143,19 +145,29 @@ julia> entanglement_entropy(tab, [1])
 ```
 """
 function traceout!(tab::AbstractTableau, sites::AbstractVector)
+    sites = _unalias_site_workspaces(tab, sites)
     _check_subsystem!(tab, sites)
-    for q in sites
-        dephase!(tab, SinglePauli(Int(q), 1, 0))
-        dephase!(tab, SinglePauli(Int(q), 0, 1))
-    end
-    return tab
+    return _traceout!(tab, _layout_marker(tab), sites)
 end
 
 function traceout!(tab::AbstractTableau, site::Integer)
     1 <= site <= tab.n || throw(ArgumentError(
         "The site must be in 1:$(tab.n); got $site."))
-    dephase!(tab, SinglePauli(Int(site), 1, 0))
-    dephase!(tab, SinglePauli(Int(site), 0, 1))
+    return _traceout!(tab, _layout_marker(tab), (Int(site),))
+end
+
+# The subsystem check writes c_workspace, and the qudit-major `dephase!` writes
+# c_workspace and zacc_workspace, while `sites` is read, so `sites` stored in
+# either is copied first.
+_unalias_site_workspaces(tab::AbstractTableau, sites::AbstractVector) =
+    Base.unalias(tab.zacc_workspace, Base.unalias(tab.c_workspace, sites))
+
+# Trace out the checked `sites` by dephasing each by X and then by Z.
+function _traceout!(tab::AbstractTableau, L::TableauLayout, sites)
+    for q in sites
+        _dephase!(tab, L, SinglePauli(Int(q), 1, 0))
+        _dephase!(tab, L, SinglePauli(Int(q), 0, 1))
+    end
     return tab
 end
 
@@ -182,9 +194,9 @@ _check_reset_basis(::Any, ::Int) = throw(ArgumentError(
 # Give each of `sites`, already traced out, a fresh generator of its target
 # basis. No generator touches a traced-out site, so the new column index is at
 # most n, and the dual built for it needs no projection.
-function _prepare_sites!(tab::AbstractTableau, sites, basis)
+function _prepare_sites!(tab::AbstractTableau, L::TableauLayout, sites, basis)
     isempty(sites) && return tab
-    stab = _stab(tab)
+    stab = _stab(tab, L)
     phase = _phase(tab)
     # The new generator is copied into res_workspace, which `_after_append_measurement!`
     # reads and never writes. Nothing else keeps data there: `reset!` has finished
@@ -199,7 +211,7 @@ function _prepare_sites!(tab::AbstractTableau, sites, basis)
                           _reset_basis_at(basis, k), tab.storephase)
         tab.m = newcol
         _copy_gen!(res, stab, newcol)
-        _after_append_measurement!(tab, newcol, res)
+        _after_append_measurement!(tab, L, newcol, res)
     end
     tab.iscanonical = false
     return tab
@@ -243,16 +255,21 @@ true
 ```
 """
 function reset!(tab::AbstractTableau, sites::AbstractVector; basis=:Z)
+    sites = _unalias_site_workspaces(tab, sites)
     _check_subsystem!(tab, sites)
     _check_reset_basis(basis, length(sites))
-    traceout!(tab, sites)
-    return _prepare_sites!(tab, sites, basis)
+    return _reset_sites!(tab, _layout_marker(tab), sites, basis)
 end
 
 function reset!(tab::AbstractTableau, site::Integer; basis=:Z)
     1 <= site <= tab.n || throw(ArgumentError(
         "The site must be in 1:$(tab.n); got $site."))
     _check_reset_basis(basis, 1)
-    traceout!(tab, site)
-    return _prepare_sites!(tab, (Int(site),), basis)
+    return _reset_sites!(tab, _layout_marker(tab), (Int(site),), basis)
+end
+
+# Trace out the checked `sites` and prepare each in its target basis.
+function _reset_sites!(tab::AbstractTableau, L::TableauLayout, sites, basis)
+    _traceout!(tab, L, sites)
+    return _prepare_sites!(tab, L, sites, basis)
 end

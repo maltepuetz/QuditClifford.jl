@@ -42,7 +42,7 @@ end
 
 mkref_col_updated!(::StabilizerTableau, ::Int) = nothing
 mkref_col_updated!(tab::DestabilizerTableau, col::Int) =
-    (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, tab.d); nothing)
+    (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, tab.d); nothing)
 
 mkref_after_noncommuting!(::StabilizerTableau, ::Int, ::Int, ::Int) = nothing
 function mkref_after_noncommuting!(tab::DestabilizerTableau, pivot::Int, comm0::Int, m::Int)
@@ -84,14 +84,14 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
     pivot = 0
     opc = MK._commutation_operand!(tab, op)
     for i in 1:m
-        commutator = mod(MK.commutation_col(MK._stab(tab), i, opc), d)
+        commutator = mod(MK.commutation_col(MK._stab(tab, MK._layout_marker(tab)), i, opc), d)
         commutator == 0 && continue
         if comm0 == 0
             t = MK._random_outcome(rng, outcome, d)
             for j in eachindex(tab.generator_workspace)
                 tab.generator_workspace[j] = stabilizer_matrix(tab)[j, i]
             end
-            MK.set_operator!(tab, i, op)
+            MK.set_operator!(tab, MK._layout_marker(tab), i, op)
             if tab.storephase
                 S = stabilizer_matrix(tab)
                 S[2n+1, i] = MK._measured_generator_phase(t, kop, d)
@@ -112,12 +112,12 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
         return t
     end
     tab.m == n && !tab.storephase && return 0
-    MK._span_coeffs_keep_basis!(tab, op)
-    in_span = MK._in_span_from_coeffs!(tab, op)
+    MK._span_coeffs_keep_basis!(tab, MK._layout_marker(tab), op)
+    in_span = MK._in_span_from_coeffs!(tab, MK._layout_marker(tab), op)
     res = tab.res_workspace
     if in_span
         tab.storephase || return 0
-        kacc = MK.phase_exponent_from_coeffs!(tab)
+        kacc = MK.phase_exponent_from_coeffs!(tab, MK._layout_marker(tab))
         if d == 2
             k = mod(-kacc + kop, 4)
             isodd(k) && throw(ArgumentError("eigenvalue ±i"))
@@ -129,13 +129,13 @@ function mkref_measure!(rng, tab, op::QuditClifford.AbstractPauli; outcome = not
     t = MK._random_outcome(rng, outcome, d)
     newcol = m + 1
     tab.m = newcol
-    MK.set_operator!(tab, newcol, op)
+    MK.set_operator!(tab, MK._layout_marker(tab), newcol, op)
     if tab.storephase
         S = stabilizer_matrix(tab)
         S[2n+1, newcol] = MK._measured_generator_phase(t, kop, d)
         QuditClifford._load_stabilizer_matrix!(tab, S)
     end
-    MK._after_append_measurement!(tab, newcol, res)
+    MK._after_append_measurement!(tab, MK._layout_marker(tab), newcol, res)
     tab.iscanonical = false
     return t
 end
@@ -224,7 +224,7 @@ function mkref_fuzz(TT, d, n, flavor, storephase, nsteps, seed)
         # generator takes (the pivot alone never reaches the update).
         if tab.m > 0 && all(q -> 1 <= q <= n, MK._few_qudit_pauli_data(op isa GeneralPauli ? SinglePauli(1, 0, 0) : op)[1])
             opc = MK._commutation_operand!(tab, op)
-            anti = [i for i in 1:tab.m if mod(MK.commutation_col(MK._stab(tab), i, opc), d) != 0]
+            anti = [i for i in 1:tab.m if mod(MK.commutation_col(MK._stab(tab, MK._layout_marker(tab)), i, opc), d) != 0]
             if length(anti) >= 2
                 p = anti[1]
                 nsupp = count(q -> stabilizer_matrix(tab)[q, p] != 0 || stabilizer_matrix(tab)[n+q, p] != 0, 1:n)
@@ -306,25 +306,25 @@ end
         S[n+7, piv] = rand(rng, 1:(d - 1))
         storephase && (S[2n+1, piv] = rand(rng, 0:(MK.phase_modulus(d) - 1)))
         QuditClifford._load_stabilizer_matrix!(tab, S)
-        pu = MK._prepare_pivot_update(tab, piv, rand(rng, 1:(d - 1)))
+        pu = MK._prepare_pivot_update(tab, MK._layout_marker(tab), piv, rand(rng, 1:(d - 1)))
         @test pu.nsupp == 2
         pd = MK._PivotUpdate(pu.nsupp, false, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         ps = MK._PivotUpdate(pu.nsupp, true, pu.ninv, pu.kws, pu.xzws, pu.inv2)
         for col in 2:n, a in (d == 2 ? (1,) : (1, 2, d - 1))
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d))
             before = stabilizer_matrix(tab)[:, col]
-            MK._absorb_pivot_power!(tab, col, a, pd)
+            MK._absorb_pivot_power!(tab, MK._layout_marker(tab), col, a, pd)
             dense = stabilizer_matrix(tab)[:, col]
             cdense = tab.xdotz_cache[col]
             S = stabilizer_matrix(tab)
             S[:, col] .= before
             QuditClifford._load_stabilizer_matrix!(tab, S)
-            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab), col, d))
-            MK._absorb_pivot_power!(tab, col, a, ps)
+            TT === DestabilizerTableau && (tab.xdotz_cache[col] = MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d))
+            MK._absorb_pivot_power!(tab, MK._layout_marker(tab), col, a, ps)
             @test stabilizer_matrix(tab)[:, col] == dense
             @test tab.xdotz_cache[col] == cdense
             if TT === DestabilizerTableau
-                @test cdense == MK.dot_xz_col(MK._stab(tab), col, d)
+                @test cdense == MK.dot_xz_col(MK._stab(tab, MK._layout_marker(tab)), col, d)
             end
             S = stabilizer_matrix(tab)
             S[:, col] .= before
@@ -342,9 +342,10 @@ end
 
 @testset "measure! allocates nothing in the noncommuting branch" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
-        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int))
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
         n = 64
-        tab = TT(d, n; state = :Z, eltype = E)
+        tab = TT(d, n; state = :Z, eltype = E, layout)
         rng = Xoshiro(3)
         for q in 1:2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
@@ -355,8 +356,107 @@ end
             @test mkref_measure_allocs(rng, tab, op) == 0
         end
         # A random state takes the dense pivot path.
-        r = TT(d, n; state = :Z, eltype = E)
+        r = TT(d, n; state = :Z, eltype = E, layout)
         random_state!(rng, r)
         @test mkref_measure_allocs(rng, r, SinglePauli(5, 1, 0)) == 0
+        @test mkref_measure_allocs(rng, r, GeneralPauli(rand(rng, 0:(d - 1), 2n), 0)) == 0
+    end
+end
+
+@testset "measure! allocates nothing in the append branch of a DestabilizerTableau" begin
+    for d in (2, 3, 31), E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        layout in (:generator, :qudit)
+        n = 64
+        h = n ÷ 2
+        tab = DestabilizerTableau(d, n; state = :mixed, eltype = E, layout)
+        for q in 1:h
+            measure!(tab, SinglePauli(q, 0, 1); outcome = 0)
+        end
+        # Generators and duals spread over the first half; Z_n commutes with
+        # them and lies outside their span.
+        apply!(tab, random_clifford(Xoshiro(d), d, collect(1:h)))
+        @test tab.m == h
+        @test mkref_measure_allocs(Xoshiro(1), tab, SinglePauli(n, 0, 1)) == 0
+        c = copy(tab)
+        measure!(c, SinglePauli(n, 0, 1); outcome = 0)
+        @test c.m == h + 1
+    end
+end
+
+# Random-branch fixtures: brickwork circuits with Z measurements at rate `p`
+# on a pure state, and a random pure state.
+function mkqm_monitored(TT, d, n, p, storephase, seed)
+    rng = Xoshiro(seed)
+    tab = TT(d, n; state = :Z, storephase)
+    for l in 1:8
+        for q in (isodd(l) ? 1 : 2):2:(n - 1)
+            apply!(tab, random_clifford(rng, d, [q, q + 1]))
+        end
+        for q in 1:n
+            rand(rng) < p && measure!(rng, tab, SinglePauli(q, 0, 1))
+        end
+    end
+    return tab
+end
+
+function mkqm_random(TT, d, n, storephase, seed)
+    tab = TT(d, n; state = :Z, storephase)
+    random_state!(Xoshiro(seed), tab)
+    return tab
+end
+
+# Measure Z, X and a two-qudit Pauli on random qudits of a generator-major
+# fixture and its qudit-major copy; compare after every measurement.
+function mkqm_compare(g, nsteps, seed)
+    q = qudit_major!(copy(g))
+    rng = Xoshiro(seed)
+    rg = Xoshiro(seed + 1)
+    rq = Xoshiro(seed + 1)
+    n, d = g.n, g.d
+    for step in 1:nsteps
+        a, b = randperm(rng, n)[1:2]
+        r = rand(rng)
+        op = r < 0.6 ? SinglePauli(a, 0, 1) : r < 0.8 ? SinglePauli(a, 1, 0) :
+             DoublePauli(a, rand(rng, 0:(d - 1)), 1, b, 1, rand(rng, 0:(d - 1)))
+        tg = measure!(rg, g, op; phase_policy = 1)
+        tq = measure!(rq, q, op; phase_policy = 1)
+        same = tg == tq && mkref_same_state(g, q) && g.phase == q.phase
+        same || (@info "layouts differ" typeof(g) d n step op; return false)
+    end
+    return rand(rg, UInt64) == rand(rq, UInt64)
+end
+
+@testset "qudit-major random branch" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
+        n = 96
+        for (k, p) in enumerate((0.05, 0.15))
+            @test mkqm_compare(mkqm_monitored(TT, d, n, p, storephase, 10d + k), 60, d + k)
+        end
+        @test mkqm_compare(mkqm_random(TT, d, n, storephase, 20d), 60, d + 7)
+    end
+end
+
+@testset "qudit-major sparse and dense updates agree" begin
+    # Divisor 1 takes the sparse update whenever a generator anticommutes;
+    # `typemax(Int)` takes the dense one whenever one does.
+    L = MK.QuditMajor()
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
+        n = 48
+        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d),
+                                 mkqm_random(TT, d, n, storephase, 40d)))
+            a = qudit_major!(copy(g))
+            b = copy(a)
+            rng = Xoshiro(k)
+            ok = true
+            for step in 1:40
+                q = rand(rng, 1:n)
+                op = rand(rng) < 0.6 ? SinglePauli(q, 0, 1) : SinglePauli(q, 1, rand(rng, 0:(d - 1)))
+                ta = MK._measure_qm!(Xoshiro(step), a, L, op, nothing, 1, 1)
+                tb = MK._measure_qm!(Xoshiro(step), b, L, op, nothing, 1, typemax(Int))
+                ok &= ta == tb && mkref_same_state(a, b) && a.phase == b.phase
+                ok || break
+            end
+            @test ok
+        end
     end
 end

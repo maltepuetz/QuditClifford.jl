@@ -1,10 +1,12 @@
 # Access to the tableau storage. A tableau holds its stabilizers in the fields
-# `stab_x`, `stab_z` (`n × n`, generator `j` in column `j`) and `phase` (length
-# `n`, or 0 without `storephase`), and a `DestabilizerTableau` its destabilizers
-# in `destab_x` and `destab_z`. Each of the four blocks is a view into a padded
-# parent of its own, laid out by `_padded_block` (src/xz_block.jl). Only this
-# file and the two constructor files touch those fields; algorithms go through
-# `_stab`, `_destab` and `_phase`.
+# `stab_x`, `stab_z` (`n × n`) and `phase` (length `n`, or 0 without
+# `storephase`), and a `DestabilizerTableau` its destabilizers in `destab_x` and
+# `destab_z`. Each of the four blocks is a view into a padded parent of its own,
+# laid out by `_padded_block` (src/xz_block.jl). The field `layout` says whether
+# generator `j` is column `j` (`GeneratorMajor`) or row `j` (`QuditMajor`) of
+# every block (src/layout.jl). Only this file, the two constructor files and
+# src/layout.jl touch those fields; algorithms go through `_stab`, `_destab` and
+# `_phase`.
 #
 # The four blocks share the element type `E`, the second type parameter of both
 # tableau types; the phase vector is always `Int`.
@@ -35,10 +37,11 @@ function _check_eltype(E::Type, d::Int)
     throw(ArgumentError("eltype = $E cannot hold entries mod d = $d; use one of $ok."))
 end
 
-# The stabilizer and destabilizer blocks and the phase vector of a tableau. They
-# share the tableau's arrays, so writing through them changes the tableau.
-_stab(tab::AbstractTableau) = XZBlock{GeneratorMajor}(tab.stab_x, tab.stab_z)
-_destab(tab::DestabilizerTableau) = XZBlock{GeneratorMajor}(tab.destab_x, tab.destab_z)
+# The stabilizer and destabilizer blocks and the phase vector of a tableau,
+# with `L` the tableau's layout marker. They share the tableau's arrays, so
+# writing through them changes the tableau.
+_stab(tab::AbstractTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.stab_x, tab.stab_z)
+_destab(tab::DestabilizerTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.destab_x, tab.destab_z)
 _phase(tab::AbstractTableau) = tab.phase
 
 @noinline _throw_removed_field(s::Symbol, accessor::Symbol) =
@@ -55,22 +58,38 @@ end
     return getfield(tab, s)
 end
 
-# The blocks of `b` stacked as a fresh `Int` matrix, X rows first, with `extra`
-# further rows left for the caller to fill.
-function _stacked_int_matrix(b::_GMBlock, extra::Int)
+# A block matrix of layout `L` seen generator-major (generator `j` in column
+# `j`): the matrix itself, or its lazy transpose.
+_generator_major_view(::GeneratorMajor, A::AbstractMatrix) = A
+_generator_major_view(::QuditMajor, A::AbstractMatrix) = transpose(A)
+
+# The blocks of `b` stacked generator-major as a fresh `Int` matrix, X rows
+# first, with `extra` further rows left for the caller to fill.
+function _stacked_int_matrix(b::XZBlock{L}, extra::Int) where {L}
     n = _nq(b)
     S = Matrix{Int}(undef, 2n + extra, _ncap(b))
-    S[1:n, :] .= b.x
-    S[n+1:2n, :] .= b.z
+    S[1:n, :] .= _generator_major_view(L(), b.x)
+    S[n+1:2n, :] .= _generator_major_view(L(), b.z)
+    return S
+end
+function _stacked_int_matrix(b::XZBlock{QuditMajor}, extra::Int)
+    n = _nq(b)
+    S = Matrix{Int}(undef, 2n + extra, _ncap(b))
+    _transpose_into!(S, 0, b.x)
+    _transpose_into!(S, n, b.z)
     return S
 end
 
-# The generator matrix of `tab` in generator-major layout.
-function _stabilizer_generator_matrix(tab::AbstractTableau)
-    S = _stacked_int_matrix(_stab(tab), tab.storephase ? 1 : 0)
+# The stacked generator matrix of `tab`, generator-major in either storage layout.
+function _stabilizer_generator_matrix(tab::AbstractTableau, L::TableauLayout)
+    S = _stacked_int_matrix(_stab(tab, L), tab.storephase ? 1 : 0)
     tab.storephase && (S[2tab.n+1, :] .= _phase(tab))
     return S
 end
+
+# The stacked destabilizer matrix of `tab`, generator-major in either storage layout.
+_destabilizer_generator_matrix(tab::DestabilizerTableau, L::TableauLayout) =
+    _stacked_int_matrix(_destab(tab, L), 0)
 
 function _check_layout(layout::Symbol)
     layout === :generator || layout === :qudit ||
@@ -101,7 +120,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function stabilizer_matrix(tab::AbstractTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    S = _stabilizer_generator_matrix(tab)
+    S = _stabilizer_generator_matrix(tab, _layout_marker(tab))
     return layout === :generator ? S : permutedims(S)
 end
 
@@ -126,7 +145,7 @@ The result is a copy; changing it does not change `tab`. Any other symbol for
 """
 function destabilizer_matrix(tab::DestabilizerTableau; layout::Symbol = :generator)
     _check_layout(layout)
-    D = _stacked_int_matrix(_destab(tab), 0)
+    D = _destabilizer_generator_matrix(tab, _layout_marker(tab))
     return layout === :generator ? D : permutedims(D)
 end
 
@@ -142,21 +161,27 @@ end
 
 # Overwrite the generators of a tableau with a generator-major matrix of exactly
 # the shape `stabilizer_matrix` or `destabilizer_matrix` returns, reducing its
-# entries mod `d` and its phases mod `phase_modulus(d)`. `m`, `iscanonical` and
-# the caches are left alone.
-function _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer})
+# entries mod `d` and its phases mod `phase_modulus(d)`, in the tableau's
+# storage layout. `m`, `iscanonical` and the caches are left alone.
+_load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer}) =
+    _load_stabilizer_matrix!(tab, _layout_marker(tab), S)
+
+function _load_stabilizer_matrix!(tab::AbstractTableau, L::TableauLayout, S::AbstractMatrix{<:Integer})
     n, d, E = tab.n, tab.d, _storage_eltype(tab)
     _check_generator_matrix_size(S, 2n + (tab.storephase ? 1 : 0), n)
-    tab.stab_x .= _reduced_entry.(E, view(S, 1:n, :), d)
-    tab.stab_z .= _reduced_entry.(E, view(S, n+1:2n, :), d)
+    _generator_major_view(L, tab.stab_x) .= _reduced_entry.(E, view(S, 1:n, :), d)
+    _generator_major_view(L, tab.stab_z) .= _reduced_entry.(E, view(S, n+1:2n, :), d)
     tab.storephase && (tab.phase .= _reduced_entry.(Int, view(S, 2n + 1, :), phase_modulus(d)))
     return tab
 end
 
-function _load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{<:Integer})
+_load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{<:Integer}) =
+    _load_destabilizer_matrix!(tab, _layout_marker(tab), D)
+
+function _load_destabilizer_matrix!(tab::DestabilizerTableau, L::TableauLayout, D::AbstractMatrix{<:Integer})
     n, d, E = tab.n, tab.d, _storage_eltype(tab)
     _check_generator_matrix_size(D, 2n, n)
-    tab.destab_x .= _reduced_entry.(E, view(D, 1:n, :), d)
-    tab.destab_z .= _reduced_entry.(E, view(D, n+1:2n, :), d)
+    _generator_major_view(L, tab.destab_x) .= _reduced_entry.(E, view(D, 1:n, :), d)
+    _generator_major_view(L, tab.destab_z) .= _reduced_entry.(E, view(D, n+1:2n, :), d)
     return tab
 end
