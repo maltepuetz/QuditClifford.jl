@@ -215,7 +215,7 @@ end
 end
 
 @testset "generator-major copy of a block" begin
-    for E in (UInt8, UInt16, Int), n in (3, 40)
+    for E in (UInt8, UInt16, Int), n in (1, 3, 33, 40, 65, 129)
         g = ly_QC.XZBlock{ly_QC.GeneratorMajor}(ly_QC._stab_blocks(E, n)...)
         rng = Xoshiro(n)
         g.x .= rand(rng, E(0):E(2), n, n)
@@ -235,6 +235,68 @@ end
                   ly_QC._zget(cq, i, j) == ly_QC._zget(qb, i, j) for i in 1:n, j in 1:n)
         cq.x[1, 1] = E(7)
         @test qb.x == permutedims(X0)
+    end
+end
+
+# Allocations of one call, the least of three measurements after a warm-up
+# call. One function per operation: a shared varargs helper allocates on
+# Julia 1.10.
+function ly_stabilizer_matrix_allocs(t)
+    stabilizer_matrix(t)
+    return minimum(@allocated(stabilizer_matrix(t)) for _ in 1:3)
+end
+function ly_destabilizer_matrix_allocs(t)
+    destabilizer_matrix(t)
+    return minimum(@allocated(destabilizer_matrix(t)) for _ in 1:3)
+end
+function ly_equal_allocs(a, b)
+    a == b
+    return minimum(@allocated(a == b) for _ in 1:3)
+end
+
+@testset "generator reads agree across layouts at sizes off the tile" begin
+    for E in (UInt8, UInt16, Int), TT in (StabilizerTableau, DestabilizerTableau),
+        n in (1, 2, 5, 31, 33, 65, 257)
+        g = TT(3, n; eltype = E, layout = :generator)
+        random_state!(Xoshiro(20261121 + n), g)
+        @test !g.iscanonical
+        q = qudit_major!(copy(g))
+        @test stabilizer_matrix(q) == stabilizer_matrix(g)
+        @test stabilizer_matrix(q; layout = :qudit) == stabilizer_matrix(g; layout = :qudit)
+        if TT === DestabilizerTableau
+            @test destabilizer_matrix(q) == destabilizer_matrix(g)
+            @test destabilizer_matrix(q; layout = :qudit) ==
+                  destabilizer_matrix(g; layout = :qudit)
+        end
+        # The same state in another generator basis, so `==` and `hash` go
+        # through a canonical copy of the non-canonical side.
+        gc = copy(g)
+        canonicalize!(gc)
+        qc = copy(q)
+        canonicalize!(qc)
+        @test stabilizer_matrix(qc) == stabilizer_matrix(gc)
+        for (a, b) in ((q, g), (g, q), (q, q), (q, gc), (gc, q), (q, qc), (qc, q))
+            @test a == b
+            @test hash(a) == hash(b)
+        end
+        other = copy(g)
+        random_state!(Xoshiro(1 + n), other)
+        if other != g
+            qo = qudit_major!(copy(other))
+            @test q != qo && qo != q && q != other && g != qo
+        end
+        if n <= 5
+            @test ket(q) == ket(g)
+            @test state_vector(q) == state_vector(g)
+        end
+        @test tableau_layout(q) === :qudit && !q.iscanonical
+        @test ly_stabilizer_matrix_allocs(q) == ly_stabilizer_matrix_allocs(g)
+        if TT === DestabilizerTableau
+            @test ly_destabilizer_matrix_allocs(q) == ly_destabilizer_matrix_allocs(g)
+        end
+        qq = copy(q)
+        @test ly_equal_allocs(q, qq) == 0
+        @test ly_equal_allocs(qc, copy(qc)) == 0
     end
 end
 
