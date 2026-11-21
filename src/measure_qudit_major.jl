@@ -211,10 +211,13 @@ function _qm_absorb_pivot!(tab::AbstractTableau, L::QuditMajor, pivot::Int,
 end
 
 # The qudit-major form of the duals' orthogonalization: the pairings t_j go
-# into column 1 of coeff_workspace (free once the generators are updated, and
-# unused by the commuting branch) over the support columns of generator `col`,
-# then every dual support column of `col` is updated at once. `sparse` is not
-# needed: `sites[1:nsites]` always lists the whole support of dual `col`.
+# into column 1 of coeff_workspace (free once the generators are updated; the
+# append hook of the commuting branch borrows it the same way) over the support
+# columns of generator `col`, then every dual support column of `col` is
+# updated at once. When at most `m ÷ _QM_SPARSE_UPDATE_DIV` pairings are
+# nonzero (a local measurement), only those rows of each column are updated,
+# with their indices in c_workspace. `sparse` is not needed: `sites[1:nsites]`
+# always lists the whole support of dual `col`.
 function _orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int, m::Int,
                                supp::Vector{Int}, nsupp::Int,
                                sites::Vector{Int}, nsites::Int, ::Bool)
@@ -228,7 +231,39 @@ function _orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int
         _qm_pair_add!(tj, destab, q, _xget(stab, q, col), _zget(stab, q, col), d)
     end
     col <= m && (@inbounds tj[col] = zero(eltype(tj)))
+    idx = tab.c_workspace
+    k = 0
+    @inbounds for j in 1:m
+        if tj[j] != 0
+            k += 1
+            idx[k] = j
+        end
+    end
+    k == 0 && return nothing
     # The multipliers are entries of dual `col`, whose row t_j leaves alone.
+    if k <= m ÷ _QM_SPARSE_UPDATE_DIV
+        x = destab.x
+        z = destab.z
+        E = eltype(x)
+        @inbounds for s in 1:nsites
+            q = sites[s]
+            a = _xget(destab, q, col)
+            if a != 0
+                for t in 1:k
+                    j = idx[t]
+                    x[j, q] = mod(Int(x[j, q]) - Int(tj[j]) * a, d) % E
+                end
+            end
+            c = _zget(destab, q, col)
+            if c != 0
+                for t in 1:k
+                    j = idx[t]
+                    z[j, q] = mod(Int(z[j, q]) - Int(tj[j]) * c, d) % E
+                end
+            end
+        end
+        return nothing
+    end
     @inbounds for s in 1:nsites
         q = sites[s]
         submul_mod!(_qm_xcol(destab, q, m), tj, _xget(destab, q, col), d)
