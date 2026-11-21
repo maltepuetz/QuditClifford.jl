@@ -538,23 +538,32 @@ _gen_submul_sites!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int,
 const _T64_MASKS = (0x00000000ffffffff, 0x0000ffff0000ffff, 0x00ff00ff00ff00ff,
                     0x0f0f0f0f0f0f0f0f, 0x3333333333333333, 0x5555555555555555)
 
-# Transpose, in place, the 64 × 64 bit matrix held in `a[o+1:o+64]` (word `i`
-# is row `i-1`, bits least significant first): bit `b` of word `i` swaps with
-# bit `i` of word `b`.
-@inline function _t64!(a::AbstractArray{UInt64}, o::Int)
+# The exchanges of `_t64!`, written out: round `r` exchanges word `i` with word
+# `i + j` for every `i` without bit `j`, `j = 32 >> (r - 1)`. The unrolled body
+# transposes a block about 1.25x faster than the same exchanges in loops.
+function _t64_body()
+    ex = Expr[]
     j = _WORD_BITS >> 1
-    @inbounds for m in _T64_MASKS
-        k = 0
-        while k < _WORD_BITS
-            for i in k:(k + j - 1)
-                t = ((a[o + i + 1] >> j) ⊻ a[o + i + j + 1]) & m
-                a[o + i + 1] ⊻= t << j
-                a[o + i + j + 1] ⊻= t
-            end
-            k += 2j
+    for m in _T64_MASKS
+        for i in 0:(_WORD_BITS - 1)
+            i & j == 0 || continue
+            push!(ex, quote
+                t = ((a[o + $(i + 1)] >> $j) ⊻ a[o + $(i + j + 1)]) & $m
+                a[o + $(i + 1)] ⊻= t << $j
+                a[o + $(i + j + 1)] ⊻= t
+            end)
         end
         j >>= 1
     end
+    return Expr(:block, ex...)
+end
+
+# Transpose, in place, the 64 × 64 bit matrix held in `a[o+1:o+64]` (word `i`
+# is row `i-1`, bits least significant first): bit `b` of word `i` swaps with
+# bit `i` of word `b`. It is not marked `@inline`: inlined into the strip loop
+# of `_transpose_bit_block!` it is about 4% slower.
+@eval function _t64!(a::AbstractArray{UInt64}, o::Int)
+    @inbounds $(_t64_body())
     return a
 end
 
