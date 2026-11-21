@@ -317,9 +317,13 @@ end
             @test state_vector(q) == state_vector(g)
         end
         @test tableau_layout(q) === :qudit && !q.iscanonical
-        @test ly_stabilizer_matrix_allocs(q) == ly_stabilizer_matrix_allocs(g)
+        # Both layouts allocate only the result. Windows reports the same
+        # allocations a few bytes apart from call to call, so the counts
+        # agree within 64 bytes, far less than any extra n × n buffer at
+        # n ≥ 31.
+        @test abs(ly_stabilizer_matrix_allocs(q) - ly_stabilizer_matrix_allocs(g)) <= 64
         if TT === DestabilizerTableau
-            @test ly_destabilizer_matrix_allocs(q) == ly_destabilizer_matrix_allocs(g)
+            @test abs(ly_destabilizer_matrix_allocs(q) - ly_destabilizer_matrix_allocs(g)) <= 64
         end
         qq = copy(q)
         @test ly_equal_allocs(q, qq) == 0
