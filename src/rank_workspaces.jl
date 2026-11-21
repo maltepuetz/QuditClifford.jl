@@ -95,7 +95,7 @@ end
 # 64-entry runs, and the workspace is written one generator column at a time.
 # Measured on an M3 Pro (UInt8, d = 3, half the sites, n = 1023-2049), this
 # took 0.75-0.8x the time of tiles of 8 sites by 64 generators with the
-# generators outer, and is still 5-8x slower than the generator-major copy.
+# generators outer, and is still 5-12x slower than the generator-major copy.
 function _copy_sites!(
     ws::AbstractMatrix{T},
     b::_QMBlock,
