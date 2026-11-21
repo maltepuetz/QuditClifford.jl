@@ -522,6 +522,28 @@ end
     end
 end
 
+@testset "traceout! and reset! with sites in a workspace" begin
+    # The qudit-major `dephase!` writes c_workspace and zacc_workspace; sites
+    # stored there are copied first, so both layouts agree.
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), ws in (:zacc, :c)
+        n = 24
+        g = ly_fixture(TT, d, n, ly_QC._default_eltype(d), true, :monitored, 19d)
+        q = qudit_major!(copy(g))
+        for (t, f!) in ((g, traceout!), (q, traceout!))
+            w = ws === :zacc ? t.zacc_workspace : t.c_workspace
+            w[1:3] .= (2, 9, 17)
+            f!(t, view(w, 1:3))
+        end
+        @test ly_same_full(g, q)
+        for t in (g, q)
+            w = ws === :zacc ? t.zacc_workspace : t.c_workspace
+            w[1:2] .= (4, 11)
+            reset!(t, view(w, 1:2); basis = :X)
+        end
+        @test ly_same_full(g, q)
+    end
+end
+
 @testset "qudit-major canonicalize! inside expect! and measure!" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (true, false)
         n = 40

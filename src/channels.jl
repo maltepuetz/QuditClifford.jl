@@ -145,6 +145,7 @@ julia> entanglement_entropy(tab, [1])
 ```
 """
 function traceout!(tab::AbstractTableau, sites::AbstractVector)
+    sites = _unalias_site_workspaces(tab, sites)
     _check_subsystem!(tab, sites)
     return _traceout!(tab, _layout_marker(tab), sites)
 end
@@ -154,6 +155,12 @@ function traceout!(tab::AbstractTableau, site::Integer)
         "The site must be in 1:$(tab.n); got $site."))
     return _traceout!(tab, _layout_marker(tab), (Int(site),))
 end
+
+# The subsystem check writes c_workspace, and the qudit-major `dephase!` writes
+# c_workspace and zacc_workspace, while `sites` is read, so `sites` stored in
+# either is copied first.
+_unalias_site_workspaces(tab::AbstractTableau, sites::AbstractVector) =
+    Base.unalias(tab.zacc_workspace, Base.unalias(tab.c_workspace, sites))
 
 # Trace out the checked `sites` by dephasing each by X and then by Z.
 function _traceout!(tab::AbstractTableau, L::TableauLayout, sites)
@@ -248,6 +255,7 @@ true
 ```
 """
 function reset!(tab::AbstractTableau, sites::AbstractVector; basis=:Z)
+    sites = _unalias_site_workspaces(tab, sites)
     _check_subsystem!(tab, sites)
     _check_reset_basis(basis, length(sites))
     return _reset_sites!(tab, _layout_marker(tab), sites, basis)
