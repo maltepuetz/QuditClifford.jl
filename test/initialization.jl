@@ -424,7 +424,7 @@ end
 
 @testset "Default storage element type" begin
     for TT in (StabilizerTableau, DestabilizerTableau)
-        for (d, E) in ((2, UInt8), (3, UInt8), (251, UInt8), (257, UInt16),
+        for (d, E) in ((2, QuditClifford._default_qubit_eltype()), (3, UInt8), (251, UInt8), (257, UInt16),
                        (65521, UInt16), (65537, Int))
             @test QuditClifford._storage_eltype(TT(d, 1)) === E
             @test QuditClifford._storage_eltype(TT(d, 1; state=:product)) === E

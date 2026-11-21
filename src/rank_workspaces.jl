@@ -121,13 +121,30 @@ function _copy_sites!(
     return offset + 2N
 end
 
+# Packed blocks, entry by entry through the leaves.
+function _copy_sites!(
+    ws::AbstractMatrix{T},
+    b::BitBlock,
+    m::Int,
+    sites::AbstractVector,
+    N::Int,
+    offset::Int,
+) where {T<:_StorageEltype}
+    @inbounds for j in 1:m, r in 1:N
+        q = Int(sites[r])
+        ws[offset + r, j] = _xget(b, q, j) % T
+        ws[offset + N + r, j] = _zget(b, q, j) % T
+    end
+    return offset + 2N
+end
+
 # On a bit-packed workspace, `offset` counts bits and is a multiple of 64. The
 # block takes rows offset+1:offset+2N as bits, packed as below, and the return
 # value is rounded up to the next multiple of 64, so that the next block
 # starts on a fresh word. The bits in between are zero.
 function _copy_sites!(
     ws::AbstractMatrix{UInt64},
-    b::XZBlock,
+    b::_AnyBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,
@@ -225,6 +242,30 @@ function _pack_sites_gf2!(
                                ((Z[j, q] % UInt64) << (2t - 1))
                 end
             end
+        end
+    end
+    return nw
+end
+
+# Packed blocks, entry by entry through the leaves.
+function _pack_sites_gf2!(
+    W::AbstractMatrix{UInt64},
+    b::BitBlock,
+    m::Int,
+    sites::AbstractVector,
+    N::Int,
+)
+    nw = cld(2N, 64)
+    @inbounds for j in 1:m
+        for w in 1:nw
+            k0 = 32 * (w - 1)
+            acc = zero(UInt64)
+            for t in 1:min(32, N - k0)
+                q = Int(sites[k0 + t])
+                acc |= ((_xget(b, q, j) % UInt64) << (2t - 2)) |
+                       ((_zget(b, q, j) % UInt64) << (2t - 1))
+            end
+            W[w, j] = acc
         end
     end
     return nw

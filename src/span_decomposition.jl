@@ -52,16 +52,7 @@ end
     set_operator!(opvec, tab, op)
 
     @inbounds for j in 1:m
-        dx = _xgen(destab, j)
-        dz = _zgen(destab, j)
-        coeff = 0
-        @turbo for q in 1:n
-            coeff += Int(dx[q]) * opvec[n + q]
-        end
-        @turbo for q in 1:n
-            coeff -= Int(dz[q]) * opvec[q]
-        end
-        cvec[j] = mod(coeff, d)
+        cvec[j] = mod(commutation_col(destab, j, opvec), d)
     end
 
     return cvec
@@ -213,10 +204,7 @@ where `g_j` are active stabilizer generators.
 
             kacc = mod(kacc + phase[j] + 2 * cross, d_phase)
 
-            zj = _zgen(stab, j)
-            @inbounds @simd for q in 1:n
-                zacc[q] = (zacc[q] + zj[q] % Int) & 1
-            end
+            _zacc_add_gf2!(zacc, stab, j)
         end
         return kacc
     else
@@ -245,6 +233,21 @@ where `g_j` are active stabilizer generators.
         end
         return kacc
     end
+end
+
+# zacc[1:n] += the Z half of generator j of `b`, mod 2.
+@inline function _zacc_add_gf2!(zacc::AbstractVector{Int}, b::XZBlock, j::Int)
+    zj = _zgen(b, j)
+    @inbounds @simd for q in 1:_nq(b)
+        zacc[q] = (zacc[q] + zj[q] % Int) & 1
+    end
+    return zacc
+end
+@inline function _zacc_add_gf2!(zacc::AbstractVector{Int}, b::BitBlock, j::Int)
+    @inbounds for q in 1:_nq(b)
+        zacc[q] ⊻= _zget(b, q, j)
+    end
+    return zacc
 end
 
 #############################################################
@@ -387,6 +390,31 @@ function _copy_generator_rows!(
         @simd for t in 1:min(64, m - j0)
             ax |= (sx[j0 + t, q] % UInt64) << (t - 1)
             az |= (sz[j0 + t, q] % UInt64) << (t - 1)
+        end
+        ws[w, q] = ax
+        ws[h + w, q] = az
+    end
+    return ws
+end
+
+# Packed blocks, bits as in the forms above, entry by entry through the leaves.
+function _copy_generator_rows!(
+    ws::AbstractMatrix{UInt64},
+    b::BitBlock,
+    m::Int,
+)
+    n = _nq(b)
+    h = size(ws, 1) >> 1
+    nw = cld(m, 64)
+    (nw <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
+        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
+    @inbounds for q in 1:n, w in 1:nw
+        j0 = 64 * (w - 1)
+        ax = zero(UInt64)
+        az = zero(UInt64)
+        for t in 1:min(64, m - j0)
+            ax |= (_xget(b, q, j0 + t) % UInt64) << (t - 1)
+            az |= (_zget(b, q, j0 + t) % UInt64) << (t - 1)
         end
         ws[w, q] = ax
         ws[h + w, q] = az

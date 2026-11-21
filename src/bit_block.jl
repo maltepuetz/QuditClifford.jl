@@ -154,6 +154,9 @@ end
 const _GMBits = BitBlock{GeneratorMajor}
 const _QMBits = BitBlock{QuditMajor}
 
+# Either kind of block, for code that calls only the leaves.
+const _AnyBlock = Union{XZBlock, BitBlock}
+
 # A zeroed packed block for `n` qudits, `_nwords(n) × _WORD_BITS·_nwords(n)`
 # words in a parent of its own, padded and placed in line `slot` by the rule
 # of `_padded_block` applied to its word columns.
@@ -239,6 +242,294 @@ end
     end
     return mod(s, d)
 end
+
+##### composites #####
+#
+# The generator operations of src/xz_block.jl on packed blocks. At d = 2 every
+# multiplier `a` acts through its parity: adding or subtracting `a` times a
+# generator flips the bits where that generator is 1 when `a` is odd, and
+# multiply-copy writes the generator or zero. Stacked vectors `[x; z]` hold
+# reduced entries 0 or 1 of a storage element type, so bit 0 of an entry is
+# the entry.
+#
+# Generator-major, a generator is a contiguous word column: block-to-block
+# forms are word loops, and vector forms pack or unpack 64 entries per word.
+# Qudit-major, a generator is bit `j` of every column word, so each form sets
+# or flips that bit column by column.
+
+# Bit `i` of a word built from a stacked entry, 0 or 1.
+@inline _entry_bit(v::AbstractVector{<:_StorageEltype}, i::Int) =
+    @inbounds (v[i] % UInt64) & UInt64(1)
+
+# Word `w` of the entries `v[off+1:off+n]`, packed least significant first.
+@inline function _pack_word(v::AbstractVector{<:_StorageEltype}, off::Int, w::Int, n::Int)
+    lo = (w - 1) << _WORD_SHIFT
+    word = UInt64(0)
+    @inbounds for k in 1:min(_WORD_BITS, n - lo)
+        word |= _entry_bit(v, off + lo + k) << (k - 1)
+    end
+    return word
+end
+
+# Write the bits of `word`, the entries `v[off+lo+1:off+lo+64]` of word `w`, into
+# `v[off+1:off+n]`; `flip` adds them mod 2 to the entries instead.
+@inline function _unpack_word!(v::AbstractVector{E}, off::Int, w::Int, n::Int, word::UInt64,
+                               flip::Bool) where {E<:_StorageEltype}
+    lo = (w - 1) << _WORD_SHIFT
+    @inbounds for k in 1:min(_WORD_BITS, n - lo)
+        bit = (word >> (k - 1)) & UInt64(1)
+        i = off + lo + k
+        v[i] = (flip ? _entry_bit(v, i) ⊻ bit : bit) % E
+    end
+    return v
+end
+
+# Flip bit `i` of word column `c` when `v` is 1 (`v` is 0 or 1), and entry
+# `(q, j)` of a block likewise.
+@inline function _flipbit!(A::_BlockMatrix{UInt64}, v::UInt64, i::Int, c::Int)
+    @inbounds A[_word_index(i), c] ⊻= v << _bit_offset(i)
+    return A
+end
+@inline _xflip!(b::_GMBits, v::UInt64, q::Int, j::Int) = _flipbit!(b.x, v, q, j)
+@inline _zflip!(b::_GMBits, v::UInt64, q::Int, j::Int) = _flipbit!(b.z, v, q, j)
+@inline _xflip!(b::_QMBits, v::UInt64, q::Int, j::Int) = _flipbit!(b.x, v, j, q)
+@inline _zflip!(b::_QMBits, v::UInt64, q::Int, j::Int) = _flipbit!(b.z, v, j, q)
+
+# Combined row `r` in `1:2n`, X rows first.
+@inline function _rget(b::BitBlock, r::Int, j::Int)
+    n = b.n
+    return r <= n ? _xget(b, r, j) : _zget(b, r - n, j)
+end
+@inline function _rset!(b::BitBlock, v::Int, r::Int, j::Int)
+    n = b.n
+    r <= n ? _xset!(b, v, r, j) : _zset!(b, v, r - n, j)
+    return v
+end
+
+## generator-major
+
+function _zero_gen!(b::_GMBits, j::Int)
+    x, z = b.x, b.z
+    @inbounds @simd for w in axes(x, 1)
+        x[w, j] = UInt64(0)
+        z[w, j] = UInt64(0)
+    end
+    return b
+end
+
+function _swap_gens!(b::_GMBits, i::Int, j::Int)
+    i == j && return b
+    for A in (b.x, b.z)
+        @inbounds @simd for w in axes(A, 1)
+            t = A[w, i]
+            A[w, i] = A[w, j]
+            A[w, j] = t
+        end
+    end
+    return b
+end
+
+function _move_gen!(b::_GMBits, j::Int, k::Int)
+    j == k && return b
+    x, z = b.x, b.z
+    @inbounds @simd for w in axes(x, 1)
+        x[w, j] = x[w, k]
+        z[w, j] = z[w, k]
+    end
+    return b
+end
+
+function _copy_gen!(v::AbstractVector{<:_StorageEltype}, b::_GMBits, j::Int)
+    n = b.n
+    @inbounds for w in axes(b.x, 1)
+        _unpack_word!(v, 0, w, n, b.x[w, j], false)
+        _unpack_word!(v, n, w, n, b.z[w, j], false)
+    end
+    return v
+end
+
+function _load_gen!(b::_GMBits, j::Int, v::AbstractVector{<:_StorageEltype})
+    n = b.n
+    @inbounds for w in axes(b.x, 1)
+        b.x[w, j] = _pack_word(v, 0, w, n)
+        b.z[w, j] = _pack_word(v, n, w, n)
+    end
+    return b
+end
+
+# generator j += v (mod 2)
+function _gen_xor!(b::_GMBits, j::Int, v::AbstractVector{<:_StorageEltype})
+    n = b.n
+    @inbounds for w in axes(b.x, 1)
+        b.x[w, j] ⊻= _pack_word(v, 0, w, n)
+        b.z[w, j] ⊻= _pack_word(v, n, w, n)
+    end
+    return b
+end
+
+# generator j of `b` += generator k of `src` (mod 2)
+function _gen_xor!(b::_GMBits, j::Int, src::_GMBits, k::Int)
+    x, z, sx, sz = b.x, b.z, src.x, src.z
+    @inbounds @simd for w in axes(x, 1)
+        x[w, j] ⊻= sx[w, k]
+        z[w, j] ⊻= sz[w, k]
+    end
+    return b
+end
+
+# v += generator j (mod 2)
+function _vec_xor!(v::AbstractVector{<:_StorageEltype}, b::_GMBits, j::Int)
+    n = b.n
+    @inbounds for w in axes(b.x, 1)
+        _unpack_word!(v, 0, w, n, b.x[w, j], true)
+        _unpack_word!(v, n, w, n, b.z[w, j], true)
+    end
+    return v
+end
+
+## qudit-major
+
+function _zero_gen!(b::_QMBits, j::Int)
+    w, mask = _word_index(j), ~(UInt64(1) << _bit_offset(j))
+    x, z = b.x, b.z
+    @inbounds for q in 1:b.n
+        x[w, q] &= mask
+        z[w, q] &= mask
+    end
+    return b
+end
+
+function _swap_gens!(b::_QMBits, i::Int, j::Int)
+    i == j && return b
+    wi, oi = _word_index(i), _bit_offset(i)
+    wj, oj = _word_index(j), _bit_offset(j)
+    for A in (b.x, b.z)
+        @inbounds for q in 1:b.n
+            t = ((A[wi, q] >> oi) ⊻ (A[wj, q] >> oj)) & UInt64(1)
+            A[wi, q] ⊻= t << oi
+            A[wj, q] ⊻= t << oj
+        end
+    end
+    return b
+end
+
+function _move_gen!(b::_QMBits, j::Int, k::Int)
+    j == k && return b
+    wj, oj = _word_index(j), _bit_offset(j)
+    wk, ok = _word_index(k), _bit_offset(k)
+    mask = ~(UInt64(1) << oj)
+    for A in (b.x, b.z)
+        @inbounds for q in 1:b.n
+            A[wj, q] = (A[wj, q] & mask) | (((A[wk, q] >> ok) & UInt64(1)) << oj)
+        end
+    end
+    return b
+end
+
+function _copy_gen!(v::AbstractVector{E}, b::_QMBits, j::Int) where {E<:_StorageEltype}
+    n = b.n
+    w, o = _word_index(j), _bit_offset(j)
+    @inbounds for q in 1:n
+        v[q] = ((b.x[w, q] >> o) & UInt64(1)) % E
+        v[n + q] = ((b.z[w, q] >> o) & UInt64(1)) % E
+    end
+    return v
+end
+
+function _load_gen!(b::_QMBits, j::Int, v::AbstractVector{<:_StorageEltype})
+    n = b.n
+    w, o = _word_index(j), _bit_offset(j)
+    mask = ~(UInt64(1) << o)
+    @inbounds for q in 1:n
+        b.x[w, q] = (b.x[w, q] & mask) | (_entry_bit(v, q) << o)
+        b.z[w, q] = (b.z[w, q] & mask) | (_entry_bit(v, n + q) << o)
+    end
+    return b
+end
+
+function _gen_xor!(b::_QMBits, j::Int, v::AbstractVector{<:_StorageEltype})
+    n = b.n
+    w, o = _word_index(j), _bit_offset(j)
+    @inbounds for q in 1:n
+        b.x[w, q] ⊻= _entry_bit(v, q) << o
+        b.z[w, q] ⊻= _entry_bit(v, n + q) << o
+    end
+    return b
+end
+
+function _gen_xor!(b::_QMBits, j::Int, src::_QMBits, k::Int)
+    wj, oj = _word_index(j), _bit_offset(j)
+    wk, ok = _word_index(k), _bit_offset(k)
+    x, z, sx, sz = b.x, b.z, src.x, src.z
+    @inbounds for q in 1:b.n
+        x[wj, q] ⊻= ((sx[wk, q] >> ok) & UInt64(1)) << oj
+        z[wj, q] ⊻= ((sz[wk, q] >> ok) & UInt64(1)) << oj
+    end
+    return b
+end
+
+function _vec_xor!(v::AbstractVector{E}, b::_QMBits, j::Int) where {E<:_StorageEltype}
+    n = b.n
+    w, o = _word_index(j), _bit_offset(j)
+    @inbounds for q in 1:n
+        v[q] = (_entry_bit(v, q) ⊻ ((b.x[w, q] >> o) & UInt64(1))) % E
+        v[n + q] = (_entry_bit(v, n + q) ⊻ ((b.z[w, q] >> o) & UInt64(1))) % E
+    end
+    return v
+end
+
+## both layouts, through the forms above
+
+_gen_addmul!(b::BitBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, ::Int) =
+    isodd(a) ? _gen_xor!(b, j, v) : b
+_gen_submul!(b::BitBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, ::Int) =
+    isodd(a) ? _gen_xor!(b, j, v) : b
+_gen_mulcopy!(b::BitBlock, j::Int, v::AbstractVector{<:_StorageEltype}, a::Int, ::Int) =
+    isodd(a) ? _load_gen!(b, j, v) : _zero_gen!(b, j)
+
+# `src` may be `b` itself when `k ≠ j`.
+_gen_addmul!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int, a::Int, ::Int) where {L} =
+    isodd(a) ? _gen_xor!(b, j, src, k) : b
+_gen_submul!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int, a::Int, ::Int) where {L} =
+    isodd(a) ? _gen_xor!(b, j, src, k) : b
+
+_gen_scale!(b::BitBlock, j::Int, a::Int, ::Int) = isodd(a) ? b : _zero_gen!(b, j)
+
+_vec_addmul!(v::AbstractVector{<:_StorageEltype}, b::BitBlock, j::Int, a::Int, ::Int) =
+    isodd(a) ? _vec_xor!(v, b, j) : v
+_vec_submul!(v::AbstractVector{<:_StorageEltype}, b::BitBlock, j::Int, a::Int, ::Int) =
+    isodd(a) ? _vec_xor!(v, b, j) : v
+
+# Site-restricted forms: only qudits `sites[1:nsites]` of generator j change.
+function _gen_addmul_sites!(b::BitBlock, j::Int, v::AbstractVector{<:_StorageEltype},
+                            sites::AbstractVector{Int}, nsites::Int, a::Int, ::Int)
+    isodd(a) || return b
+    n = b.n
+    @inbounds for k in 1:nsites
+        q = sites[k]
+        _xflip!(b, _entry_bit(v, q), q, j)
+        _zflip!(b, _entry_bit(v, n + q), q, j)
+    end
+    return b
+end
+_gen_submul_sites!(b::BitBlock, j::Int, v::AbstractVector{<:_StorageEltype},
+                   sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int) =
+    _gen_addmul_sites!(b, j, v, sites, nsites, a, d)
+
+# `src` may be `b` itself when `k ≠ j`.
+function _gen_addmul_sites!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int,
+                            sites::AbstractVector{Int}, nsites::Int, a::Int, ::Int) where {L}
+    isodd(a) || return b
+    @inbounds for s in 1:nsites
+        q = sites[s]
+        _xflip!(b, _xget(src, q, k) % UInt64, q, j)
+        _zflip!(b, _zget(src, q, k) % UInt64, q, j)
+    end
+    return b
+end
+_gen_submul_sites!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int,
+                   sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int) where {L} =
+    _gen_addmul_sites!(b, j, src, k, sites, nsites, a, d)
 
 ##### switching layouts #####
 

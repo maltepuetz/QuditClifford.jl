@@ -384,10 +384,11 @@ end
 end
 
 # Random-branch fixtures: brickwork circuits with Z measurements at rate `p`
-# on a pure state, and a random pure state.
-function mkqm_monitored(TT, d, n, p, storephase, seed)
+# on a pure state, and a random pure state, in the default element type for
+# `d` or in `eltype`.
+function mkqm_monitored(TT, d, n, p, storephase, seed; eltype = MK._default_eltype(d))
     rng = Xoshiro(seed)
-    tab = TT(d, n; state = :Z, storephase)
+    tab = TT(d, n; state = :Z, storephase, eltype)
     for l in 1:8
         for q in (isodd(l) ? 1 : 2):2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
@@ -399,8 +400,8 @@ function mkqm_monitored(TT, d, n, p, storephase, seed)
     return tab
 end
 
-function mkqm_random(TT, d, n, storephase, seed)
-    tab = TT(d, n; state = :Z, storephase)
+function mkqm_random(TT, d, n, storephase, seed; eltype = MK._default_eltype(d))
+    tab = TT(d, n; state = :Z, storephase, eltype)
     random_state!(Xoshiro(seed), tab)
     return tab
 end
@@ -442,8 +443,10 @@ end
     L = MK.QuditMajor()
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
         n = 48
-        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d),
-                                 mkqm_random(TT, d, n, storephase, 40d)))
+        # The qudit-major kernel takes unpacked storage.
+        E = d == 2 ? UInt8 : MK._default_eltype(d)
+        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d; eltype = E),
+                                 mkqm_random(TT, d, n, storephase, 40d; eltype = E)))
             a = qudit_major!(copy(g))
             b = copy(a)
             rng = Xoshiro(k)

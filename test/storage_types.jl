@@ -2,7 +2,11 @@ using QuditClifford, Test, Random, LinearAlgebra
 
 const st_QC = QuditClifford
 
-st_types(d) = filter(E -> st_QC._eltype_admissible(E, d), (UInt8, UInt16, Int))
+st_types(d) = filter(E -> st_QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits))
+
+# The element type of the stored blocks of a tableau of storage type `E`: a
+# packed block holds words.
+st_block_eltype(E) = E === Bits ? UInt64 : E
 
 # A signed integer type wider than one machine word on neither platform, so
 # never `Int` itself.
@@ -164,14 +168,15 @@ function st_switch!(rng, tab)
     c == 2 && return generator_major!(tab)
     other = tableau_layout(tab) === :qudit ? :generator : :qudit
     dst = typeof(tab).name.wrapper(tab.d, tab.n; storephase = tab.storephase,
-                                   eltype = Base.eltype(tab.pivot_workspace), layout = other)
+                                   eltype = tableau_eltype(tab), layout = other)
     return copy!(dst, tab)
 end
 
 # Apply `nops` operations drawn from `oprng` to every tableau in `tabs`, the
 # first being the `eltype = Int`, generator-major reference, each with its own
 # copy of `seed` as RNG, and compare every tableau with the reference after
-# every operation. Before each operation every other tableau changes its layout
+# every operation, packed padding included (`st_padding_zero`). Before each
+# operation every other tableau changes its layout
 # with probability 1/8 (`st_switch!`, drawn from an RNG of its own), so `tabs`
 # is updated in place. Returns the number of comparisons that failed.
 function st_run!(tabs, seed, oprng, nops)
@@ -198,10 +203,10 @@ function st_run!(tabs, seed, oprng, nops)
             Dref === nothing || (same &= destabilizer_matrix(tab) == Dref)
             tab isa DestabilizerTableau && (same &= tab.xdotz_cache[1:tab.m] == st_xdotz(tab))
             same &= tableau_layout(tab) === layouts[k]
-            same &= st_capacity_zero(tab)
+            same &= st_capacity_zero(tab) && st_padding_zero(tab)
             if !same
                 ok = false
-                @error "differs from the Int reference" i eltype = Base.eltype(tab.pivot_workspace) layout = tableau_layout(tab) vals[k] vals[1]
+                @error "differs from the Int reference" i eltype = tableau_eltype(tab) layout = tableau_layout(tab) vals[k] vals[1]
             end
         end
         if ref isa DestabilizerTableau && st_duality(ref) != Matrix{Int64}(I, ref.m, ref.m)
@@ -222,9 +227,9 @@ end
 
 # Whether every padding bit of a packed tableau is zero: the parent words
 # outside each block's view, the bits outside the `n × n` bit square inside the
-# view, the capacity generators `m+1:n` (phases and destabilizers included),
-# and the bits past the length of each plane. Always `true` for unpacked
-# storage.
+# view, the capacity generators `m+1:n` (phases and destabilizers included,
+# and the `xdotz_cache` entries of a `DestabilizerTableau`), and the bits past
+# the length of each plane. Always `true` for unpacked storage.
 st_padding_zero(tab) = tableau_eltype(tab) === Bits ? st_bits_padding_zero(tab) : true
 
 function st_bits_padding_zero(tab)
@@ -247,7 +252,10 @@ function st_bits_padding_zero(tab)
     end
     S = stabilizer_matrix(tab)
     ok &= all(iszero, S[:, m+1:end])
-    tab isa DestabilizerTableau && (ok &= all(iszero, destabilizer_matrix(tab)[:, m+1:end]))
+    if tab isa DestabilizerTableau
+        ok &= all(iszero, destabilizer_matrix(tab)[:, m+1:end])
+        ok &= all(iszero, tab.xdotz_cache[m+1:n])
+    end
     for v in (tab.phase, tab.xdotz_cache)
         r = v.len % 64
         ok &= size(v.planes, 1) == cld(v.len, 64)
@@ -270,8 +278,10 @@ st_new_raw_bits(::Type{TT}, M) where {TT} = TT(2, M; eltype = Bits, layout = :qu
 @testset "storage element types" begin
 
 @testset "admissible element types" begin
-    @test st_QC._default_eltype.((2, 3, 251, 257, 65521, 65537)) ==
-          (UInt8, UInt8, UInt8, UInt16, UInt16, Int)
+    # d = 2 follows the qubit default, which test/runtests.jl checks.
+    @test st_QC._default_eltype(2) === st_QC._default_qubit_eltype()
+    @test st_QC._default_eltype.((3, 251, 257, 65521, 65537)) ==
+          (UInt8, UInt8, UInt16, UInt16, Int)
     for TT in (StabilizerTableau, DestabilizerTableau)
         @test_throws ArgumentError TT(257, 2; eltype = UInt8)
         @test_throws ArgumentError TT(3, 2; eltype = st_OtherSigned)
@@ -317,12 +327,14 @@ end
         ref = TT(d, n; state, basis, storephase, eltype = Int)
         @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
         @test eltype(stabilizer_matrix(tab)) === Int
-        @test size(tab.stab_x) == (n, n)
-        @test Base.eltype(tab.stab_x) === E && Base.eltype(tab.stab_z) === E
+        @test tableau_eltype(tab) === E
+        @test size(tab.stab_x) == (E === Bits ? (1, 64) : (n, n))
+        W = st_block_eltype(E)
+        @test Base.eltype(tab.stab_x) === W && Base.eltype(tab.stab_z) === W
         if TT === DestabilizerTableau
             @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
             @test eltype(destabilizer_matrix(tab)) === Int
-            @test Base.eltype(tab.destab_x) === E && Base.eltype(tab.destab_z) === E
+            @test Base.eltype(tab.destab_x) === W && Base.eltype(tab.destab_z) === W
         end
     end
 end
@@ -380,14 +392,16 @@ end
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d),
         storephase in (true, false)
         n = 5
+        # Packed storage keeps an unpacked `UInt8` pivot.
+        P = E === Bits ? UInt8 : E
         tab = TT(d, n; storephase, eltype = E)
-        @test Base.eltype(tab.pivot_workspace) === E
+        @test Base.eltype(tab.pivot_workspace) === P
         @test length(tab.pivot_workspace) == 2n
         c = copy(tab)
-        @test Base.eltype(c.pivot_workspace) === E && length(c.pivot_workspace) == 2n
+        @test Base.eltype(c.pivot_workspace) === P && length(c.pivot_workspace) == 2n
         @test c.pivot_workspace !== tab.pivot_workspace
         raw = TT(d, stabilizer_matrix(TT(d, n; state = :ghz, storephase)); eltype = E)
-        @test Base.eltype(raw.pivot_workspace) === E && length(raw.pivot_workspace) == 2n
+        @test Base.eltype(raw.pivot_workspace) === P && length(raw.pivot_workspace) == 2n
     end
 end
 
@@ -406,7 +420,9 @@ end
 @testset "generator operations on every element-type pair" begin
     rng = Xoshiro(7)
     n, ncap = 37, 6
+    # Packed blocks have their own test ("Bits composites" in test/bits.jl).
     for d in (2, 3, 251, 257), Eb in st_types(d), Ev in st_types(d)
+        (Eb === Bits || Ev === Bits) && continue
         X0 = rand(rng, 0:d-1, n, ncap)
         Z0 = rand(rng, 0:d-1, n, ncap)
         v0 = rand(rng, 0:d-1, 2n)
@@ -569,6 +585,8 @@ end
 @testset "differential across layouts and element types" begin
     ds = Sys.WORD_SIZE == 64 ? (2, 3, 251, 257, 65521) : (2, 3, 251, 257)
     cases = [(d, n) for d in ds for n in (5, 33)]
+    # Packed qubits at word boundaries.
+    append!(cases, [(2, 63), (2, 65), (2, 130)])
     append!(cases, [(3, 300), (251, 300)])
     seed = 0
     for (d, n) in cases, TT in (DestabilizerTableau, StabilizerTableau),

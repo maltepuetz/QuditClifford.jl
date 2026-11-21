@@ -60,21 +60,31 @@ end
     end
     comm
 end
-@inline function commutation_col(b::XZBlock, col::Int, op::GeneralPauli)
+# Packed, the set bits of generator `col` select the operand entries they pair
+# with.
+@inline function commutation_col(b::BitBlock, col::Int, s::AbstractVector{<:Integer})
+    N = _nq(b)
+    comm = 0
+    @inbounds for q in 1:N
+        comm += _xget(b, q, col) * s[q+N] - _zget(b, q, col) * s[q]
+    end
+    comm
+end
+@inline function commutation_col(b::_AnyBlock, col::Int, op::GeneralPauli)
     return commutation_col(b, col, op.xz)
 end
 
-@inline function commutation_col(b::XZBlock, col::Int, op::SinglePauli)
+@inline function commutation_col(b::_AnyBlock, col::Int, op::SinglePauli)
     comm = _xget(b, op.qudit, col) * op.z - _zget(b, op.qudit, col) * op.x
     comm
 end
-@inline function commutation_col(b::XZBlock, col::Int, op::DoublePauli)
+@inline function commutation_col(b::_AnyBlock, col::Int, op::DoublePauli)
     comm = 0
     comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
     comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
     comm
 end
-@inline function commutation_col(b::XZBlock, col::Int, op::TriplePauli)
+@inline function commutation_col(b::_AnyBlock, col::Int, op::TriplePauli)
     comm = 0
     comm += _xget(b, op.qudit1, col) * op.z1 - _zget(b, op.qudit1, col) * op.x1
     comm += _xget(b, op.qudit2, col) * op.z2 - _zget(b, op.qudit2, col) * op.x2
@@ -85,7 +95,7 @@ end
 # generator-major layout each entry it reads sits in a different cache line. A
 # zero exponent skips its load, which halves the misses of a pure Z or X
 # operand. Callers validate the qudit indices before the scan.
-@inline function commutation_col(b::XZBlock, col::Int, op::NPauli{D}) where D
+@inline function commutation_col(b::_AnyBlock, col::Int, op::NPauli{D}) where D
     comm = 0
     @inbounds for i in 1:D
         q = op.qudits[i]
@@ -339,6 +349,41 @@ end
     return nothing
 end
 
+# Packed storage: the same cross terms through the leaves, and the update
+# through the bit composites.
+@inline function _absorb_pivot_power!(tab::_BitTableau, L::TableauLayout, col::Int, a::Int,
+                                      pu::_PivotUpdate)
+    a == 0 && return nothing
+    stab = _stab(tab, L)
+    genws = tab.pivot_workspace
+    n = tab.n
+    d = tab.d
+    track = tab isa DestabilizerTableau
+    sites = tab.zacc_workspace
+    cb = 0
+    cz = 0
+    if track || tab.storephase
+        if pu.sparse
+            @inbounds for k in 1:pu.nsupp
+                q = sites[k]
+                cb += Int(genws[q]) * _zget(stab, q, col)
+                cz += _xget(stab, q, col) * Int(genws[n+q])
+            end
+        else
+            @inbounds for q in 1:n
+                cb += Int(genws[q]) * _zget(stab, q, col)
+                cz += _xget(stab, q, col) * Int(genws[n+q])
+            end
+        end
+    end
+    _absorb_pivot_scalars!(tab, col, a, mod(cb, d), cz, pu)
+    if pu.sparse
+        _gen_addmul_sites!(stab, col, genws, sites, pu.nsupp, a, d)
+    else
+        _gen_addmul!(stab, col, genws, a, d)
+    end
+    return nothing
+end
 
 ############################################
 # Projective measurement (mixed-state)     #
@@ -420,9 +465,19 @@ end
 # that of dual `col`; `sparse` says whether the update runs over those sites or
 # over all rows. D_col is fixed throughout, so each t_j is the same whether it
 # is read before or after the other duals change.
-function _orthogonalize_duals!(tab::DestabilizerTableau, L::TableauLayout, col::Int, m::Int,
-                               supp::Vector{Int}, nsupp::Int,
-                               sites::Vector{Int}, nsites::Int, sparse::Bool)
+_orthogonalize_duals!(tab::DestabilizerTableau, L::TableauLayout, col::Int, m::Int,
+                      supp::Vector{Int}, nsupp::Int, sites::Vector{Int}, nsites::Int,
+                      sparse::Bool) =
+    _orthogonalize_duals_generic!(tab, L, col, m, supp, nsupp, sites, nsites, sparse)
+
+_orthogonalize_duals!(tab::_BitDestab, L::QuditMajor, col::Int, m::Int,
+                      supp::Vector{Int}, nsupp::Int, sites::Vector{Int}, nsites::Int,
+                      sparse::Bool) =
+    _orthogonalize_duals_generic!(tab, L, col, m, supp, nsupp, sites, nsites, sparse)
+
+function _orthogonalize_duals_generic!(tab::DestabilizerTableau, L::TableauLayout, col::Int,
+                                       m::Int, supp::Vector{Int}, nsupp::Int,
+                                       sites::Vector{Int}, nsites::Int, sparse::Bool)
     d = tab.d
     stab = _stab(tab, L)
     destab = _destab(tab, L)
@@ -686,8 +741,18 @@ function _measurement_phase(tab::AbstractTableau, op::AbstractPauli,
     return mod(kop, phase_modulus(d))
 end
 
-function _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
-                   op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
+_measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout, op::AbstractPauli,
+          outcome::Union{Int,Nothing}, phase_policy::Int) =
+    _measure_generic!(rng, tab, L, op, outcome, phase_policy)
+
+# Packed storage runs the per-generator algorithm in both layouts.
+_measure!(rng::Random.AbstractRNG, tab::_BitTableau, L::QuditMajor, op::AbstractPauli,
+          outcome::Union{Int,Nothing}, phase_policy::Int) =
+    _measure_generic!(rng, tab, L, op, outcome, phase_policy)
+
+# The per-generator `measure!`, for every layout and storage.
+function _measure_generic!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
+                           op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
     kop = _measurement_phase(tab, op, outcome, phase_policy)
     d = tab.d
     n = tab.n

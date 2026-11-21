@@ -101,8 +101,11 @@ end
     bt_msg(d) = try bt_QC._check_eltype(Float64, d); "" catch e; e.msg end
     @test occursin("use one of UInt8, UInt16, $(nameof(Int)), Bits.", bt_msg(2))
     @test occursin("use one of UInt8, UInt16, $(nameof(Int)).", bt_msg(3))
-    @test bt_QC._default_eltype(2) === bt_QC._default_qubit_eltype() === UInt8
-    @test tableau_eltype(StabilizerTableau(2, 3)) === UInt8
+    # test/runtests.jl checks that the shipped default is `UInt8`, before the
+    # suite may switch it to `Bits`.
+    @test bt_QC._default_eltype(2) === bt_QC._default_qubit_eltype()
+    @test tableau_eltype(StabilizerTableau(2, 3)) === bt_QC._default_qubit_eltype()
+    @test tableau_eltype(StabilizerTableau(2, 3; eltype = UInt8)) === UInt8
     @test tableau_eltype(DestabilizerTableau(257, 3)) === UInt16
     @test tableau_eltype(StabilizerTableau(3, 3; eltype = Int)) === Int
 end
@@ -210,7 +213,7 @@ end
 @testset "Bits switch round trip" begin
     for TT in bt_TYPES, n in (1, 2, 63, 64, 65, 127, 128, 129, 1984, 1985, 2047, 2048, 2049)
         rng = Xoshiro(20261121 + n)
-        tab = TT(2, n; eltype = Bits)
+        tab = TT(2, n; eltype = Bits, layout = :generator)
         n <= 129 ? random_state!(rng, tab; m = n ÷ 2) : bt_random_blocks!(rng, tab)
         @test st_padding_zero(tab)
         S = stabilizer_matrix(tab)
@@ -312,6 +315,179 @@ end
         # Nothing was written outside the n × n bit square.
         @test all(rawbit(x, r, c) == 0 for r in 1:64nw, c in 1:64nw if r > n || c > n)
         @test all(iszero, view(x, :, n+1:64nw)) && all(iszero, view(z, :, n+1:64nw))
+    end
+end
+
+
+# A random qubit Pauli of every operator type on `n` qudits, Hermitian:
+# `SinglePauli`, `DoublePauli`, `TriplePauli`, `NPauli`, `GeneralPauli`, or a
+# plain exponent vector with a phase entry.
+function bt_rand_pauli(rng, n)
+    kind = rand(rng, 1:6)
+    k = kind <= 3 ? kind : kind == 4 ? rand(rng, 1:min(n, 5)) : n
+    k = min(k, n)
+    qs = randperm(rng, n)[1:k]
+    xs = rand(rng, 0:1, k)
+    zs = rand(rng, 0:1, k)
+    ph = mod(sum(xs .* zs), 2) + 2 * rand(rng, 0:1)
+    if kind == 1 || k == 1
+        return SinglePauli(qs[1], xs[1], zs[1], ph)
+    elseif kind == 2 || k == 2
+        return DoublePauli(qs[1], xs[1], zs[1], qs[2], xs[2], zs[2], ph)
+    elseif kind == 3 || (kind == 4 && k == 3)
+        return TriplePauli(qs[1], xs[1], zs[1], qs[2], xs[2], zs[2], qs[3], xs[3], zs[3], ph)
+    elseif kind == 4
+        return NPauli(Tuple(qs), Tuple(xs), Tuple(zs), ph)
+    end
+    v = zeros(Int, 2n)
+    v[qs] .= xs
+    v[n .+ qs] .= zs
+    return kind == 5 ? GeneralPauli(v, ph) : vcat(v, ph)
+end
+
+# The next operation for the packed-against-`UInt8` comparison, drawn from
+# `rng` and the state of `ref`.
+function bt_rand_op(rng, ref)
+    n, m = ref.n, ref.m
+    c = rand(rng, 1:20)
+    if c <= 4
+        q = rand(rng, 1:n)
+        g = rand(rng, (Fourier(q), Phase(q), PauliGate(q, rand(rng, 0:1), rand(rng, 0:1))))
+        if n >= 2 && rand(rng, Bool)
+            q1, q2 = randperm(rng, n)[1:2]
+            g = rand(rng, (SUM(q1, q2), CPhase(q1, q2), SWAP(q1, q2)))
+        end
+        return (t, r) -> apply!(t, g)
+    elseif c <= 6
+        # Tuple-backed up to three qudits, dense for four.
+        C = random_clifford(rng, 2, randperm(rng, n)[1:min(n, rand(rng, 1:4))])
+        return (t, r) -> apply!(t, C)
+    elseif c <= 10
+        op = (m > 0 && rand(rng, 1:4) == 1) ? st_generator_pauli(ref, rand(rng, 1:m)) :
+             bt_rand_pauli(rng, n)
+        return rand(rng, Bool) ? ((t, r) -> measure!(r, t, op)) :
+                                 ((t, r) -> measure!(t, op; outcome = 1))
+    elseif c == 11
+        op = (m > 0 && rand(rng, Bool)) ? st_generator_pauli(ref, rand(rng, 1:m)) :
+             bt_rand_pauli(rng, n)
+        op isa AbstractVector && (op = GeneralPauli(op[1:2n], op[end]))
+        return rand(rng, Bool) ? ((t, r) -> expect!(t, op)) : ((t, r) -> expect_int!(t, op))
+    elseif c == 12
+        op = bt_rand_pauli(rng, n)
+        return (t, r) -> dephase!(t, op)
+    elseif c == 13
+        sites = randperm(rng, n)[1:rand(rng, 1:min(n, 3))]
+        return (t, r) -> traceout!(t, sites)
+    elseif c == 14
+        sites = randperm(rng, n)[1:rand(rng, 1:min(n, 3))]
+        basis = rand(rng, (:Z, :X, :Y))
+        return (t, r) -> reset!(t, sites; basis)
+    elseif c == 15
+        return (t, r) -> canonicalize!(t)
+    elseif c == 16
+        mm = rand(rng, (n, rand(rng, 0:n)))
+        return (t, r) -> random_state!(r, t; m = mm)
+    elseif c == 17
+        A, B, C = st_rand_parts(rng, n)
+        f = rand(rng, (t -> entanglement_entropy(t, A), t -> entanglement_profile(t),
+                       t -> mutual_information(t, A, B),
+                       t -> conditional_mutual_information(t, A, B, C),
+                       t -> tripartite_information(t, A, B, C),
+                       t -> entanglement_negativity(t, A, B), bt_QC.is_independent))
+        return (t, r) -> f(t)
+    elseif c == 18
+        return (t, r) -> is_pure(t; verify = true)
+    end
+    q = rand(rng, 1:n)
+    return (t, r) -> apply!(t, Fourier(q))
+end
+
+@testset "same results, Bits vs UInt8" begin
+    seed = 0
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false),
+        (n, nops) in ((130, 400), (1, 60), (63, 100))
+
+        seed += 1
+        t = TT(2, n; storephase, eltype = Bits, layout)
+        u = TT(2, n; storephase, eltype = UInt8, layout)
+        oprng = Xoshiro(30_000 + seed)
+        rt, ru = Xoshiro(seed), Xoshiro(seed)
+        bad = 0
+        for i in 1:nops
+            op = bt_rand_op(oprng, u)
+            vt = st_call(op, t, rt)
+            vu = st_call(op, u, ru)
+            ok = isequal(vt, vu) && bt_same(t, u) && st_padding_zero(t) &&
+                 tableau_layout(t) === layout && rt == ru
+            if !ok
+                bad += 1
+                @error "Bits differs from UInt8" TT layout storephase n i vt vu
+                break
+            end
+        end
+        @test bad == 0
+    end
+end
+
+# A generator-major `Int` block and a packed block in layout `L` holding the
+# same random `n × n` entries 0 or 1.
+function bt_block_pair(rng, L, n)
+    X = rand(rng, 0:1, n, n)
+    Z = rand(rng, 0:1, n, n)
+    ref = bt_QC.XZBlock{bt_QC.GeneratorMajor}(copy(X), copy(Z))
+    b = bt_QC.BitBlock{L}(bt_QC._stab_bit_blocks(n)..., n)
+    for j in 1:n, q in 1:n
+        bt_QC._xset!(b, X[q, j], q, j)
+        bt_QC._zset!(b, Z[q, j], q, j)
+    end
+    return ref, b
+end
+
+bt_entries(b, n) = ([bt_QC._xget(b, q, j) for q in 1:n, j in 1:n],
+                    [bt_QC._zget(b, q, j) for q in 1:n, j in 1:n])
+
+@testset "Bits composites" begin
+    for L in (bt_QC.GeneratorMajor, bt_QC.QuditMajor), n in (1, 63, 65, 130), Ev in (UInt8, Int)
+        rng = Xoshiro(n + 7 * (L === bt_QC.QuditMajor))
+        sites = randperm(rng, n)[1:min(n, 5)]
+        ns = length(sites)
+        js = rand(rng, 1:n, 3)
+        j, k = js[1], n == 1 ? 1 : rand(rng, setdiff(1:n, js[1]))
+        for a in (1, 0)
+            ops = (
+                (b, v) -> bt_QC._gen_addmul!(b, j, v, a, 2),
+                (b, v) -> bt_QC._gen_submul!(b, j, v, a, 2),
+                (b, v) -> bt_QC._gen_mulcopy!(b, j, v, a, 2),
+                (b, v) -> bt_QC._vec_addmul!(v, b, j, a, 2),
+                (b, v) -> bt_QC._vec_submul!(v, b, j, a, 2),
+                (b, v) -> bt_QC._gen_addmul_sites!(b, j, v, sites, ns, a, 2),
+                (b, v) -> bt_QC._gen_submul_sites!(b, j, v, sites, ns - 1, a, 2),
+                (b, v) -> j == k || bt_QC._gen_addmul!(b, j, b, k, a, 2),
+                (b, v) -> j == k || bt_QC._gen_submul!(b, j, b, k, a, 2),
+                (b, v) -> j == k || bt_QC._gen_addmul_sites!(b, j, b, k, sites, ns, a, 2),
+                (b, v) -> j == k || bt_QC._gen_submul_sites!(b, k, b, j, sites, ns, a, 2),
+                (b, v) -> bt_QC._gen_scale!(b, j, a, 2),
+                (b, v) -> bt_QC._copy_gen!(v, b, j),
+                (b, v) -> bt_QC._load_gen!(b, j, v),
+                (b, v) -> bt_QC._swap_gens!(b, j, k),
+                (b, v) -> bt_QC._move_gen!(b, j, k),
+                (b, v) -> bt_QC._zero_gen!(b, j),
+                (b, v) -> bt_QC._rset!(b, 1 - bt_QC._rget(b, n + sites[1], j), n + sites[1], j),
+            )
+            for op in ops
+                ref, b = bt_block_pair(rng, L, n)
+                v0 = Ev.(rand(rng, 0:1, 2n))
+                vref, v = Int.(v0), copy(v0)
+                op(ref, vref)
+                op(b, v)
+                @test bt_entries(b, n) == (ref.x, ref.z) && Int.(v) == vref
+                # Nothing is written outside the n × n bit square.
+                nw = cld(n, 64)
+                @test all(iszero, view(b.x, :, n+1:64nw)) && all(iszero, view(b.z, :, n+1:64nw))
+                @test all(A[w, c] >> (n - 64 * (w - 1)) == 0
+                          for A in (b.x, b.z), c in 1:64nw, w in 1:nw if n - 64 * (w - 1) < 64)
+            end
+        end
     end
 end
 

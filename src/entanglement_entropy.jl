@@ -362,6 +362,17 @@ function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::_QMBlock,
     return ws
 end
 
+# Packed blocks, entry by entry through the leaves.
+function _copy_sites_interleaved!(ws::AbstractMatrix{T}, b::BitBlock,
+                                  m::Int, sites::AbstractVector) where {T<:_StorageEltype}
+    @inbounds for j in 1:m, k in 1:_nq(b)
+        q = Int(sites[k])
+        ws[2k - 1, j] = _xget(b, q, j) % T
+        ws[2k, j] = _zget(b, q, j) % T
+    end
+    return ws
+end
+
 # Bottom-up column elimination on the interleaved rows; `profile[l + 1]`
 # receives the number of pivots on the rows of site l. `ws` is the rank
 # workspace for d >= 3.

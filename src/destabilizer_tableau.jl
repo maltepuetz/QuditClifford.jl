@@ -540,7 +540,7 @@ Every term of a symplectic pairing against that column carries a factor from
 one of those two halves, so all terms outside this index set vanish and a
 pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 """
-@inline function _column_support!(supp::Vector{Int}, b::XZBlock, col::Int)
+@inline function _column_support!(supp::Vector{Int}, b::_AnyBlock, col::Int)
     nsupp = 0
     # Loop-carried counter, so neither @turbo nor @simd applies here.
     @inbounds for q in 1:_nq(b)
@@ -564,8 +564,8 @@ is a cache miss while generator `colB` of `b` stays cached: an entry of `a` is
 loaded only when the entry of `b` it pairs with is nonzero.
 """
 @inline function _symplectic_col_col_support(
-    a::XZBlock, colA::Int,
-    b::XZBlock, colB::Int,
+    a::_AnyBlock, colA::Int,
+    b::_AnyBlock, colB::Int,
     supp::Vector{Int}, nsupp::Int,
 )
     s = 0
@@ -586,7 +586,7 @@ multiplies; `supp[1:nsupp]` must cover the support of generator `colB` of `b`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
-    b::XZBlock, colB::Int,
+    b::_AnyBlock, colB::Int,
     supp::Vector{Int}, nsupp::Int,
 )
     n = _nq(b)
