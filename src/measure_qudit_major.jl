@@ -84,15 +84,9 @@ end
 function _measure_qm!(rng::Random.AbstractRNG, tab::AbstractTableau, L::QuditMajor,
                       op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int,
                       div::Int)
-    _check_pauli_support(tab, op)
+    kop = _measurement_phase(tab, op, outcome, phase_policy)
     d = tab.d
     m = tab.m
-    _check_outcome(outcome, d)
-
-    # The phase of the operator, reduced so that the outcome arithmetic cannot
-    # overflow.
-    kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
-    kop = mod(kop, phase_modulus(d))
 
     # A dense operand lives in res_workspace, which the commutators only read.
     opc = _commutation_operand!(tab, op)

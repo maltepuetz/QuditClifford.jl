@@ -674,18 +674,24 @@ function measure!(rng::Random.AbstractRNG, tab::AbstractTableau, op::AbstractPau
     return _measure!(rng, tab, _layout_marker(tab), op, outcome, phase_policy)
 end
 
+# The argument checks shared by every layout's `measure!`, and the phase
+# exponent of the measured operator under `phase_policy`, reduced mod
+# `phase_modulus(d)` so that the outcome arithmetic cannot overflow.
+function _measurement_phase(tab::AbstractTableau, op::AbstractPauli,
+                            outcome::Union{Int,Nothing}, phase_policy::Int)
+    _check_pauli_support(tab, op)
+    d = tab.d
+    _check_outcome(outcome, d)
+    kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
+    return mod(kop, phase_modulus(d))
+end
+
 function _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
                    op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
-    _check_pauli_support(tab, op)
+    kop = _measurement_phase(tab, op, outcome, phase_policy)
     d = tab.d
     n = tab.n
     m = tab.m
-    _check_outcome(outcome, d)
-
-    # get phase of the operator (if available), reduced so that the outcome
-    # arithmetic below cannot overflow
-    kop = tab.storephase ? _effective_measurement_phase(op, d, phase_policy) : op.phase
-    kop = mod(kop, phase_modulus(d))
 
     # Outcome of a random branch, drawn on reaching one.
     t = 0
