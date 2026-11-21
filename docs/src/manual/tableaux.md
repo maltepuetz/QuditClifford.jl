@@ -231,14 +231,24 @@ across layouts.
 
 A switch transposes each `n × n` block inside its existing array and allocates
 nothing. It costs about one transpose of each block: two for a
-[`StabilizerTableau`](@ref), four for a [`DestabilizerTableau`](@ref). That is
-cheap next to a phase of many gates.
+[`StabilizerTableau`](@ref), four for a [`DestabilizerTableau`](@ref). With the
+default `UInt8` entries at `n = 2048` that is about 1.6 ms and 3.3 ms on an
+Apple M3 Pro, cheap next to a phase of many gates.
 
-Which layout is faster depends on the operation:
+Which layout is faster depends on the operation. On the same machine, for
+`n` from 1023 to 2049 and `d = 2, 3, 31`:
 
-- Gates are much faster qudit-major.
-- Random-outcome measurements are faster qudit-major, most on dense states.
-- [`canonicalize!`](@ref) and some channels are slower qudit-major.
+- Gates are 4–16 times faster qudit-major, and monitored circuits of gates and
+  measurements about 2–4 times.
+- Random-outcome measurements take 0.4–0.9 times the generator-major time.
+- [`canonicalize!`](@ref), [`dephase!`](@ref), [`traceout!`](@ref) and
+  [`reset!`](@ref) are about as fast or faster qudit-major, and so are
+  [`expect!`](@ref) and [`expect_int!`](@ref) on a non-canonical
+  [`StabilizerTableau`](@ref).
+- The entropies and other rank-based quantities are about as fast in both
+  layouts, up to 1.5 times slower qudit-major.
+- [`expect!`](@ref) on a [`DestabilizerTableau`](@ref) is about 4 times slower
+  qudit-major, and [`stabilizer_matrix`](@ref) and `==` cost a few transposes.
 
 Keep the default generator-major layout unless a phase of the computation is
 dominated by gates and measurements, and switch at the phase boundaries. For
