@@ -220,6 +220,42 @@ function st_run!(tabs, seed, oprng, nops)
     return bad
 end
 
+# Whether every padding bit of a packed tableau is zero: the parent words
+# outside each block's view, the bits outside the `n × n` bit square inside the
+# view, the capacity generators `m+1:n` (phases and destabilizers included),
+# and the bits past the length of each plane. Always `true` for unpacked
+# storage.
+st_padding_zero(tab) = tableau_eltype(tab) === Bits ? st_bits_padding_zero(tab) : true
+
+function st_bits_padding_zero(tab)
+    n, m = tab.n, tab.m
+    blocks = tab isa DestabilizerTableau ?
+        (tab.stab_x, tab.stab_z, tab.destab_x, tab.destab_z) : (tab.stab_x, tab.stab_z)
+    ok = true
+    for A in blocks
+        P = parent(A)
+        nw = size(A, 1)
+        cols = parentindices(A)[2]
+        ok &= size(A, 2) == 64nw
+        ok &= all(iszero(P[r, c]) for r in axes(P, 1), c in axes(P, 2)
+                  if r > nw || !(c in cols))
+        for c in axes(A, 2), w in 1:nw
+            lo = 64 * (w - 1)                 # bits lo+1:lo+64 of this word
+            valid = c > n ? 0 : clamp(n - lo, 0, 64)
+            ok &= valid == 64 || A[w, c] >> valid == 0
+        end
+    end
+    S = stabilizer_matrix(tab)
+    ok &= all(iszero, S[:, m+1:end])
+    tab isa DestabilizerTableau && (ok &= all(iszero, destabilizer_matrix(tab)[:, m+1:end]))
+    for v in (tab.phase, tab.xdotz_cache)
+        r = v.len % 64
+        ok &= size(v.planes, 1) == cld(v.len, 64)
+        r == 0 || isempty(v.planes) || (ok &= all(v.planes[end, b] >> r == 0 for b in axes(v.planes, 2)))
+    end
+    return ok
+end
+
 # Constructor calls with a literal `eltype`, wrapped so that `@inferred` sees the
 # constant the way a caller's compiled code does.
 st_new_u8(::Type{TT}, n) where {TT} = TT(3, n; eltype = UInt8)
@@ -228,6 +264,8 @@ st_new_int(::Type{TT}, d, n) where {TT} = TT(d, n; eltype = Int)
 st_new_state_u8(::Type{TT}, n) where {TT} = TT(3, n, :product; eltype = UInt8)
 st_new_raw_u8(::Type{TT}, M) where {TT} = TT(3, M; eltype = UInt8)
 st_new_raw_int(::Type{TT}, d, M) where {TT} = TT(d, M; eltype = Int)
+st_new_bits(::Type{TT}, n) where {TT} = TT(2, n; eltype = Bits)
+st_new_raw_bits(::Type{TT}, M) where {TT} = TT(2, M; eltype = Bits, layout = :qudit)
 
 @testset "storage element types" begin
 
@@ -251,13 +289,21 @@ end
 
 @testset "explicit element type is inferred" begin
     M = [1 0 2 0 0; 0 1 0 0 0]
+    IM = st_QC.PrecomputedInvMod
     for TT in (StabilizerTableau, DestabilizerTableau)
-        @test typeof(@inferred st_new_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_u16(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt16}
-        @test typeof(@inferred st_new_int(TT, 3, 4)) === TT{st_QC.PrecomputedInvMod, Int}
-        @test typeof(@inferred st_new_state_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_raw_u8(TT, M)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_raw_int(TT, 3, M)) === TT{st_QC.PrecomputedInvMod, Int}
+        @test typeof(@inferred st_new_u8(TT, 4)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_u16(TT, 4)) === TT{IM, UInt16, UInt16, Vector{Int}}
+        @test typeof(@inferred st_new_int(TT, 3, 4)) === TT{IM, Int, Int, Vector{Int}}
+        @test typeof(@inferred st_new_state_u8(TT, 4)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_raw_u8(TT, M)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_raw_int(TT, 3, M)) === TT{IM, Int, Int, Vector{Int}}
+        @test typeof(@inferred st_new_bits(TT, 4)) === TT{IM, UInt8, UInt64, st_QC._BitPlanes}
+        @test typeof(@inferred st_new_raw_bits(TT, [1 0; 0 1; 0 0; 0 0; 0 0])) ===
+              TT{IM, UInt8, UInt64, st_QC._BitPlanes}
+        @test fieldtype(TT{IM, UInt8, UInt64, st_QC._BitPlanes}, :stab_x) ===
+              st_QC._BlockMatrix{UInt64}
+        @test fieldtype(TT{IM, UInt8, UInt64, st_QC._BitPlanes}, :phase) === st_QC._BitPlanes
+        @test fieldtype(TT{IM, UInt8, UInt8, Vector{Int}}, :stab_x) === st_QC._BlockMatrix{UInt8}
     end
 end
 
@@ -410,6 +456,10 @@ end
         @test Base.summarysize(S) <= 2.25 * 2n^2 + slack
         @test Base.summarysize(D) <= 2.25 * 4n^2 + slack
     end
+    # Packed blocks take a sixteenth of the bytes, padding and the unpacked
+    # workspaces included.
+    @test Base.summarysize(StabilizerTableau(2, 2048; eltype = Bits)) <
+          Base.summarysize(StabilizerTableau(2, 2048; eltype = UInt8)) ÷ 2
     st_int_matrix_fields(tab) =
         [f for f in fieldnames(typeof(tab)) if getfield(tab, f) isa Matrix{Int}]
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d)

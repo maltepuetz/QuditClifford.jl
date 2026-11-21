@@ -2,30 +2,73 @@
 # `stab_x`, `stab_z` (`n × n`) and `phase` (length `n`, or 0 without
 # `storephase`), and a `DestabilizerTableau` its destabilizers in `destab_x` and
 # `destab_z`. Each of the four blocks is a view into a padded parent of its own,
-# laid out by `_padded_block` (src/xz_block.jl). The field `layout` says whether
+# laid out by `_padded_block` (src/xz_block.jl), or packed bits laid out by
+# `_padded_bit_block` (src/bit_block.jl). The field `layout` says whether
 # generator `j` is column `j` (`GeneratorMajor`) or row `j` (`QuditMajor`) of
 # every block (src/layout.jl). Only this file, the two constructor files and
 # src/layout.jl touch those fields; algorithms go through `_stab`, `_destab` and
 # `_phase`.
 #
-# The four blocks share the element type `E`, the second type parameter of both
-# tableau types; the phase vector is always `Int`.
+# The type parameters `{IM, E, W, V}` of both tableau types: `E` is the element
+# type of the unpacked workspaces and, unless packed, of the blocks; `W` is the
+# block word (`E`, or `UInt64` when packed); `V` is the type of `phase` and
+# `xdotz_cache` (`Vector{Int}`, or `_BitPlanes` when packed). A packed tableau
+# is `{IM, UInt8, UInt64, _BitPlanes}` and exists only at d = 2.
 
-# The storage element type of a tableau's X and Z blocks.
+# The bounds are spelled out: with `E` left free, `StabilizerTableau{<:Any,
+# <:Any, UInt64}` is not a subtype of `StabilizerTableau`, and its methods
+# would lose to the generic ones.
+const _BitStab = StabilizerTableau{<:InverseMod, UInt8, UInt64, _BitPlanes}
+const _BitDestab = DestabilizerTableau{<:InverseMod, UInt8, UInt64, _BitPlanes}
+const _BitTableau = Union{_BitStab, _BitDestab}
+
+# The storage element type a user chose: `UInt8`, `UInt16`, `Int` or `Bits`.
+# It is what `show`, `copy!` and `tableau_eltype` report.
 _storage_eltype(::StabilizerTableau{IM, E}) where {IM, E} = E
 _storage_eltype(::DestabilizerTableau{IM, E}) where {IM, E} = E
+_storage_eltype(::_BitStab) = Bits
+_storage_eltype(::_BitDestab) = Bits
+
+# The element type of the unpacked workspaces, and of the blocks unless packed.
+_entry_eltype(::StabilizerTableau{IM, E}) where {IM, E} = E
+_entry_eltype(::DestabilizerTableau{IM, E}) where {IM, E} = E
+
+"""
+    tableau_eltype(tab::AbstractTableau) -> Type
+
+The storage element type of the X and Z exponents of `tab`: `UInt8`, `UInt16`,
+`Int`, or [`Bits`](@ref) for packed qubit storage. It is the `eltype` keyword
+the constructors take.
+
+# Examples
+```jldoctest
+julia> tableau_eltype(StabilizerTableau(3, 2))
+UInt8
+
+julia> tableau_eltype(DestabilizerTableau(2, 2; eltype = Bits))
+Bits
+```
+"""
+tableau_eltype(tab::AbstractTableau) = _storage_eltype(tab)
 
 # Whether `E` can store a tableau at dimension `d`: `Int` always, `UInt8` and
-# `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`, any
-# other type never, `Union{UInt8, UInt16}` and `Union{}` included.
+# `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`,
+# `Bits` at d = 2, any other type never, `Union{UInt8, UInt16}` and `Union{}`
+# included.
 function _eltype_admissible(E::Type, d::Int)
     E === Int && return true
+    E === Bits && return d == 2
     (E === UInt8 || E === UInt16) || return false
     return d - 1 <= typemax(E) && phase_modulus(d) - 1 <= typemax(E)
 end
 
-# The narrowest admissible storage element type for dimension `d`.
+# The element type constructors use at d = 2 when no `eltype` keyword is given.
+const _DEFAULT_QUBIT_ELTYPE = Ref{DataType}(UInt8)
+
+# The default storage element type for dimension `d`: `_DEFAULT_QUBIT_ELTYPE[]`
+# at d = 2, otherwise the narrowest admissible one.
 function _default_eltype(d::Int)
+    d == 2 && return _DEFAULT_QUBIT_ELTYPE[]
     _eltype_admissible(UInt8, d) && return UInt8
     _eltype_admissible(UInt16, d) && return UInt16
     return Int
@@ -33,7 +76,7 @@ end
 
 function _check_eltype(E::Type, d::Int)
     _eltype_admissible(E, d) && return nothing
-    ok = join(filter(T -> _eltype_admissible(T, d), (UInt8, UInt16, Int)), ", ")
+    ok = join(map(nameof, filter(T -> _eltype_admissible(T, d), (UInt8, UInt16, Int, Bits))), ", ")
     throw(ArgumentError("eltype = $E cannot hold entries mod d = $d; use one of $ok."))
 end
 
@@ -42,6 +85,9 @@ end
 # writing through them changes the tableau.
 _stab(tab::AbstractTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.stab_x, tab.stab_z)
 _destab(tab::DestabilizerTableau, ::L) where {L<:TableauLayout} = XZBlock{L}(tab.destab_x, tab.destab_z)
+_stab(tab::_BitTableau, ::L) where {L<:TableauLayout} = BitBlock{L}(tab.stab_x, tab.stab_z, tab.n)
+_destab(tab::_BitDestab, ::L) where {L<:TableauLayout} =
+    BitBlock{L}(tab.destab_x, tab.destab_z, tab.n)
 _phase(tab::AbstractTableau) = tab.phase
 
 @noinline _throw_removed_field(s::Symbol, accessor::Symbol) =
@@ -167,7 +213,7 @@ _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer}) =
     _load_stabilizer_matrix!(tab, _layout_marker(tab), S)
 
 function _load_stabilizer_matrix!(tab::AbstractTableau, L::TableauLayout, S::AbstractMatrix{<:Integer})
-    n, d, E = tab.n, tab.d, _storage_eltype(tab)
+    n, d, E = tab.n, tab.d, _entry_eltype(tab)
     _check_generator_matrix_size(S, 2n + (tab.storephase ? 1 : 0), n)
     _generator_major_view(L, tab.stab_x) .= _reduced_entry.(E, view(S, 1:n, :), d)
     _generator_major_view(L, tab.stab_z) .= _reduced_entry.(E, view(S, n+1:2n, :), d)
@@ -179,9 +225,81 @@ _load_destabilizer_matrix!(tab::DestabilizerTableau, D::AbstractMatrix{<:Integer
     _load_destabilizer_matrix!(tab, _layout_marker(tab), D)
 
 function _load_destabilizer_matrix!(tab::DestabilizerTableau, L::TableauLayout, D::AbstractMatrix{<:Integer})
-    n, d, E = tab.n, tab.d, _storage_eltype(tab)
+    n, d, E = tab.n, tab.d, _entry_eltype(tab)
     _check_generator_matrix_size(D, 2n, n)
     _generator_major_view(L, tab.destab_x) .= _reduced_entry.(E, view(D, 1:n, :), d)
     _generator_major_view(L, tab.destab_z) .= _reduced_entry.(E, view(D, n+1:2n, :), d)
     return tab
 end
+
+# The packed forms of the two loaders, through the bit leaves, so the padding
+# bits stay zero.
+function _load_stabilizer_matrix!(tab::_BitTableau, L::TableauLayout, S::AbstractMatrix{<:Integer})
+    n, d = tab.n, tab.d
+    _check_generator_matrix_size(S, 2n + (tab.storephase ? 1 : 0), n)
+    _load_bit_block!(_stab(tab, L), S, d)
+    if tab.storephase
+        dp = phase_modulus(d)
+        for j in 1:n
+            tab.phase[j] = _reduced_entry(Int, S[2n + 1, j], dp)
+        end
+    end
+    return tab
+end
+
+function _load_destabilizer_matrix!(tab::_BitDestab, L::TableauLayout,
+                                    D::AbstractMatrix{<:Integer})
+    _check_generator_matrix_size(D, 2tab.n, tab.n)
+    _load_bit_block!(_destab(tab, L), D, tab.d)
+    return tab
+end
+
+function _load_bit_block!(b::BitBlock, S::AbstractMatrix{<:Integer}, d::Int)
+    n = _nq(b)
+    for j in 1:n, q in 1:n
+        _xset!(b, _reduced_entry(Int, S[q, j], d), q, j)
+        _zset!(b, _reduced_entry(Int, S[n + q, j], d), q, j)
+    end
+    return b
+end
+
+# The packed counterpart of the freshly built generator-major `UInt8` tableau
+# `u`, in the layout `layout` (already checked by `_check_layout`): the blocks
+# and planes are packed from `u`, every other array is taken over from `u`.
+function _packed_tableau(u::StabilizerTableau{IM, UInt8}, layout::Symbol) where {IM}
+    n = u.n
+    L = layout === :qudit ? QuditMajor() : GeneratorMajor()
+    tab = StabilizerTableau{IM, UInt8, UInt64, _BitPlanes}(
+        u.d, n, u.m, _stab_bit_blocks(n)..., _packed_planes(u.phase, 2),
+        u.storephase, u.iscanonical, L, u.inversemod,
+        u.generator_workspace, u.pivot_workspace, u.coeff_workspace, _word_workspace(n),
+        u.pivcol_of_row, _packed_planes(u.xdotz_cache, 1),
+        u.res_workspace, u.c_workspace, u.zacc_workspace,
+        u.rank_workspace, u.bit_workspace,
+    )
+    _pack_generator_major!(_stab(tab, L), _stab(u, GeneratorMajor()))
+    return tab
+end
+
+function _packed_tableau(u::DestabilizerTableau{IM, UInt8}, layout::Symbol) where {IM}
+    n = u.n
+    L = layout === :qudit ? QuditMajor() : GeneratorMajor()
+    tab = DestabilizerTableau{IM, UInt8, UInt64, _BitPlanes}(
+        u.d, n, u.m, _stab_bit_blocks(n)..., _packed_planes(u.phase, 2),
+        _destab_bit_blocks(n)...,
+        u.storephase, u.iscanonical, L, u.inversemod,
+        u.generator_workspace, u.pivot_workspace, u.coeff_workspace, _word_workspace(n),
+        u.pivcol_of_row, _packed_planes(u.xdotz_cache, 1),
+        u.res_workspace, u.c_workspace, u.zacc_workspace, u.support_workspace,
+        u.rank_workspace, u.bit_workspace,
+    )
+    _pack_generator_major!(_stab(tab, L), _stab(u, GeneratorMajor()))
+    _pack_generator_major!(_destab(tab, L), _destab(u, GeneratorMajor()))
+    return tab
+end
+
+# `k`-bit planes holding the entries of `v`.
+_packed_planes(v::AbstractVector{Int}, k::Int) = _pack_planes!(_BitPlanes(length(v), k), v)
+
+# The packed scratch of a packed tableau for `n` qudits.
+_word_workspace(n::Int) = zeros(UInt64, max(_nwords(n), 32), 4)

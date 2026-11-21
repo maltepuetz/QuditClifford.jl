@@ -12,10 +12,11 @@
 # function modifies its arguments: a tableau not already canonical is
 # canonicalized in a fresh copy.
 
-# Generator columns `1:m` of `a` and `b`, with phases `pa` and `pb` when
-# `storephase`, agree entry for entry.
-function _active_columns_equal(a::XZBlock, pa::AbstractVector{Int},
-                               b::XZBlock, pb::AbstractVector{Int},
+# Generator columns `1:m` of the blocks `a` and `b` (unpacked or packed, through
+# their leaves), with phases `pa` and `pb` when `storephase`, agree entry for
+# entry.
+function _active_columns_equal(a, pa::AbstractVector{Int},
+                               b, pb::AbstractVector{Int},
                                m::Int, storephase::Bool)
     n = _nq(a)
     @inbounds for j in 1:m
@@ -123,7 +124,7 @@ end
 
 # Mix the active generators `1:m` of `S` into `h`: per generator the X entries,
 # then the Z entries, then the phase when `storephase`.
-function _hash_active(h::UInt, S::XZBlock, phase::AbstractVector{Int},
+function _hash_active(h::UInt, S, phase::AbstractVector{Int},
                       m::Int, storephase::Bool)
     n = _nq(S)
     @inbounds for j in 1:m

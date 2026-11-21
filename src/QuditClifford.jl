@@ -23,7 +23,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     random_clifford, random_clifford!, random_state!,
     StabilizerKet, ket, state_vector, density_matrix,
     stabilizer_matrix, destabilizer_matrix,
-    qudit_major!, generator_major!, tableau_layout
+    qudit_major!, generator_major!, tableau_layout,
+    Bits, tableau_eltype
 
 import Random, Primes
 import Random.rand!
@@ -36,6 +37,7 @@ import PrecompileTools
 include("modular.jl")
 include("helper.jl")
 include("xz_block.jl")
+include("bit_block.jl")
 include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("rank_workspaces.jl")

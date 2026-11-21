@@ -441,9 +441,12 @@ end
 
 @testset "no raw block access outside the block and kernel files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
-    # Explicit layout construction: the block file, the storage files and the
-    # constructors (which build generator-major and then switch).
-    construct_ok = ("xz_block.jl", "tableau_storage.jl", "layout.jl", "stabilizer_tableau.jl")
+    # Explicit layout construction: the block files (bit_block.jl for its
+    # unpacked copies), the storage files and the constructors (which build
+    # generator-major and then switch). `BitBlock`s are built only in the bit
+    # block file and the storage file.
+    construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl", "layout.jl",
+                    "stabilizer_tableau.jl")
     # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
     # the layout-specific kernels, and the storage files that build tableaux
     # from blocks. Kernel files that do not exist count as zero matches.
@@ -465,7 +468,21 @@ end
         text = read(joinpath(srcdir, f), String)
         f in construct_ok ||
             @test !occursin(r"XZBlock\{(GeneratorMajor|QuditMajor)\}\(", text)
-        f == "xz_block.jl" && continue
+        f in ("bit_block.jl", "tableau_storage.jl") ||
+            @test !occursin(r"BitBlock\{\w+\}\(", text)
+        f in ("xz_block.jl", "bit_block.jl") && continue
         @test (f => count(raw, text)) == (f => get(raw_ok, f, 0))
+    end
+end
+
+@testset "no 32-bit-unsafe shifts in bit code" begin
+    srcdir = joinpath(pkgdir(QuditClifford), "src")
+    # `1 << b` shifts an `Int`, which drops bits 32-63 under `Int32`.
+    for f in ("bit_block.jl", "apply_bits.jl", "measure_bits.jl", "canonicalize_bits.jl")
+        path = joinpath(srcdir, f)
+        isfile(path) || continue
+        for (i, line) in enumerate(eachline(path))
+            @test (f, i, occursin(r"(?<![\w)])1\s*<<", line)) == (f, i, false)
+        end
     end
 end
