@@ -238,6 +238,33 @@ end
     end
 end
 
+@testset "workspace x·z dot and matrix loads in both layouts" begin
+    for E in (UInt8, UInt16, Int), n in (1, 3, 33), d in (2, 3)
+        g = ly_QC.XZBlock{ly_QC.GeneratorMajor}(ly_QC._stab_blocks(E, n)...)
+        rng = Xoshiro(10n + d)
+        g.x .= rand(rng, E(0):E(d - 1), n, n)
+        g.z .= rand(rng, E(0):E(d - 1), n, n)
+        ws = rand(rng, E(0):E(d - 1), 2n)
+        gm = [ly_QC.dot_xz_ws_vs_col(ws, g, j, d) for j in 1:n]
+        ly_QC._transpose_block!(g.x)
+        ly_QC._transpose_block!(g.z)
+        qb = ly_QC.XZBlock{ly_QC.QuditMajor}(g.x, g.z)
+        @test [ly_QC.dot_xz_ws_vs_col(ws, qb, j, d) for j in 1:n] == gm
+    end
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), E in ly_eltypes(d)
+        ref = TT(d, 5; state = :Z, eltype = E)
+        random_state!(Xoshiro(d), ref)
+        q = TT(d, 5; state = :Z, eltype = E, layout = :qudit)
+        ly_QC._load_stabilizer_matrix!(q, stabilizer_matrix(ref))
+        @test tableau_layout(q) === :qudit
+        @test stabilizer_matrix(q) == stabilizer_matrix(ref)
+        if TT === DestabilizerTableau
+            ly_QC._load_destabilizer_matrix!(q, destabilizer_matrix(ref))
+            @test destabilizer_matrix(q) == destabilizer_matrix(ref)
+        end
+    end
+end
+
 # Allocations of one call, the least of three measurements after a warm-up
 # call. One function per operation: a shared varargs helper allocates on
 # Julia 1.10.
