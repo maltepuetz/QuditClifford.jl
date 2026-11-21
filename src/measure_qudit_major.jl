@@ -217,10 +217,15 @@ end
 # updated at once. When at most `m ÷ _QM_SPARSE_UPDATE_DIV` pairings are
 # nonzero (a local measurement), only those rows of each column are updated,
 # with their indices in c_workspace. `sparse` is not needed: `sites[1:nsites]`
-# always lists the whole support of dual `col`.
-function _orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int, m::Int,
-                               supp::Vector{Int}, nsupp::Int,
-                               sites::Vector{Int}, nsites::Int, ::Bool)
+# always lists the whole support of dual `col`. `div` sets the cutoff
+# (`_QM_SPARSE_UPDATE_DIV`); every choice gives the same result.
+_orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int, m::Int,
+                      supp::Vector{Int}, nsupp::Int, sites::Vector{Int}, nsites::Int, ::Bool) =
+    _qm_orthogonalize_duals!(tab, L, col, m, supp, nsupp, sites, nsites, _QM_SPARSE_UPDATE_DIV)
+
+function _qm_orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int, m::Int,
+                                  supp::Vector{Int}, nsupp::Int,
+                                  sites::Vector{Int}, nsites::Int, div::Int)
     d = tab.d
     stab = _stab(tab, L)
     destab = _destab(tab, L)
@@ -241,7 +246,7 @@ function _orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::Int
     end
     k == 0 && return nothing
     # The multipliers are entries of dual `col`, whose row t_j leaves alone.
-    if k <= m ÷ _QM_SPARSE_UPDATE_DIV
+    if k <= m ÷ div
         x = destab.x
         z = destab.z
         E = eltype(x)

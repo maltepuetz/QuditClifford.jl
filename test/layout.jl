@@ -500,10 +500,13 @@ end
 
 @testset "qudit-major canonicalize! dual accumulators" begin
     # The dual sums run in UInt16 at d = 31, UInt32 at d = 251 and UInt64 at
-    # d = 65521. Row by row, the path for a `d` at which even UInt64
-    # overflows, and the wider accumulators are also forced at d = 3.
+    # d = 65521 (64-bit hosts only: 65520^2 overflows a 32-bit `Int`). Row by
+    # row, the path for a `d` at which even UInt64 overflows, and the wider
+    # accumulators are also forced at d = 3, on every host.
     L = ly_QC.QuditMajor()
-    for (d, E) in ((31, UInt8), (251, UInt8), (65521, UInt16)), storephase in (true, false)
+    cases = Any[(31, UInt8), (251, UInt8)]
+    Sys.WORD_SIZE == 64 && push!(cases, (65521, UInt16))
+    for (d, E) in cases, storephase in (true, false)
         g = ly_fixture(DestabilizerTableau, d, 24, E, storephase, :random, d % 1000)
         q = qudit_major!(copy(g))
         w = copy(q)
@@ -519,6 +522,56 @@ end
         canonicalize!(g)
         ly_QC._canonicalize_qm!(ly_QC._stab(q, L), q.phase, ly_QC._destab(q, L), dual, q, div)
         @test ly_same_full(g, q)
+    end
+end
+
+@testset "qudit-major canonicalize! at m = 0 and n = 1" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (true, false)
+        cases = Any[TT(d, 7; state = :mixed, storephase, layout = :generator)]
+        for state in (:mixed, :Z, :ghz)
+            push!(cases, TT(d, 1; state, storephase, layout = :generator))
+        end
+        g1 = TT(d, 1; state = :Z, storephase, layout = :generator)
+        apply!(g1, random_clifford(Xoshiro(d), d, [1]))
+        push!(cases, g1)
+        for g in cases
+            q = qudit_major!(copy(g))
+            canonicalize!(g)
+            canonicalize!(q)
+            @test ly_same_full(g, q)
+        end
+    end
+end
+
+@testset "qudit-major paired-dual update, forced sparse and dense" begin
+    # `_qm_orthogonalize_duals!` with divisor 1 updates only the rows of the
+    # paired duals whenever one is nonzero; `typemax(Int)` always updates whole
+    # columns. Both must equal the generic update on a generator-major copy.
+    G, Q = ly_QC.GeneratorMajor(), ly_QC.QuditMajor()
+    for d in (2, 3, 31), E in ly_eltypes(d), kind in (:monitored, :random)
+        n = 64
+        g = ly_fixture(DestabilizerTableau, d, n, E, true, kind, 17d)
+        ok = true
+        for col in (1, g.m ÷ 2, g.m)
+            g2 = copy(g)
+            a = qudit_major!(copy(g))
+            b = copy(a)
+            supp = g2.support_workspace
+            nsupp = ly_QC._column_support!(supp, ly_QC._stab(g2, G), col)
+            sites = g2.zacc_workspace
+            nsites = ly_QC._column_support!(sites, ly_QC._destab(g2, G), col)
+            ly_QC._orthogonalize_duals!(g2, G, col, g2.m, supp, nsupp, sites, nsites,
+                                        ly_QC._pivot_support_is_sparse(nsites, n))
+            for (t, dv) in ((a, 1), (b, typemax(Int)))
+                ns = ly_QC._column_support!(t.support_workspace, ly_QC._stab(t, Q), col)
+                nd = ly_QC._column_support!(t.zacc_workspace, ly_QC._destab(t, Q), col)
+                ly_QC._qm_orthogonalize_duals!(t, Q, col, t.m, t.support_workspace, ns,
+                                               t.zacc_workspace, nd, dv)
+                ok &= ly_matrices(t) == ly_matrices(g2)
+            end
+        end
+        ok || @error "paired-dual update differs" d E kind
+        @test ok
     end
 end
 
