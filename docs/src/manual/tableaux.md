@@ -250,8 +250,9 @@ Which layout is faster depends on the operation. On the same machine, for
 - [`expect!`](@ref) and [`expect_int!`](@ref) are up to about 4 times slower
   qudit-major on a [`DestabilizerTableau`](@ref), and [`expect!`](@ref) is
   1.2–1.8 times slower on a canonical [`StabilizerTableau`](@ref). A
-  measurement that commutes with every generator of a
-  [`DestabilizerTableau`](@ref) is about 1.1–1.2 times slower.
+  measurement that commutes with every generator of a mixed
+  [`DestabilizerTableau`](@ref) and adds a generator is about 1.1–1.2 times
+  slower.
 - [`stabilizer_matrix`](@ref) and [`destabilizer_matrix`](@ref) are 1.5–2
   times slower qudit-major (measured at `d = 3`, `n = 1024` and `2048`), and
   `==` of two qudit-major tableaux whose generators agree entry for entry
