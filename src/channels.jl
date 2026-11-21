@@ -84,9 +84,6 @@ dephase!(tab::AbstractTableau, op::AbstractPauli) = _dephase!(tab, _layout_marke
 _dephase!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli) =
     _dephase_generic!(tab, L, op)
 
-# Packed storage runs the per-generator algorithm in both layouts.
-_dephase!(tab::_BitTableau, L::QuditMajor, op::AbstractPauli) = _dephase_generic!(tab, L, op)
-
 # The per-generator `dephase!`, for every layout and storage.
 function _dephase_generic!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     _check_pauli_support(tab, op)

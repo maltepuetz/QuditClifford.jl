@@ -580,4 +580,48 @@ end
     end
 end
 
+# A random Hermitian qubit Pauli for the outcome-stream test: one of the sparse
+# types, or a dense `GeneralPauli` with every exponent random.
+function bt_stream_pauli(rng, n)
+    if rand(rng, 1:5) <= 4
+        op = bt_rand_pauli(rng, n)
+        while op isa AbstractVector || op isa GeneralPauli
+            op = bt_rand_pauli(rng, n)
+        end
+        return op
+    end
+    v = rand(rng, 0:1, 2n)
+    return GeneralPauli(v, mod(sum(v[1:n] .* v[n+1:2n]), 2) + 2 * rand(rng, 0:1))
+end
+
+@testset "same rng stream, Bits vs UInt8" begin
+    for TT in bt_TYPES, layout in (:generator, :qudit)
+        n = 70
+        t = TT(2, n; state = :mixed, eltype = Bits, layout)
+        u = TT(2, n; state = :mixed, eltype = UInt8, layout)
+        rt, ru = Xoshiro(7), Xoshiro(7)
+        oprng = Xoshiro(50_000 + n)
+        outs_t = Int[]
+        outs_u = Int[]
+        ok = true
+        for i in 1:300
+            if rand(oprng) < 0.3
+                g = bt_rand_gate(oprng, n)
+                g(t)
+                g(u)
+            end
+            op = bt_stream_pauli(oprng, n)
+            push!(outs_t, measure!(rt, t, op))
+            push!(outs_u, measure!(ru, u, op))
+            ok &= outs_t[end] == outs_u[end] && stabilizer_matrix(t) == stabilizer_matrix(u) &&
+                  st_padding_zero(t)
+            ok || (@error "Bits outcome stream differs" TT layout i op; break)
+        end
+        @test ok
+        @test outs_t == outs_u
+        @test bt_same(t, u)
+        @test rand(rt) == rand(ru)
+    end
+end
+
 end

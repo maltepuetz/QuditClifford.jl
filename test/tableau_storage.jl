@@ -457,6 +457,7 @@ end
         "span_decomposition.jl" => 9,
         "rank_copies_bits.jl" => 8,
         "apply_bits.jl" => 4,
+        "measure_bits.jl" => 10,
         "entanglement_entropy.jl" => 6,
         "check_purity.jl" => 4,
         "apply_qudit_major.jl" => 2,

@@ -363,17 +363,11 @@ end
     cb = 0
     cz = 0
     if track || tab.storephase
-        if pu.sparse
-            @inbounds for k in 1:pu.nsupp
-                q = sites[k]
-                cb += Int(genws[q]) * _zget(stab, q, col)
-                cz += _xget(stab, q, col) * Int(genws[n+q])
-            end
-        else
-            @inbounds for q in 1:n
-                cb += Int(genws[q]) * _zget(stab, q, col)
-                cz += _xget(stab, q, col) * Int(genws[n+q])
-            end
+        nq = pu.sparse ? pu.nsupp : n
+        @inbounds for k in 1:nq
+            q = pu.sparse ? sites[k] : k
+            cb += Int(genws[q]) * _zget(stab, q, col)
+            track && (cz += _xget(stab, q, col) * Int(genws[n+q]))
         end
     end
     _absorb_pivot_scalars!(tab, col, a, mod(cb, d), cz, pu)
@@ -466,11 +460,6 @@ end
 # over all rows. D_col is fixed throughout, so each t_j is the same whether it
 # is read before or after the other duals change.
 _orthogonalize_duals!(tab::DestabilizerTableau, L::TableauLayout, col::Int, m::Int,
-                      supp::Vector{Int}, nsupp::Int, sites::Vector{Int}, nsites::Int,
-                      sparse::Bool) =
-    _orthogonalize_duals_generic!(tab, L, col, m, supp, nsupp, sites, nsites, sparse)
-
-_orthogonalize_duals!(tab::_BitDestab, L::QuditMajor, col::Int, m::Int,
                       supp::Vector{Int}, nsupp::Int, sites::Vector{Int}, nsites::Int,
                       sparse::Bool) =
     _orthogonalize_duals_generic!(tab, L, col, m, supp, nsupp, sites, nsites, sparse)
@@ -742,11 +731,6 @@ function _measurement_phase(tab::AbstractTableau, op::AbstractPauli,
 end
 
 _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout, op::AbstractPauli,
-          outcome::Union{Int,Nothing}, phase_policy::Int) =
-    _measure_generic!(rng, tab, L, op, outcome, phase_policy)
-
-# Packed storage runs the per-generator algorithm in both layouts.
-_measure!(rng::Random.AbstractRNG, tab::_BitTableau, L::QuditMajor, op::AbstractPauli,
           outcome::Union{Int,Nothing}, phase_policy::Int) =
     _measure_generic!(rng, tab, L, op, outcome, phase_policy)
 
