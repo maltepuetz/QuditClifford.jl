@@ -542,6 +542,27 @@ end
         @test hash(a) == hash(b)
         @test length(Set([a, b])) == 1
     end
+    # A non-canonical random state, against itself and a canonical copy in the
+    # other layout, and against a different state.
+    for d in (2, 3), TT in (StabilizerTableau, DestabilizerTableau), E in st_types(d)
+        a = TT(d, 9; eltype = E, layout = :generator)
+        random_state!(Xoshiro(41 + d), a)
+        @test !a.iscanonical
+        b = qudit_major!(copy(a))
+        c = copy(b)
+        canonicalize!(c)
+        generator_major!(c)
+        @test !b.iscanonical && c.iscanonical
+        @test stabilizer_matrix(c) != stabilizer_matrix(a)
+        for (x, y) in ((a, b), (b, a), (b, c), (c, b), (a, c))
+            @test x == y
+            @test hash(x) == hash(y)
+        end
+        @test length(Set([a, b, c])) == 1
+        e = TT(d, 9; eltype = E, layout = :qudit)
+        random_state!(Xoshiro(43 + d), e)
+        @test e != a && b != e && e != c
+    end
 end
 
 end
