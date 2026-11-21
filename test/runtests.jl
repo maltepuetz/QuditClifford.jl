@@ -2,6 +2,9 @@ using QuditClifford
 using Test
 using Aqua
 
+# The shipped default layout is generator-major.
+@test QuditClifford._DEFAULT_LAYOUT[] === :generator
+
 # The layout every constructor uses without a `layout` keyword, so the whole
 # suite runs generator-major (the default) or qudit-major.
 let layout = get(ENV, "QC_TEST_LAYOUT", "generator")
