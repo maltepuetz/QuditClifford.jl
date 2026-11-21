@@ -72,6 +72,13 @@ function _stacked_int_matrix(b::XZBlock{L}, extra::Int) where {L}
     S[n+1:2n, :] .= _generator_major_view(L(), b.z)
     return S
 end
+function _stacked_int_matrix(b::XZBlock{QuditMajor}, extra::Int)
+    n = _nq(b)
+    S = Matrix{Int}(undef, 2n + extra, _ncap(b))
+    _transpose_into!(S, 0, b.x)
+    _transpose_into!(S, n, b.z)
+    return S
+end
 
 # The stacked generator matrix of `tab`, generator-major in either storage layout.
 function _stabilizer_generator_matrix(tab::AbstractTableau, L::TableauLayout)

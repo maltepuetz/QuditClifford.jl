@@ -32,6 +32,30 @@ function _active_columns_equal(a::XZBlock, pa::AbstractVector{Int},
     return true
 end
 
+# The same comparison for two qudit-major blocks, walked in storage order: the
+# phases, then each site's column over generators `1:m`.
+function _active_columns_equal(a::_QMBlock, pa::AbstractVector{Int},
+                               b::_QMBlock, pb::AbstractVector{Int},
+                               m::Int, storephase::Bool)
+    n = _nq(a)
+    @inbounds begin
+        if storephase
+            for j in 1:m
+                pa[j] == pb[j] || return false
+            end
+        end
+        for q in 1:n
+            for j in 1:m
+                a.x[j, q] % Int == b.x[j, q] % Int || return false
+            end
+            for j in 1:m
+                a.z[j, q] % Int == b.z[j, q] % Int || return false
+            end
+        end
+    end
+    return true
+end
+
 # The tableau's own block and phase when it is already canonical, otherwise
 # canonical copies. The scratch passed to `_canonicalize_tableau!` is fresh, so
 # the tableau's pivot table and x·z cache are left alone.

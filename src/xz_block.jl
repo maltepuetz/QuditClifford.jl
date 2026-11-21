@@ -161,8 +161,11 @@ const _QMBlock = XZBlock{QuditMajor}
 # a private generator-major scratch whatever the layout of its source.
 _generator_major_copy(b::XZBlock{GeneratorMajor, <:_BlockMatrix{E}}) where {E} =
     XZBlock{GeneratorMajor}(copy(b.x), copy(b.z))
-_generator_major_copy(b::XZBlock{QuditMajor, <:_BlockMatrix{E}}) where {E} =
-    XZBlock{GeneratorMajor}(permutedims(b.x), permutedims(b.z))
+function _generator_major_copy(b::XZBlock{QuditMajor, <:_BlockMatrix{E}}) where {E}
+    x = _transpose_into!(Matrix{E}(undef, reverse(size(b.x))), 0, b.x)
+    z = _transpose_into!(Matrix{E}(undef, reverse(size(b.z))), 0, b.z)
+    return XZBlock{GeneratorMajor}(x, z)
+end
 
 @inline _nq(b::_GMBlock) = size(b.x, 1)
 @inline _ncap(b::_GMBlock) = size(b.x, 2)
@@ -471,4 +474,34 @@ function _transpose_block!(A::_BlockMatrix{T}) where {T<:_StorageEltype}
         end
     end
     return A
+end
+
+##### out-of-place transpose of a block #####
+#
+# `dest[r+i, j] = A[j, i]` for every entry of `A`: a qudit-major block written
+# generator-major into rows `r+1:r+size(A, 2)` of `dest`. Entries are below
+# `d`, so the conversion to `eltype(dest)` is exact. The square is walked in
+# the tiles of `_transpose_tile` for the wider of the two element types; within
+# a tile, writes run down a contiguous column of `dest` and reads step by the
+# column stride of `A`.
+#
+# On an M3 Pro (`UInt8` into `Int` and into `UInt8`, `Int` into `Int`,
+# n = 1024 and 2049), writing contiguously took 0.1-1.1x the time of reading
+# contiguously, which is slowest at n = 1024 with its power-of-two write
+# stride. Tiles of 32 and 64 entries were within 10% of each other.
+function _transpose_into!(dest::Matrix{D}, r::Int, A::AbstractMatrix{T}) where {D, T}
+    nj, ni = size(A)
+    tb = _transpose_tile(sizeof(D) >= sizeof(T) ? D : T)
+    @inbounds for jb in 1:tb:nj
+        je = min(jb + tb - 1, nj)
+        for ib in 1:tb:ni
+            ie = min(ib + tb - 1, ni)
+            for j in jb:je
+                for i in ib:ie
+                    dest[r + i, j] = A[j, i] % D
+                end
+            end
+        end
+    end
+    return dest
 end

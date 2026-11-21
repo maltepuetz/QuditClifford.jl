@@ -94,10 +94,9 @@ dependency bump — carries the `skip-changelog` label instead.
   n = 1023–2049 (M3 Pro, `UInt8`). `canonicalize!`, `dephase!`, `traceout!`
   and `reset!` have qudit-major kernels and are about as fast or faster
   qudit-major. `expect!` and `expect_int!` (up to about 4 times on a
-  `DestabilizerTableau`),
-  `stabilizer_matrix` (2.5–9 times) and `==` (3–4 times) are slower
-  qudit-major; generator-major stays the default. See the pull
-  request (stacked on #60) for timings.
+  `DestabilizerTableau`) and `stabilizer_matrix` and `destabilizer_matrix`
+  (1.5–2 times at `d = 3`) are slower qudit-major; generator-major stays the
+  default. See the pull request (stacked on #60) for timings.
 - A random-outcome `measure!` is faster, with identical tableaux, outcomes,
   RNG draws and no allocations. Each generator that anticommutes with the
   measured operator absorbs a power of the replaced generator. That update
