@@ -491,4 +491,93 @@ bt_entries(b, n) = ([bt_QC._xget(b, q, j) for q in 1:n, j in 1:n],
     end
 end
 
+# `k` distinct targets on `n` qudits, drawn from the word edges 1, 64, 65, `n`
+# half the time, otherwise uniformly.
+function bt_targets(rng, n, k)
+    edges = filter(<=(n), unique([1, 64, 65, n]))
+    pool = rand(rng, Bool) ? vcat(shuffle(rng, edges), randperm(rng, n)) : randperm(rng, n)
+    return unique(pool)[1:k]
+end
+
+# The next gate of the kernel comparison: a named gate, a random Clifford on
+# 1-3 qudits or a dense one on 4, or a named gate prepared off the fast tier.
+# Returns a function of the tableau.
+function bt_rand_gate(rng, n)
+    c = rand(rng, 1:10)
+    if c <= 3
+        q = bt_targets(rng, n, 1)[1]
+        g = rand(rng, (Fourier(q), Phase(q), PauliGate(q, rand(rng, 0:1), rand(rng, 0:1))))
+        return t -> apply!(t, g)
+    elseif c <= 6
+        q1, q2 = bt_targets(rng, n, 2)
+        g = rand(rng, (SUM(q1, q2), CPhase(q1, q2), SWAP(q1, q2)))
+        return t -> apply!(t, g)
+    elseif c <= 8
+        C = random_clifford(rng, 2, bt_targets(rng, n, rand(rng, 1:min(n, 3))))
+        return t -> apply!(t, C)
+    elseif c == 9
+        C = random_clifford(rng, 2, bt_targets(rng, n, min(n, 4)))
+        return t -> apply!(t, C)
+    end
+    q1, q2 = bt_targets(rng, n, 2)
+    g = rand(rng, (Fourier(q1), Phase(q1), PauliGate(q1, rand(rng, 0:1), rand(rng, 0:1)),
+                   SUM(q1, q2), CPhase(q1, q2), SWAP(q1, q2)))
+    return t -> bt_QC._apply_prepared!(t, bt_QC._prepare(g, 2, t.inversemod, t.storephase;
+                                                         force_safe = true))
+end
+
+@testset "bit gate kernel" begin
+    seed = 0
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false),
+        n in (5, 64, 65, 130, 300)
+
+        seed += 1
+        t = TT(2, n; storephase, eltype = Bits, layout)
+        u = TT(2, n; storephase, eltype = UInt8, layout)
+        mm = isodd(seed) ? n : n - 3
+        random_state!(Xoshiro(seed), t; m = mm)
+        random_state!(Xoshiro(seed), u; m = mm)
+        rng = Xoshiro(40_000 + seed)
+        bad = 0
+        for i in 1:300
+            f = bt_rand_gate(rng, n)
+            f(t)
+            f(u)
+            ok = bt_same(t, u) && t.phase == u.phase && st_padding_zero(t)
+            if !ok
+                bad += 1
+                @error "bit gate kernel differs from UInt8" TT layout storephase n i
+                break
+            end
+        end
+        @test bad == 0
+        L = bt_QC._layout_marker(t)
+        U = random_clifford(Xoshiro(seed), 2, [1, 2, 3])
+        for prep in (bt_QC._prepare(Fourier(1), 2, t.inversemod, storephase),
+                     bt_QC._prepare(SUM(1, 2), 2, t.inversemod, storephase),
+                     bt_QC._prepare_tuple(U, storephase, Val(3)))
+            m = which(bt_QC._apply_columns!, (typeof(t), typeof(prep), typeof(L)))
+            @test basename(String(m.file)) == "apply_bits.jl"
+        end
+    end
+end
+
+function bt_apply_allocations(t, g)
+    for _ in 1:3
+        apply!(t, g)
+    end
+    return @allocated apply!(t, g)
+end
+
+@testset "bit gate kernel allocates nothing" begin
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false)
+        t = TT(2, 130; state = :ghz, storephase, eltype = Bits, layout)
+        for g in (Fourier(64), SUM(1, 130), random_clifford(Xoshiro(3), 2, [1, 65, 130]),
+                  CliffordOperator(CPhase(64, 65), 2))
+            bt_apply_allocations(t, g)
+            @test bt_apply_allocations(t, g) == 0
+        end
+    end
+end
+
 end

@@ -820,9 +820,8 @@ end
     return tab
 end
 
-# Packed storage runs the per-generator loop in both layouts.
-@noinline _apply_columns!(tab::_BitTableau, prep::PreparedClifford{K,S},
-                          L::QuditMajor) where {K,S} = _apply_columns_generic!(tab, prep, L)
+# Packed storage runs the bit-sliced kernels of src/apply_bits.jl in both
+# layouts, for the tuple backing on every tier.
 
 # The per-generator column loop, for every layout and backing.
 @inline function _apply_columns_generic!(tab::AbstractTableau, prep::AbstractPreparedClifford,
