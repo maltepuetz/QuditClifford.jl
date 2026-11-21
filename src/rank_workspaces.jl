@@ -247,30 +247,6 @@ function _pack_sites_gf2!(
     return nw
 end
 
-# Packed blocks, entry by entry through the leaves.
-function _pack_sites_gf2!(
-    W::AbstractMatrix{UInt64},
-    b::BitBlock,
-    m::Int,
-    sites::AbstractVector,
-    N::Int,
-)
-    nw = cld(2N, 64)
-    @inbounds for j in 1:m
-        for w in 1:nw
-            k0 = 32 * (w - 1)
-            acc = zero(UInt64)
-            for t in 1:min(32, N - k0)
-                q = Int(sites[k0 + t])
-                acc |= ((_xget(b, q, j) % UInt64) << (2t - 2)) |
-                       ((_zget(b, q, j) % UInt64) << (2t - 1))
-            end
-            W[w, j] = acc
-        end
-    end
-    return nw
-end
-
 # Rank over GF(2) of the columns of `W`, packed as above, on rows
 # 1:pivot_bits. Top-down column elimination like `rank_fp_cols!`, with the
 # same contract: pivots come from rows 1:pivot_bits only, the XOR updates run

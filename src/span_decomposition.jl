@@ -397,31 +397,6 @@ function _copy_generator_rows!(
     return ws
 end
 
-# Packed blocks, bits as in the forms above, entry by entry through the leaves.
-function _copy_generator_rows!(
-    ws::AbstractMatrix{UInt64},
-    b::BitBlock,
-    m::Int,
-)
-    n = _nq(b)
-    h = size(ws, 1) >> 1
-    nw = cld(m, 64)
-    (nw <= h && size(ws, 2) >= n) || throw(DimensionMismatch(
-        "_copy_generator_rows!: $n sites of $m generators do not fit a $(size(ws)) workspace."))
-    @inbounds for q in 1:n, w in 1:nw
-        j0 = 64 * (w - 1)
-        ax = zero(UInt64)
-        az = zero(UInt64)
-        for t in 1:min(64, m - j0)
-            ax |= (_xget(b, q, j0 + t) % UInt64) << (t - 1)
-            az |= (_zget(b, q, j0 + t) % UInt64) << (t - 1)
-        end
-        ws[w, q] = ax
-        ws[h + w, q] = az
-    end
-    return ws
-end
-
 # Row r of G sits in workspace column `q` from row `off + 1` on.
 @inline _generator_row_slot(r::Int, n::Int, h::Int) = r <= n ? (r, 0) : (r - n, h)
 

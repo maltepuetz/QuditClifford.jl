@@ -455,6 +455,7 @@ end
         "bit_block.jl" => 56,
         "rank_workspaces.jl" => 14,
         "span_decomposition.jl" => 9,
+        "rank_copies_bits.jl" => 8,
         "entanglement_entropy.jl" => 6,
         "check_purity.jl" => 4,
         "apply_qudit_major.jl" => 2,
@@ -480,7 +481,7 @@ end
 @testset "no 32-bit-unsafe shifts in bit code" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
     # `1 << b` shifts an `Int`, which drops bits 32-63 under `Int32`.
-    for f in ("bit_block.jl", "apply_bits.jl", "measure_bits.jl", "canonicalize_bits.jl")
+    for f in ("bit_block.jl", "rank_copies_bits.jl", "apply_bits.jl", "measure_bits.jl", "canonicalize_bits.jl")
         path = joinpath(srcdir, f)
         isfile(path) || continue
         for (i, line) in enumerate(eachline(path))
