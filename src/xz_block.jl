@@ -196,6 +196,20 @@ end
     return v
 end
 
+# Whether generators `1:m` of two qudit-major blocks agree entry for entry,
+# walked in storage order: each site's column over the generators.
+function _qm_generators_equal(a::_QMBlock, b::_QMBlock, m::Int)
+    @inbounds for q in 1:_nq(a)
+        for j in 1:m
+            a.x[j, q] % Int == b.x[j, q] % Int || return false
+        end
+        for j in 1:m
+            a.z[j, q] % Int == b.z[j, q] % Int || return false
+        end
+    end
+    return true
+end
+
 # Combined row `r` in `1:2n`, X rows first.
 @inline function _rget(b::XZBlock, r::Int, j::Int)
     n = _nq(b)

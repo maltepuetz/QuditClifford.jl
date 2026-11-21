@@ -457,7 +457,7 @@ end
         "canonicalize_qudit_major.jl" => 4,
         "stabilizer_tableau.jl" => 2,
         "destabilizer_tableau.jl" => 6,
-        "tableau_storage.jl" => 2,
+        "tableau_storage.jl" => 4,
     )
     raw = r"\bb\.x\b|\bb\.z\b|\.x\[|\.z\["
     for f in readdir(srcdir)
