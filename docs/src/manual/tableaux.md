@@ -247,9 +247,11 @@ Which layout is faster depends on the operation. On the same machine, for
   [`StabilizerTableau`](@ref).
 - The entropies and other rank-based quantities are about as fast in both
   layouts, up to 1.6 times slower qudit-major.
-- [`expect!`](@ref) is up to 4 times slower qudit-major on a
-  [`DestabilizerTableau`](@ref) and 1.2–1.8 times slower on a canonical
-  [`StabilizerTableau`](@ref). [`stabilizer_matrix`](@ref) is 2.5–9 times and
+- [`expect!`](@ref) and [`expect_int!`](@ref) are up to about 4 times slower
+  qudit-major on a [`DestabilizerTableau`](@ref), and [`expect!`](@ref) is
+  1.2–1.8 times slower on a canonical [`StabilizerTableau`](@ref). A
+  measurement that commutes with every generator of a
+  [`DestabilizerTableau`](@ref) is about 1.1–1.2 times slower. [`stabilizer_matrix`](@ref) is 2.5–9 times and
   `==` 3–4 times slower qudit-major.
 
 Keep the default generator-major layout unless a phase of the computation is

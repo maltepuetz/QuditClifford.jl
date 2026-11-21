@@ -10,10 +10,11 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Breaking
 
-- `StabilizerTableau` and `DestabilizerTableau` have a new field that records
-  the layout. Code that calls the inner constructors positionally, or that
-  builds the structs with all fields, must pass it; the public constructors
-  are unchanged.
+- `StabilizerTableau` and `DestabilizerTableau` have two new fields: `layout`,
+  which records the layout, and `coeff_workspace`, a coefficient workspace.
+  Code that calls the inner constructors positionally, or that builds the
+  structs with all fields, must pass both; the public constructors are
+  unchanged.
 - `measure!` on qubits returns the outcome `t ∈ {0, 1}`, meaning eigenvalue
   `(-1)^t`, in every branch. A deterministic measurement with `storephase=true`
   used to return the `i`-exponent instead, so eigenvalue `-1` came back as `1`
@@ -92,7 +93,8 @@ dependency bump — carries the `skip-changelog` label instead.
   gates 4–16 times and random-outcome measurements 1.05–2.7 times at
   n = 1023–2049 (M3 Pro, `UInt8`). `canonicalize!`, `dephase!`, `traceout!`
   and `reset!` have qudit-major kernels and are about as fast or faster
-  qudit-major. `expect!` (up to 4 times on a `DestabilizerTableau`),
+  qudit-major. `expect!` and `expect_int!` (up to about 4 times on a
+  `DestabilizerTableau`),
   `stabilizer_matrix` (2.5–9 times) and `==` (3–4 times) are slower
   qudit-major; generator-major stays the default. See the pull
   request (stacked on #60) for timings.
