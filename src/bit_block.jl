@@ -240,6 +240,71 @@ end
     return mod(s, d)
 end
 
+##### switching layouts #####
+
+# The masks of the six rounds of `_t64!`, for exchanges at distances 32, 16, 8,
+# 4, 2 and 1.
+const _T64_MASKS = (0x00000000ffffffff, 0x0000ffff0000ffff, 0x00ff00ff00ff00ff,
+                    0x0f0f0f0f0f0f0f0f, 0x3333333333333333, 0x5555555555555555)
+
+# Transpose, in place, the 64 × 64 bit matrix held in `a[o+1:o+64]` (word `i`
+# is row `i-1`, bits least significant first): bit `b` of word `i` swaps with
+# bit `i` of word `b`.
+@inline function _t64!(a::AbstractArray{UInt64}, o::Int)
+    j = _WORD_BITS >> 1
+    @inbounds for m in _T64_MASKS
+        k = 0
+        while k < _WORD_BITS
+            for i in k:(k + j - 1)
+                t = ((a[o + i + 1] >> j) ⊻ a[o + i + j + 1]) & m
+                a[o + i + 1] ⊻= t << j
+                a[o + i + j + 1] ⊻= t
+            end
+            k += 2j
+        end
+        j >>= 1
+    end
+    return a
+end
+
+# Transpose the `_WORD_BITS·nw` square bit matrix of the block `A` in place,
+# `nw` the number of its rows. Each 64 × 64 strip is moved through the first
+# `2·_WORD_BITS` words of `buf`, a vector or a matrix indexed linearly (a
+# matrix is passed as it is, because a view of it would be allocated on the
+# heap at the call): a diagonal strip is transposed where it is,
+# and the strips (word row `W`, block `G`) and (word row `G`, block `W`) with
+# `W < G` are transposed and stored in each other's place. Nothing outside the
+# view is read or written.
+function _transpose_bit_block!(A::_BlockMatrix{UInt64}, buf::AbstractArray{UInt64})
+    nw = size(A, 1)
+    P = parent(A)
+    off = first(parentindices(A)[2]) - 1
+    @inbounds for W in 1:nw
+        c0 = _WORD_BITS * (W - 1) + off
+        for k in 1:_WORD_BITS
+            buf[k] = P[W, c0 + k]
+        end
+        _t64!(buf, 0)
+        for k in 1:_WORD_BITS
+            P[W, c0 + k] = buf[k]
+        end
+        for G in (W + 1):nw
+            cA = _WORD_BITS * (G - 1) + off
+            for k in 1:_WORD_BITS
+                buf[k] = P[W, cA + k]
+                buf[_WORD_BITS + k] = P[G, c0 + k]
+            end
+            _t64!(buf, 0)
+            _t64!(buf, _WORD_BITS)
+            for k in 1:_WORD_BITS
+                P[W, cA + k] = buf[_WORD_BITS + k]
+                P[G, c0 + k] = buf[k]
+            end
+        end
+    end
+    return A
+end
+
 ##### unpacked copies and packing #####
 
 # Write the generators of the generator-major `src`, entries 0 or 1, into the

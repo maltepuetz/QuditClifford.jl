@@ -186,6 +186,87 @@ end
     @test length(bt_QC._BitPlanes(zeros(UInt64, 0, 2), 0)) == 0
 end
 
+# Entry (q, j) of the X block `x` (word columns, qudit-major) and of the Z block
+# `z`, read from the raw words: bit `(j-1) & 63` of word `(j-1) >> 6 + 1` of column `q`.
+bt_raw_entry(A, q, j) = Int((A[(j - 1) >> 6 + 1, q] >> ((j - 1) & 63)) & UInt64(1))
+
+function bt_blocks(tab)
+    tab isa DestabilizerTableau ?
+        (tab.stab_x, tab.stab_z, tab.destab_x, tab.destab_z) : (tab.stab_x, tab.stab_z)
+end
+
+# Dense random generators in every block of the generator-major `tab`, all
+# `n` of them live (`random_state!` is too slow to fill thousands of qudits):
+# the bits of the `n × n` square are random and the padding stays zero.
+function bt_random_blocks!(rng, tab)
+    n = tab.n
+    for A in bt_blocks(tab), c in 1:n, w in axes(A, 1)
+        A[w, c] = rand(rng, UInt64) & bt_QC._tail_mask(min(n - 64 * (w - 1), 64))
+    end
+    tab.m = n
+    return tab
+end
+
+@testset "Bits switch round trip" begin
+    for TT in bt_TYPES, n in (1, 2, 63, 64, 65, 127, 128, 129, 1984, 1985, 2047, 2048, 2049)
+        rng = Xoshiro(20261121 + n)
+        tab = TT(2, n; eltype = Bits)
+        n <= 129 ? random_state!(rng, tab; m = n ÷ 2) : bt_random_blocks!(rng, tab)
+        @test st_padding_zero(tab)
+        S = stabilizer_matrix(tab)
+        D = TT === DestabilizerTableau ? destabilizer_matrix(tab) : nothing
+        ph = copy(collect(tab.phase))
+        cache = TT === DestabilizerTableau ? collect(tab.xdotz_cache) : nothing
+        m, canon = tab.m, tab.iscanonical
+        P = map(A -> copy(parent(A)), bt_blocks(tab))
+        planes = TT === DestabilizerTableau ? copy(tab.xdotz_cache.planes) : nothing
+        qudit_major!(tab)
+        @test tableau_layout(tab) === :qudit
+        @test stabilizer_matrix(tab) == S && collect(tab.phase) == ph
+        @test tab.m == m && tab.iscanonical == canon
+        if TT === DestabilizerTableau
+            @test destabilizer_matrix(tab) == D && collect(tab.xdotz_cache) == cache
+            @test tab.xdotz_cache.planes == planes
+        end
+        raw = bt_blocks(tab)
+        pairs = n <= 130 ? vec([(q, j) for q in 1:n, j in 1:n]) :
+                [(rand(rng, 1:n), rand(rng, 1:n)) for _ in 1:20000]
+        n > 130 && push!(pairs, (n, n), (1, n), (n, 1), (64, 65), (65, 64))
+        @test all(bt_raw_entry(raw[1], q, j) == S[q, j] && bt_raw_entry(raw[2], q, j) == S[n+q, j]
+                  for (q, j) in pairs)
+        if TT === DestabilizerTableau
+            @test all(bt_raw_entry(raw[3], q, j) == D[q, j] && bt_raw_entry(raw[4], q, j) == D[n+q, j]
+                      for (q, j) in pairs)
+        end
+        @test st_padding_zero(tab)
+        generator_major!(tab)
+        @test tableau_layout(tab) === :generator
+        @test all(parent(A) == p for (A, p) in zip(bt_blocks(tab), P))
+        @test st_padding_zero(tab)
+        @test stabilizer_matrix(tab) == S
+        qudit_major!(tab); generator_major!(tab)
+        @test (@allocated qudit_major!(tab)) == 0
+        @test (@allocated generator_major!(tab)) == 0
+    end
+end
+
+@testset "_t64! is a transpose" begin
+    rng = Xoshiro(64)
+    ref(a) = UInt64[sum(((a[b+1] >> (i - 1)) & UInt64(1)) << (b) for b in 0:63; init = UInt64(0))
+                    for i in 1:64]
+    for _ in 1:100
+        a = rand(rng, UInt64, 64)
+        b = copy(a)
+        bt_QC._t64!(b, 0)
+        @test b == ref(a)
+        bt_QC._t64!(b, 0)
+        @test b == a
+    end
+    a = rand(rng, UInt64, 192); b = copy(a)
+    bt_QC._t64!(b, 64)
+    @test b[1:64] == a[1:64] && b[129:192] == a[129:192] && b[65:128] == ref(a[65:128])
+end
+
 @testset "Bits leaves" begin
     for (L, Lm) in ((bt_QC.GeneratorMajor, :generator), (bt_QC.QuditMajor, :qudit)), n in (65, 130)
         rng = Xoshiro(n + (Lm === :qudit ? 1 : 0))

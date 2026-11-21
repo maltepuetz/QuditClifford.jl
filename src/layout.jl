@@ -11,6 +11,20 @@ _layout_marker(tab::AbstractTableau)::Union{GeneratorMajor, QuditMajor} = tab.la
 
 _transpose_blocks!(tab::StabilizerTableau) =
     (_transpose_block!(tab.stab_x); _transpose_block!(tab.stab_z); nothing)
+function _transpose_blocks!(tab::_BitStab)
+    buf = tab.word_workspace
+    _transpose_bit_block!(tab.stab_x, buf)
+    _transpose_bit_block!(tab.stab_z, buf)
+    return nothing
+end
+function _transpose_blocks!(tab::_BitDestab)
+    buf = tab.word_workspace
+    _transpose_bit_block!(tab.stab_x, buf)
+    _transpose_bit_block!(tab.stab_z, buf)
+    _transpose_bit_block!(tab.destab_x, buf)
+    _transpose_bit_block!(tab.destab_z, buf)
+    return nothing
+end
 function _transpose_blocks!(tab::DestabilizerTableau)
     _transpose_block!(tab.stab_x)
     _transpose_block!(tab.stab_z)

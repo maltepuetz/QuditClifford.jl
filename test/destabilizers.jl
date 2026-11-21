@@ -711,20 +711,24 @@ end
 # switched to qudit-major, checked through the layout-independent matrices,
 # and switched back.
 @testset "duality after every switch" begin
-    for d in (2, 3)
-        n = 7
-        rng = Xoshiro(20261121 + d)
-        tab = DestabilizerTableau(d, n; state = :Z)
+    for (d, n, T) in ((2, 7, UInt8), (3, 7, UInt8), (2, 7, Bits), (2, 70, UInt8), (2, 70, Bits))
+        rng = Xoshiro(20261121 + d + n)
+        # A packed tableau has no gates or measurements: the evolving state lives in
+        # `ref`, and the packed tableau under test is rebuilt from its generators.
+        ref = DestabilizerTableau(d, n; state = :Z)
         for step in 1:10
             if isodd(step)
                 q = rand(rng, 1:(n - 1))
-                apply!(tab, random_clifford(rng, d, [q, q + 1]))
+                apply!(ref, random_clifford(rng, d, [q, q + 1]))
             else
                 q = rand(rng, 1:n)
                 x = rand(rng, 0:(d - 1))
                 z = x == 0 ? rand(rng, 1:(d - 1)) : rand(rng, 0:(d - 1))
-                measure!(rng, tab, SinglePauli(q, x, z, d == 2 ? x * z : 0))
+                measure!(rng, ref, SinglePauli(q, x, z, d == 2 ? x * z : 0))
             end
+            tab = T === Bits ?
+                DestabilizerTableau(d, stabilizer_matrix(ref); m = ref.m, eltype = Bits) : ref
+            @test tableau_eltype(tab) === T
             qudit_major!(tab)
             @test tableau_layout(tab) === :qudit
             S, D = stabilizer_matrix(tab), destabilizer_matrix(tab)
