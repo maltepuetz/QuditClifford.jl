@@ -101,10 +101,24 @@ end
     bt_msg(d) = try bt_QC._check_eltype(Float64, d); "" catch e; e.msg end
     @test occursin("use one of UInt8, UInt16, $(nameof(Int)), Bits.", bt_msg(2))
     @test occursin("use one of UInt8, UInt16, $(nameof(Int)).", bt_msg(3))
-    @test bt_QC._default_eltype(2) === UInt8
+    @test bt_QC._default_eltype(2) === bt_QC._default_qubit_eltype() === UInt8
     @test tableau_eltype(StabilizerTableau(2, 3)) === UInt8
     @test tableau_eltype(DestabilizerTableau(257, 3)) === UInt16
     @test tableau_eltype(StabilizerTableau(3, 3; eltype = Int)) === Int
+end
+
+# The no-keyword constructors at a literal d = 2, as a caller's compiled code
+# sees them.
+bt_default_stab(n) = StabilizerTableau(2, n)
+bt_default_destab(n) = DestabilizerTableau(2, n)
+
+@testset "default qubit construction is inferred" begin
+    # Inference, not a particular element type: it holds for any default.
+    for f in (bt_default_stab, bt_default_destab)
+        t = @inferred f(5)
+        @test isconcretetype(typeof(t))
+        @test tableau_eltype(t) === bt_QC._default_qubit_eltype()
+    end
 end
 
 # The mod-4 add of `δ` at the indices `sel` of a two-plane phase, written on

@@ -63,12 +63,14 @@ function _eltype_admissible(E::Type, d::Int)
 end
 
 # The element type constructors use at d = 2 when no `eltype` keyword is given.
-const _DEFAULT_QUBIT_ELTYPE = Ref{DataType}(UInt8)
+# A constant function, so the default constructor infers a concrete tableau
+# type; the test suite may redefine it to run every d = 2 test on `Bits`.
+_default_qubit_eltype() = UInt8
 
-# The default storage element type for dimension `d`: `_DEFAULT_QUBIT_ELTYPE[]`
+# The default storage element type for dimension `d`: `_default_qubit_eltype()`
 # at d = 2, otherwise the narrowest admissible one.
 function _default_eltype(d::Int)
-    d == 2 && return _DEFAULT_QUBIT_ELTYPE[]
+    d == 2 && return _default_qubit_eltype()
     _eltype_admissible(UInt8, d) && return UInt8
     _eltype_admissible(UInt16, d) && return UInt16
     return Int
