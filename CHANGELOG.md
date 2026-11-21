@@ -89,11 +89,12 @@ dependency bump — carries the `skip-changelog` label instead.
 - `show` of a tableau reports its actual layout, `generator-major` or
   `qudit-major`, on the `Storage:` line.
 - Gates and random-outcome measurements are faster on a qudit-major tableau:
-  gates 4–16 times and random-outcome measurements 1.1–2.7 times at
+  gates 4–16 times and random-outcome measurements 1.05–2.7 times at
   n = 1023–2049 (M3 Pro, `UInt8`). `canonicalize!`, `dephase!`, `traceout!`
   and `reset!` have qudit-major kernels and are about as fast or faster
-  qudit-major. `expect!` on a `DestabilizerTableau`, `stabilizer_matrix` and
-  `==` are slower qudit-major; generator-major stays the default. See the pull
+  qudit-major. `expect!` (up to 4 times on a `DestabilizerTableau`),
+  `stabilizer_matrix` (2.5–9 times) and `==` (3–4 times) are slower
+  qudit-major; generator-major stays the default. See the pull
   request (stacked on #60) for timings.
 - A random-outcome `measure!` is faster, with identical tableaux, outcomes,
   RNG draws and no allocations. Each generator that anticommutes with the

@@ -240,15 +240,17 @@ Which layout is faster depends on the operation. On the same machine, for
 
 - Gates are 4–16 times faster qudit-major, and monitored circuits of gates and
   measurements about 2–4 times.
-- Random-outcome measurements take 0.4–0.9 times the generator-major time.
+- Random-outcome measurements take 0.4–0.95 times the generator-major time.
 - [`canonicalize!`](@ref), [`dephase!`](@ref), [`traceout!`](@ref) and
   [`reset!`](@ref) are about as fast or faster qudit-major, and so are
   [`expect!`](@ref) and [`expect_int!`](@ref) on a non-canonical
   [`StabilizerTableau`](@ref).
 - The entropies and other rank-based quantities are about as fast in both
-  layouts, up to 1.5 times slower qudit-major.
-- [`expect!`](@ref) on a [`DestabilizerTableau`](@ref) is about 4 times slower
-  qudit-major, and [`stabilizer_matrix`](@ref) and `==` cost a few transposes.
+  layouts, up to 1.6 times slower qudit-major.
+- [`expect!`](@ref) is up to 4 times slower qudit-major on a
+  [`DestabilizerTableau`](@ref) and 1.2–1.8 times slower on a canonical
+  [`StabilizerTableau`](@ref). [`stabilizer_matrix`](@ref) is 2.5–9 times and
+  `==` 3–4 times slower qudit-major.
 
 Keep the default generator-major layout unless a phase of the computation is
 dominated by gates and measurements, and switch at the phase boundaries. For
