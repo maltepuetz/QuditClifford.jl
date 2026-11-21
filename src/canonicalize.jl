@@ -287,10 +287,6 @@ end
 _canonicalize!(tab::StabilizerTableau, L::TableauLayout) = _canonicalize_generic!(tab, L)
 _canonicalize!(tab::DestabilizerTableau, L::TableauLayout) = _canonicalize_generic!(tab, L)
 
-# Packed storage runs the per-generator algorithm in both layouts.
-_canonicalize!(tab::_BitStab, L::QuditMajor) = _canonicalize_generic!(tab, L)
-_canonicalize!(tab::_BitDestab, L::QuditMajor) = _canonicalize_generic!(tab, L)
-
 # The per-generator `canonicalize!`, for every layout and storage.
 function _canonicalize_generic!(tab::StabilizerTableau, L::TableauLayout)
     _canonicalize_tableau!(

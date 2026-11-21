@@ -624,4 +624,92 @@ end
     end
 end
 
+# A canonicalization fixture in storage `E`, generator-major: a random pure
+# state, a brickwork circuit with Z measurements at rate 0.15 on a pure state
+# (`:monitored`), or random measurements on the maximally mixed state
+# (`:measured`, so m < n). A final gate layer leaves it out of canonical form.
+function bt_canon_fixture(TT, n, kind, storephase, E)
+    rng = Xoshiro(1000n + findfirst(==(kind), (:random, :monitored, :measured)))
+    tab = TT(2, n; state = kind === :measured ? :mixed : :Z, storephase, eltype = E,
+             layout = :generator)
+    if kind === :random
+        random_state!(rng, tab)
+    elseif kind === :monitored
+        for l in 1:8
+            for q in (isodd(l) ? 1 : 2):2:(n - 1)
+                apply!(tab, random_clifford(rng, 2, [q, q + 1]))
+            end
+            for q in 1:n
+                rand(rng) < 0.15 && measure!(rng, tab, SinglePauli(q, 0, 1))
+            end
+        end
+    else
+        for _ in 1:(n ÷ 2)
+            q = rand(rng, 1:n)
+            x = rand(rng, 0:1)
+            measure!(rng, tab, SinglePauli(q, x, 1, x))
+            n >= 2 && apply!(tab, random_clifford(rng, 2, randperm(rng, n)[1:2]))
+        end
+    end
+    for q in 1:2:(n - 1)
+        apply!(tab, random_clifford(rng, 2, [q, q + 1]))
+    end
+    return tab
+end
+
+# `bt_same` plus the phases, the x·z cache of either type and the padding.
+bt_canon_same(t, u) = bt_same(t, u) && t.iscanonical && collect(t.xdotz_cache) == collect(u.xdotz_cache) &&
+                      (!t.storephase || collect(t.phase) == collect(u.phase)) && st_padding_zero(t)
+
+function bt_canon_allocations(f!, t)
+    for _ in 1:2
+        f!(t)
+    end
+    return @allocated f!(t)
+end
+
+@testset "bit canonicalize kernels" begin
+    QM, GM = bt_QC.QuditMajor(), bt_QC.GeneratorMajor()
+    gm_kernel!(t) = bt_QC._canonicalize_gm_bits!(t, GM)
+    for TT in bt_TYPES, storephase in (true, false), n in (5, 65, 130, 300),
+        kind in (:random, :monitored, :measured)
+
+        u = bt_canon_fixture(TT, n, kind, storephase, UInt8)
+        canonicalize!(u)
+
+        q = qudit_major!(bt_canon_fixture(TT, n, kind, storephase, Bits))
+        canonicalize!(q)
+        @test bt_canon_same(q, u)
+        for div in (0, typemax(Int))
+            qd = qudit_major!(bt_canon_fixture(TT, n, kind, storephase, Bits))
+            bt_QC._canonicalize_bits_qm!(qd, QM, div)
+            @test bt_canon_same(qd, u)
+        end
+
+        g = bt_canon_fixture(TT, n, kind, storephase, Bits)
+        gm_kernel!(g)
+        @test bt_canon_same(g, u)
+
+        if n == 130 && kind === :monitored
+            @test bt_canon_allocations(canonicalize!, q) == 0
+            @test bt_canon_allocations(gm_kernel!, g) == 0
+        end
+    end
+    for TT in bt_TYPES, n in (1, 65)
+        # m = 0: nothing to reduce.
+        u = TT(2, n; state = :mixed, eltype = UInt8, layout = :generator)
+        canonicalize!(u)
+        q = TT(2, n; state = :mixed, eltype = Bits, layout = :qudit)
+        canonicalize!(q)
+        g = TT(2, n; state = :mixed, eltype = Bits, layout = :generator)
+        gm_kernel!(g)
+        @test bt_canon_same(q, u) && bt_canon_same(g, u)
+        for (TL, L) in ((:qudit, QM), (:generator, GM))
+            s = TT(2, n; eltype = Bits, layout = TL)
+            m = which(bt_QC._canonicalize!, (typeof(s), typeof(L)))
+            @test basename(String(m.file)) == "canonicalize_bits.jl"
+        end
+    end
+end
+
 end
