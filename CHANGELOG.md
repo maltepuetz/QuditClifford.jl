@@ -95,8 +95,8 @@ dependency bump — carries the `skip-changelog` label instead.
   and `reset!` have qudit-major kernels and are about as fast or faster
   qudit-major. `expect!` and `expect_int!` (up to about 4 times on a
   `DestabilizerTableau`) and `stabilizer_matrix` and `destabilizer_matrix`
-  (1.5–2 times at `d = 3`) are slower qudit-major; generator-major stays the
-  default. See the pull request (stacked on #60) for timings.
+  (1.5–2 times at `d = 3`, `n = 1024`–`2048`) are slower qudit-major;
+  generator-major stays the default. Timings are in #61.
 - A random-outcome `measure!` is faster, with identical tableaux, outcomes,
   RNG draws and no allocations. Each generator that anticommutes with the
   measured operator absorbs a power of the replaced generator. That update
