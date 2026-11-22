@@ -705,7 +705,7 @@ end
 @testset "bit canonicalize kernels" begin
     QM, GM = bt_QC.QuditMajor(), bt_QC.GeneratorMajor()
     gm_kernel!(t) = bt_QC._canonicalize_gm_bits!(t, GM)
-    for TT in bt_TYPES, storephase in (true, false), n in (5, 65, 130, 300),
+    for TT in bt_TYPES, storephase in (true, false), n in (5, 64, 65, 128, 130, 300),
         kind in (:random, :monitored, :measured)
 
         u = bt_canon_fixture(TT, n, kind, storephase, UInt8)
@@ -772,7 +772,8 @@ end
 bt_eq_allocations(a, b) = (a == b; @allocated a == b)
 
 @testset "bit equality kernels" begin
-    for TT in bt_TYPES, storephase in (true, false), n in (5, 65, 130), kind in (:monitored, :measured),
+    for TT in bt_TYPES, storephase in (true, false), n in (5, 64, 65, 128, 130),
+        kind in (:monitored, :measured),
         layout in (:generator, :qudit)
 
         u = bt_canon_fixture(TT, n, kind, storephase, UInt8)

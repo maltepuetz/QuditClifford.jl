@@ -175,10 +175,11 @@ end
 # Apply `nops` operations drawn from `oprng` to every tableau in `tabs`, the
 # first being the `eltype = Int`, generator-major reference, each with its own
 # copy of `seed` as RNG, and compare every tableau with the reference after
-# every operation, packed padding included (`st_padding_zero`). Before each
-# operation every other tableau changes its layout
-# with probability 1/8 (`st_switch!`, drawn from an RNG of its own), so `tabs`
-# is updated in place. Returns the number of comparisons that failed.
+# every operation: generators, `pivcol_of_row`, the RNG state and packed
+# padding (`st_padding_zero`) included. Before each operation every other
+# tableau changes its layout with probability 1/8 (`st_switch!`, drawn from an
+# RNG of its own), so `tabs` is updated in place. Returns the number of
+# comparisons that failed.
 function st_run!(tabs, seed, oprng, nops)
     ref = tabs[1]
     rngs = [Xoshiro(seed) for _ in tabs]
@@ -199,7 +200,8 @@ function st_run!(tabs, seed, oprng, nops)
         ok = true
         for (k, tab) in enumerate(tabs)
             same = stabilizer_matrix(tab) == Sref && tab.m == ref.m &&
-                   tab.iscanonical == ref.iscanonical && isequal(vals[k], vals[1])
+                   tab.iscanonical == ref.iscanonical && isequal(vals[k], vals[1]) &&
+                   tab.pivcol_of_row == ref.pivcol_of_row && rngs[k] == rngs[1]
             Dref === nothing || (same &= destabilizer_matrix(tab) == Dref)
             tab isa DestabilizerTableau && (same &= tab.xdotz_cache[1:tab.m] == st_xdotz(tab))
             same &= tableau_layout(tab) === layouts[k]
@@ -472,8 +474,8 @@ end
         @test Base.summarysize(S) <= 2.25 * 2n^2 + slack
         @test Base.summarysize(D) <= 2.25 * 4n^2 + slack
     end
-    # Packed blocks take a sixteenth of the bytes, padding and the unpacked
-    # workspaces included.
+    # A packed block takes about an eighth of the bytes of a `UInt8` one; with
+    # its padding and the unpacked workspaces a packed tableau stays below half.
     @test Base.summarysize(StabilizerTableau(2, 2048; eltype = Bits)) <
           Base.summarysize(StabilizerTableau(2, 2048; eltype = UInt8)) ÷ 2
     st_int_matrix_fields(tab) =

@@ -363,6 +363,24 @@ end
     end
 end
 
+@testset "packed qudit-major measure! allocates nothing on the sparse path" begin
+    # At n = 384 the mask of generators 1:n has six words, so one nonzero word
+    # is below the default cutoff `(6 - 1) ÷ _BIT_QM_SPARSE_DIV`.
+    n = 384
+    @test (MK._nwords(n) - 1) ÷ MK._BIT_QM_SPARSE_DIV >= 1
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        # X5 X6 anticommutes with Z5 (the pivot) and Z6 only: one mask word.
+        tab = TT(2, n; state = :Z, eltype = Bits, layout = :qudit)
+        op = DoublePauli(5, 1, 0, 6, 1, 0)
+        @test mkref_measure_allocs(Xoshiro(1), tab, op) == 0
+        a, b = copy(tab), copy(tab)
+        L = MK.QuditMajor()
+        @test MK._measure_bits_qm!(Xoshiro(2), a, L, op, nothing, 1, MK._BIT_QM_SPARSE_DIV) ==
+              MK._measure_bits_qm!(Xoshiro(2), b, L, op, nothing, 1, typemax(Int))
+        @test a == b
+    end
+end
+
 @testset "measure! allocates nothing in the append branch of a DestabilizerTableau" begin
     for d in (2, 3, 31),
         E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
