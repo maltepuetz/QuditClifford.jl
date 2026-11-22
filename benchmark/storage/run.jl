@@ -134,6 +134,14 @@ function run_case!(io, T, tn, layout, eltype, d, n)
         @printf("  %-18s %-6s %-9s %-5s d=%-3d n=%-5d %14.1f ns  (%d reps)\n", op, tn, layout, ename, d, n, v, reps)
         flush(stdout)
     end
+    # A measurement row needs at least 8 measurements of its kind; with fewer
+    # it is left out of the CSV, with a note.
+    function enough(op, k)
+        k >= 8 && return true
+        println("  skipping ", op, " at d = ", d, ", n = ", n, ": only ", k, " measurements of this kind")
+        flush(stdout)
+        return false
+    end
     rng = Xoshiro(1000 * d + n)
 
     # gate streams on a product state
@@ -192,28 +200,26 @@ function run_case!(io, T, tn, layout, eltype, d, n)
     K = 64
     rseq = [(q, rand(rng, 0:(d - 1))) for q in first(shuffle(rng, findall(!, isdet)), K)]
     dseq = first(shuffle(rng, findall(isdet)), K)
-    if want("measZ_random")
-        length(rseq) >= 8 || error("too few random Z measurements at d = $d, n = $n")
+    if want("measZ_random") && enough("measZ_random", length(rseq))
         rec!("measZ_random", timeit(t -> foreach(((q, o),) -> measure!(t, zop(q); outcome = o), rseq),
                                     () -> copy(tab0), length(rseq)))
     end
-    if want("measZ_det")
-        length(dseq) >= 8 || error("too few deterministic Z measurements at d = $d, n = $n")
+    if want("measZ_det") && enough("measZ_det", length(dseq))
         rec!("measZ_det", timeit(t -> foreach(q -> measure!(t, zop(q); outcome = 0), dseq),
                                  () -> copy(tab0), length(dseq)))
     end
     if want("measZZ_random")
         zz = random_ops(canon, [DoublePauli(i, 0, 1, j, 0, d - 1)
                                 for (i, j) in (sort(randperm(rng, n)[1:2]) for _ in 1:4K)], K)
-        length(zz) >= 8 || error("too few random ZZ measurements at d = $d, n = $n")
-        rec!("measZZ_random", timeit(t -> foreach(op -> measure!(t, op; outcome = 1), zz),
-                                     () -> copy(tab0), length(zz)))
+        enough("measZZ_random", length(zz)) &&
+            rec!("measZZ_random", timeit(t -> foreach(op -> measure!(t, op; outcome = 1), zz),
+                                         () -> copy(tab0), length(zz)))
     end
     if want("measX_random")
         xs = random_ops(canon, [xop(q) for q in shuffle(rng, 1:n)], K)
-        length(xs) >= 8 || error("too few random X measurements at d = $d, n = $n")
-        rec!("measX_random", timeit(t -> foreach(op -> measure!(t, op; outcome = 1), xs),
-                                    () -> copy(tab0), length(xs)))
+        enough("measX_random", length(xs)) &&
+            rec!("measX_random", timeit(t -> foreach(op -> measure!(t, op; outcome = 1), xs),
+                                        () -> copy(tab0), length(xs)))
     end
 
     want("canonicalize") && rec!("canonicalize", timeit(canonicalize!, () -> copy(tab0), 1; maxreps = 21))
