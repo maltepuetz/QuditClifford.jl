@@ -68,6 +68,11 @@ jobs:
             experimental: false
             layout: qudit
             eltype: bits
+          - version: '1'
+            os: ubuntu-latest
+            arch: x86
+            experimental: false
+            eltype: bits
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
