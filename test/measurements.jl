@@ -347,9 +347,14 @@ function _huge_measure_allocated(TT, d::Int, storephase::Bool, op, m::Int)
     end
     warm = TT(d, copy(raw); m=m, storephase=storephase)
     tab = TT(d, copy(raw); m=m, storephase=storephase)
-    measure!(warm, op; outcome=1, phase_policy=2)
-    return @allocated measure!(tab, op; outcome=1, phase_policy=2)
+    _huge_measure_alloc(warm, op)
+    return _huge_measure_alloc(tab, op)
 end
+
+# A function barrier: the tableau type above depends on the runtime `d` (and,
+# with `QC_TEST_ELTYPE=bits`, on more storage types than Julia 1.10 splits a
+# union over), so only the concrete call is measured.
+_huge_measure_alloc(tab, op) = @allocated measure!(tab, op; outcome=1, phase_policy=2)
 
 @testset "Measurement reduces huge exponents before commutation" begin
     n = 3
@@ -522,9 +527,12 @@ end
 function _meas_rng_allocated(rng::AbstractRNG, TT, d::Int, raw::Matrix{Int}, m::Int, op)
     warm = TT(d, copy(raw); m=m, storephase=true)
     tab = TT(d, copy(raw); m=m, storephase=true)
-    measure!(rng, warm, op; phase_policy=2)
-    return @allocated measure!(rng, tab, op; phase_policy=2)
+    _meas_rng_alloc(rng, warm, op)
+    return _meas_rng_alloc(rng, tab, op)
 end
+
+# A function barrier, as for `_huge_measure_alloc`.
+_meas_rng_alloc(rng, tab, op) = @allocated measure!(rng, tab, op; phase_policy=2)
 
 @testset "Measurement with an explicit RNG" begin
     for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
