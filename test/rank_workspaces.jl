@@ -558,6 +558,11 @@ rw_rows_alloc(ws, b, m) = @allocated RW._copy_generator_rows!(ws, b, m)
         site_sets = Any[1:(n ÷ 2), n:-1:1, randperm(rng, n)[1:max(1, n ÷ 3)],
                         5:min(n, 40), [1]]
         n >= 96 && push!(site_sets, 33:96)
+        # unions of ranges (runs of consecutive sites, some words mixed), a run
+        # from an unaligned start, a gap inside a word, and a swap
+        h4 = max(1, n ÷ 4)
+        push!(site_sets, vcat(1:h4, (2h4 + 1):min(n, 3h4)), collect(3:min(n, 70)),
+              setdiff(1:n, [min(n, 40)]), [2; 1; 3:n])
         for sites in site_sets
             N = length(sites)
             nw = cld(2N, 64)
@@ -587,6 +592,21 @@ rw_rows_alloc(ws, b, m) = @allocated RW._copy_generator_rows!(ws, b, m)
         @test Gb == G8
         rw_rows_alloc(Gb, b, m)
         @test rw_rows_alloc(Gb, b, m) == 0
+    end
+
+    @testset "generator-major unions of ranges over more than 64 words" begin
+        n, m = 2200, 2197
+        u8, b = rw_packed_pair(Xoshiro(2200), RW.GeneratorMajor, n, m)
+        for sites in (vcat(1:1000, 1101:2200), vcat(1:2100, [2200]), vcat(5:1030, 1031:2199))
+            N = length(sites)
+            nw = cld(2N, 64)
+            W8 = rw_sentinel(UInt64, nw + 2, n + 1)
+            Wb = copy(W8)
+            @test RW._pack_sites_gf2!(Wb, b, m, sites, N) == RW._pack_sites_gf2!(W8, u8, m, sites, N)
+            @test Wb == W8
+            rw_pack_alloc(Wb, b, m, sites, N)
+            @test rw_pack_alloc(Wb, b, m, sites, N) == 0
+        end
     end
 
     @testset "methods are the packed ones" begin

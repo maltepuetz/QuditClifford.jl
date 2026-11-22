@@ -38,7 +38,9 @@ end
 # Generator-major. Site `k` of a generator takes bits `2k-2` and `2k-1`. When
 # `sites` is a contiguous ascending range, the 32 sites of a word are 32
 # consecutive bits of each of the X and Z columns: they are spread to the
-# even bits and OR-ed. Any other site list is read bit by bit.
+# even bits and OR-ed. Any other site list is read the same way in each
+# workspace word whose 32 sites are consecutive ascending qudits (the runs of
+# a union of ranges), and bit by bit in the other words.
 function _pack_sites_gf2!(
     W::AbstractMatrix{UInt64},
     b::_GMBits,
@@ -63,19 +65,53 @@ function _pack_sites_gf2!(
             end
         end
     else
-        @inbounds for j in 1:m
-            for w in 1:nw
+        # Workspace words in groups of 64: bit `w - w0` of `run` marks a word
+        # whose sites are consecutive ascending qudits, read as for a range.
+        @inbounds for w0 in 1:_WORD_BITS:nw
+            w1 = min(nw, w0 + _WORD_BITS - 1)
+            run = _consecutive_site_words(sites, N, w0, w1, b.n)
+            for j in 1:m, w in w0:w1
                 k0 = half * (w - 1)
-                acc = zero(UInt64)
-                for t in 1:min(half, N - k0)
-                    q = Int(sites[k0 + t])
-                    acc |= _site_bit(X, q, j, 2t - 2) | _site_bit(Z, q, j, 2t - 1)
+                cnt = min(half, N - k0)
+                if (run >> (w - w0)) & UInt64(1) != UInt64(0)
+                    s = Int(sites[k0 + 1]) - 1
+                    mask = (UInt64(1) << cnt) - UInt64(1)
+                    xs = _bits32(X, j, s) & mask
+                    zs = _bits32(Z, j, s) & mask
+                    W[w, j] = _spread32(xs) | (_spread32(zs) << 1)
+                else
+                    acc = zero(UInt64)
+                    for t in 1:cnt
+                        q = Int(sites[k0 + t])
+                        acc |= _site_bit(X, q, j, 2t - 2) | _site_bit(Z, q, j, 2t - 1)
+                    end
+                    W[w, j] = acc
                 end
-                W[w, j] = acc
             end
         end
     end
     return nw
+end
+
+# For the workspace words `w0:w1` (at most 64) of the site list `sites[1:N]`,
+# 32 sites per word: a mask with bit `w - w0` set when the sites of word `w`
+# are consecutive ascending qudits inside `1:n`.
+function _consecutive_site_words(sites::AbstractVector, N::Int, w0::Int, w1::Int, n::Int)
+    half = _WORD_BITS >> 1
+    run = zero(UInt64)
+    @inbounds for w in w0:w1
+        k0 = half * (w - 1)
+        cnt = min(half, N - k0)
+        q1 = Int(sites[k0 + 1])
+        ok = q1 >= 1 && q1 + cnt - 1 <= n
+        t = 2
+        while ok && t <= cnt
+            ok = Int(sites[k0 + t]) == q1 + t - 1
+            t += 1
+        end
+        ok && (run |= UInt64(1) << (w - w0))
+    end
+    return run
 end
 
 # Qudit-major. The 64 generators of word `G` of site `q` are one word of
