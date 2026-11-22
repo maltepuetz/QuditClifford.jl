@@ -226,7 +226,7 @@ function _measure!(rng::Random.AbstractRNG, tab::_BitTableau, L::GeneratorMajor,
     _zero_gen!(stab, pivot)
     _bit_set_operand!(stab, pivot, opc)
     _bit_measured_scalars!(tab, pivot, t, kop, opc)
-    _after_noncommuting_measurement!(tab, L, pivot, m, opc, 0)
+    _after_bit_noncommuting_measurement!(tab, L, pivot, m, opc, 0)
     tab.iscanonical = false
     return t
 end
@@ -250,8 +250,8 @@ end
 # The destabilizers after the random branch: the old pivot generator (columns
 # 1-2 of word_workspace) becomes the pivot dual, and every other dual is made
 # orthogonal to the measured generator. `np` is not read.
-function _after_noncommuting_measurement!(tab::_BitDestab, L::GeneratorMajor, pivot::Int,
-                                          m::Int, op::_BitOperand, ::Int)
+function _after_bit_noncommuting_measurement!(tab::_BitDestab, L::GeneratorMajor, pivot::Int,
+                                              m::Int, op::_BitOperand, ::Int)
     destab = _destab(tab, L)
     dx, dz = destab.x, destab.z
     ws = tab.word_workspace
@@ -302,8 +302,8 @@ function _orthogonalize_duals!(tab::_BitDestab, L::GeneratorMajor, col::Int, m::
     return nothing
 end
 
-@inline _after_noncommuting_measurement!(::_BitStab, ::TableauLayout, ::Int, ::Int,
-                                         ::_BitOperand, ::Int) = nothing
+@inline _after_bit_noncommuting_measurement!(::_BitStab, ::TableauLayout, ::Int, ::Int,
+                                             ::_BitOperand, ::Int) = nothing
 
 ########################################
 # Qudit-major                          #
@@ -541,7 +541,7 @@ function _measure_bits_qm!(rng::Random.AbstractRNG, tab::_BitTableau, L::QuditMa
     end
     _bit_set_operand!(stab, pivot, opc)
     _bit_measured_scalars!(tab, pivot, t, kop, opc)
-    _after_noncommuting_measurement!(tab, L, pivot, m, opc, np)
+    _after_bit_noncommuting_measurement!(tab, L, pivot, m, opc, np)
     tab.iscanonical = false
     return t
 end
@@ -562,8 +562,8 @@ end
 # The destabilizers after the random branch: the old pivot generator (columns
 # 3-4 of word_workspace, support `zacc_workspace[1:np]`) becomes the pivot
 # dual, and every other dual is made orthogonal to the measured generator.
-function _after_noncommuting_measurement!(tab::_BitDestab, L::QuditMajor, pivot::Int, m::Int,
-                                          op::_BitOperand, np::Int)
+function _after_bit_noncommuting_measurement!(tab::_BitDestab, L::QuditMajor, pivot::Int, m::Int,
+                                              op::_BitOperand, np::Int)
     destab = _destab(tab, L)
     ws = tab.word_workspace
     sites = tab.zacc_workspace
