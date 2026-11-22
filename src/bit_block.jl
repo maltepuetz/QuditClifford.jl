@@ -531,6 +531,64 @@ _gen_submul_sites!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int,
                    sites::AbstractVector{Int}, nsites::Int, a::Int, d::Int) where {L} =
     _gen_addmul_sites!(b, j, src, k, sites, nsites, a, d)
 
+##### equality #####
+
+# Whether entries `1:m` of two vectors agree: word by word for bit planes (the
+# last word masked to `m`), entry by entry otherwise.
+function _first_entries_equal(pa::_BitPlanes, pb::_BitPlanes, m::Int)
+    A, B = pa.planes, pb.planes
+    size(A, 2) == size(B, 2) || return _first_entries_equal_generic(pa, pb, m)
+    nw = _nwords(m)
+    nw == 0 && return true
+    t = _tail_mask(m)
+    @inbounds for k in axes(A, 2)
+        for w in 1:(nw - 1)
+            A[w, k] == B[w, k] || return false
+        end
+        (A[nw, k] ⊻ B[nw, k]) & t == UInt64(0) || return false
+    end
+    return true
+end
+_first_entries_equal(pa::AbstractVector{Int}, pb::AbstractVector{Int}, m::Int) =
+    _first_entries_equal_generic(pa, pb, m)
+function _first_entries_equal_generic(pa, pb, m::Int)
+    @inbounds for j in 1:m
+        pa[j] == pb[j] || return false
+    end
+    return true
+end
+
+# `_active_columns_equal` for two packed blocks of the same layout, by words:
+# generator-major the word columns `1:m` (bits past `n` are zero in both),
+# qudit-major each site's words over generators `1:m`, the last masked to `m`.
+function _active_columns_equal(a::_GMBits, pa::AbstractVector{Int},
+                               b::_GMBits, pb::AbstractVector{Int},
+                               m::Int, storephase::Bool)
+    storephase && !_first_entries_equal(pa, pb, m) && return false
+    ax, az, bx, bz = a.x, a.z, b.x, b.z
+    nw = size(ax, 1)
+    @inbounds for j in 1:m, w in 1:nw
+        (ax[w, j] == bx[w, j] && az[w, j] == bz[w, j]) || return false
+    end
+    return true
+end
+function _active_columns_equal(a::_QMBits, pa::AbstractVector{Int},
+                               b::_QMBits, pb::AbstractVector{Int},
+                               m::Int, storephase::Bool)
+    storephase && !_first_entries_equal(pa, pb, m) && return false
+    nw = _nwords(m)
+    nw == 0 && return true
+    t = _tail_mask(m)
+    ax, az, bx, bz = a.x, a.z, b.x, b.z
+    @inbounds for q in 1:a.n
+        for w in 1:(nw - 1)
+            (ax[w, q] == bx[w, q] && az[w, q] == bz[w, q]) || return false
+        end
+        ((ax[nw, q] ⊻ bx[nw, q]) | (az[nw, q] ⊻ bz[nw, q])) & t == UInt64(0) || return false
+    end
+    return true
+end
+
 ##### switching layouts #####
 
 # The masks of the six rounds of `_t64!`, for exchanges at distances 32, 16, 8,

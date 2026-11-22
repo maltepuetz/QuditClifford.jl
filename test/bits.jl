@@ -712,4 +712,57 @@ end
     end
 end
 
+
+# Flip the X (`which = 1`), Z (2) entry or add 2 to the phase (3) of
+# generator `j` at qudit `q`.
+function bt_perturb!(t, which, q, j)
+    L = bt_QC._layout_marker(t)
+    b = bt_QC._stab(t, L)
+    if which == 1
+        bt_QC._xset!(b, 1 - bt_QC._xget(b, q, j), q, j)
+    elseif which == 2
+        bt_QC._zset!(b, 1 - bt_QC._zget(b, q, j), q, j)
+    else
+        t.phase[j] = mod(t.phase[j] + 2, 4)
+    end
+    return t
+end
+
+bt_eq_allocations(a, b) = (a == b; @allocated a == b)
+
+@testset "bit equality kernels" begin
+    for TT in bt_TYPES, storephase in (true, false), n in (5, 65, 130), kind in (:monitored, :measured),
+        layout in (:generator, :qudit)
+
+        u = bt_canon_fixture(TT, n, kind, storephase, UInt8)
+        t = bt_canon_fixture(TT, n, kind, storephase, Bits)
+        layout === :qudit && qudit_major!(t)
+        @test t == copy(t)
+        @test bt_eq_allocations(t, copy(t)) == 0
+        c = copy(t); canonicalize!(c)
+        @test t == c
+        m = t.m
+        m == 0 && continue
+        rng = Xoshiro(n + m)
+        for j in unique((1, m, rand(rng, 1:m), min(m, 64), min(m, 65))), which in (1, 2, 3)
+            which == 3 && !storephase && continue
+            q = rand(rng, 1:n)
+            t2 = bt_perturb!(copy(t), which, q, j)
+            u2 = bt_perturb!(copy(u), which, q, j)
+            @test (t == t2) == (u == u2)
+            @test (t2 == t) == (u2 == u)
+            Lt, Lu = bt_QC._layout_marker(t), bt_QC._layout_marker(u)
+            @test bt_QC._active_columns_equal(bt_QC._stab(t, Lt), t.phase, bt_QC._stab(t2, Lt), t2.phase, m, storephase) ==
+                  bt_QC._active_columns_equal(bt_QC._stab(u, Lu), u.phase, bt_QC._stab(u2, Lu), u2.phase, m, storephase) ==
+                  false
+        end
+    end
+    for (TL, B) in ((:generator, bt_QC._GMBits), (:qudit, bt_QC._QMBits))
+        t = StabilizerTableau(2, 5; eltype = Bits, layout = TL)
+        P = typeof(t.phase)
+        m = which(bt_QC._active_columns_equal, (B, P, B, P, Int, Bool))
+        @test basename(String(m.file)) == "bit_block.jl"
+    end
+end
+
 end
