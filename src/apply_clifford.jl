@@ -820,9 +820,6 @@ end
     return tab
 end
 
-# Packed storage runs the bit-sliced kernels of src/apply_bits.jl in both
-# layouts, for the tuple backing on every tier.
-
 # The per-generator column loop, for every layout and backing.
 @inline function _apply_columns_generic!(tab::AbstractTableau, prep::AbstractPreparedClifford,
                                          L::TableauLayout)

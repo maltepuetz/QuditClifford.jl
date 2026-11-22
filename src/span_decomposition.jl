@@ -37,7 +37,6 @@ function coeffs_from_generators! end
 end
 
 @inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op)
-    n = tab.n
     m = tab.m
     d = tab.d
     destab = _destab(tab, L)
