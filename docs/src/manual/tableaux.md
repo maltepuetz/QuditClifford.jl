@@ -251,15 +251,19 @@ allocates nothing and costs about a ninth of the `UInt8` switch.
 | `DestabilizerTableau`, `UInt8` |       4.99 |       4.62 |       4.43 |        4.30 |
 | `DestabilizerTableau`, `Bits`  |       0.84 |       1.06 |       0.90 |        0.79 |
 
-Packed tableaux are 4 to 6 times smaller from `n = 1024` on. The bump at
-`n = 2048` is the padding of the word columns.
+Packed tableaux are about 4 to 6 times smaller from `n = 1024` on
+(3.7–5.9 times in the table). The bump at `n = 2048` is the padding of the word
+columns. The constructors build the packed blocks directly, so building a
+packed tableau allocates about its final size.
 
 **Speed.** Compared with `UInt8` storage in the same layout at `n = 1024` and
 `2048`:
 
 - Gates and measurements are much faster. Qudit-major gates take 0.05–0.16 of
-  the `UInt8` time and random-outcome measurements 0.17–0.32; generator-major
-  random-outcome measurements take 0.18–0.38.
+  the `UInt8` time and random-outcome measurements 0.17–0.32. Generator-major
+  random-outcome measurements take 0.09–0.46: 0.18–0.38 for a `Z`
+  measurement, 0.09–0.37 for an `X` measurement and 0.25–0.46 for a `ZZ`
+  measurement.
 - [`canonicalize!`](@ref) takes 0.08–0.21 of the time in both layouts, and a
   whole monitored circuit 0.16–0.70. Packed qudit-major `canonicalize!` switches
   to generator-major internally and switches back, so the layout of the tableau
@@ -269,8 +273,9 @@ Packed tableaux are 4 to 6 times smaller from `n = 1024` on. The bump at
   slower, 1.1–1.6 times. On a [`DestabilizerTableau`](@ref), generator-major
   [`expect!`](@ref) and [`expect_int!`](@ref) are 2.1–2.7 times slower. Both
   are still faster than switching to the other packed layout and back.
-- [`stabilizer_matrix`](@ref) is slower, 1.4–2.1 times, and 1.46–1.65 times
-  in the qudit-major layout. It is a debugging and I/O path.
+- [`stabilizer_matrix`](@ref) is slower: 1.6–2.1 times in the
+  generator-major layout and 1.39–1.65 times in the qudit-major layout. It is
+  a debugging and I/O path.
 
 `UInt8` remains the default until a benchmark round on the target machines
 decides otherwise. `benchmark/storage/README.md` describes the benchmark.
@@ -290,8 +295,8 @@ which exponents are contiguous in memory:
 The `layout` keyword of every constructor selects the layout, `:generator` by
 default. [`qudit_major!`](@ref) and [`generator_major!`](@ref) switch an
 existing tableau in place, and [`tableau_layout`](@ref) returns `:generator` or
-`:qudit`. `show` prints the layout on its `Storage` line. No operation leaves the layout
-changed, and `copy!(dst, src)` gives `dst` the layout of `src`.
+`:qudit`. `show` prints the layout on its `Storage` line. No operation leaves
+the layout changed, and `copy!(dst, src)` gives `dst` the layout of `src`.
 
 The layout affects speed, never a result: generators, phases, `m`, measurement
 outcomes drawn from the same `rng`, entropies and the matrices returned by

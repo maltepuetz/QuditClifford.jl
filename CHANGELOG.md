@@ -73,7 +73,14 @@ dependency bump — carries the `skip-changelog` label instead.
   `d` throws an `ArgumentError`). Results are bit-identical to `UInt8`
   storage, and the switch between layouts stays in place and allocation-free.
   `Bits` is exported, `tableau_eltype(tab)` returns the storage type chosen at
-  construction, and `UInt8` remains the default.
+  construction, and `UInt8` remains the default. A packed tableau is about
+  4–6 times smaller than a `UInt8` one from `n = 1024` on. Gates,
+  measurements, `canonicalize!` and the entanglement measures are mostly
+  faster than with `UInt8`, qudit-major gates by an order of magnitude. Three
+  paths are slower than with `UInt8` in the same layout: `stabilizer_matrix`
+  in both layouts, single-qubit gates on a generator-major tableau, and
+  `expect!` and `expect_int!` on a generator-major `DestabilizerTableau`. See
+  "Packed qubit storage" in the manual.
 - Both tableau types can store their generators qudit-major, with the
   exponents of one qudit across all generators contiguous, instead of the
   default generator-major layout. The `layout = :generator | :qudit` keyword of
@@ -102,12 +109,6 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
-- Packed qubit storage (`eltype = Bits`) makes a tableau 4–6 times smaller than
-  `UInt8` from `n = 1024` on, and gates, measurements, `canonicalize!` and the
-  entanglement measures are mostly faster, qudit-major gates by an order of
-  magnitude. It is slower for `stabilizer_matrix`, and generator-major
-  `gate1` and `expect!`/`expect_int!` on a `DestabilizerTableau` are slower
-  than with `UInt8`. See "Packed qubit storage" in the manual.
 - `show` of a tableau reports its actual layout, `generator-major` or
   `qudit-major`, on the `Storage:` line.
 - Gates and random-outcome measurements are faster on a qudit-major tableau:
