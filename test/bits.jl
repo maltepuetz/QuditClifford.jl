@@ -53,6 +53,40 @@ end
         # The transposed raw matrix gives the same tableau.
         @test bt_same(TT(2, permutedims(S); m = r.m, eltype = Bits, layout), u)
     end
+    # The packed loader reduces entries outside 0:1 mod 2 and phases mod 4.
+    for TT in bt_TYPES, layout in (:generator, :qudit)
+        n = 65
+        S = stabilizer_matrix(TT(2, n; state = :ghz, eltype = UInt8))
+        W = copy(S)
+        W[1:2n, :] .+= 2 .* rand(Xoshiro(n), -3:3, 2n, n)
+        W[2n + 1, :] .+= 4 .* rand(Xoshiro(n + 1), -3:3, n)
+        t = TT(2, n; state = :product, eltype = Bits, layout)
+        bt_QC._load_stabilizer_matrix!(t, W)
+        @test stabilizer_matrix(t) == S && st_padding_zero(t)
+    end
+end
+
+# The bytes a packed constructor call allocates, after a warm-up call.
+bt_construction_allocs(f) = (f(); @allocated f())
+
+@testset "packed construction allocates about the final size" begin
+    # No unpacked tableau is built on the way: a preset allocates the tableau
+    # itself, a raw matrix that plus O(n²/64) words of elimination scratch.
+    n = 1024
+    for TT in bt_TYPES, layout in (:generator, :qudit)
+        unpacked = Base.summarysize(TT(2, n; eltype = UInt8, layout))
+        for state in (:product, :ghz)
+            size = Base.summarysize(TT(2, n; state, eltype = Bits, layout))
+            a = bt_construction_allocs(() -> TT(2, n; state, eltype = Bits, layout))
+            @test a <= 1.25 * size
+            @test a < unpacked ÷ 2
+        end
+        S = stabilizer_matrix(TT(2, n; state = :ghz, eltype = UInt8))
+        size = Base.summarysize(TT(2, S; eltype = Bits, layout))
+        a = bt_construction_allocs(() -> TT(2, S; eltype = Bits, layout))
+        @test a <= 2 * size
+        @test a < unpacked ÷ 2
+    end
 end
 
 @testset "Bits shared methods" begin

@@ -133,16 +133,6 @@ end
 
 _zero!(v::_BitPlanes) = (fill!(v.planes, UInt64(0)); v)
 
-# Overwrite `dst` with the entries of `src`, of the same length, mod `2^k`.
-function _pack_planes!(dst::_BitPlanes, src::AbstractVector{<:Integer})
-    length(dst) == length(src) || throw(DimensionMismatch("lengths differ"))
-    _zero!(dst)
-    @inbounds for j in eachindex(src)
-        dst[j] = src[j]
-    end
-    return dst
-end
-
 ##### packed blocks #####
 
 struct BitBlock{L<:TableauLayout}
@@ -663,21 +653,7 @@ function _transpose_bit_block!(A::_BlockMatrix{UInt64}, buf::AbstractArray{UInt6
     return A
 end
 
-##### unpacked copies and packing #####
-
-# Write the generators of the generator-major `src`, entries 0 or 1, into the
-# packed `dst` in the layout of `dst`. Every bit of `dst` inside the `n × n`
-# square is written.
-function _pack_generator_major!(dst::BitBlock, src::_GMBlock)
-    n = _nq(dst)
-    _nq(src) == n && _ncap(src) == n || throw(DimensionMismatch("block sizes differ"))
-    _zero!(dst)
-    @inbounds for j in 1:n, q in 1:n
-        _xget(src, q, j) == 0 || _xset!(dst, 1, q, j)
-        _zget(src, q, j) == 0 || _zset!(dst, 1, q, j)
-    end
-    return dst
-end
+##### unpacked copies #####
 
 # An unpacked generator-major copy of `b` in fresh `UInt8` matrices, for code
 # that works on a private generator-major scratch.

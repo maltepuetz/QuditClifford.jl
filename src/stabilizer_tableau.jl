@@ -134,10 +134,9 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
-    eltype === Bits && return _packed_tableau(
-        StabilizerTableau(d, n; state, basis, storephase, inversemod, eltype=UInt8,
-                          layout=:generator), layout)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
+    eltype === Bits && return _packed_preset_tableau(StabilizerTableau, n, state_norm, basis_spec,
+                                                     storephase, inversemod, layout)
     b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
     tab = _build_stabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod; preset=true)
     return _apply_layout!(tab, layout)
@@ -155,9 +154,6 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
-    eltype === Bits && return _packed_tableau(
-        StabilizerTableau(d, tableau; m, storephase, inversemod, check, eltype=UInt8,
-                          layout=:generator), layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
@@ -167,6 +163,8 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     # The build step copies the generators into the tableau's own arrays and
     # never writes to its input.
     tab_in = shape.transpose ? permutedims(tableau) : tableau
+    eltype === Bits && return _packed_matrix_tableau(StabilizerTableau, d, shape, tab_in,
+                                                     inversemod, check, layout)
 
     tab = _build_stabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
                                     inversemod; check=check)
@@ -235,12 +233,7 @@ _generator_storage(pre::Tuple{_GMBlock, Vector{Int}}, ::Type{E}, d::Int, n::Int,
 # input holds there.
 function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d::Int, n::Int, m::Int,
                             storephase::Bool) where {E}
-    nrows = 2n + (storephase ? 1 : 0)
-    size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
-    size(tableau_in, 2) == n || size(tableau_in, 2) == m ||
-        throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
-
-    S = tableau_in isa Matrix{Int} ? tableau_in : Matrix{Int}(tableau_in)
+    S = _generator_input(tableau_in, n, m, storephase)
     src, src_phase = _stacked_views(S, n, storephase)
     sx, sz = src.x, src.z
     x, z = _stab_blocks(E, n)
@@ -260,6 +253,16 @@ function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d:
         end
     end
     return XZBlock{GeneratorMajor}(x, z), phase
+end
+
+# The raw generator matrix `tableau_in` as a `Matrix{Int}` after checking its
+# shape: `2n + storephase` rows, and `n` or `m` columns.
+function _generator_input(tableau_in::AbstractMatrix{<:Integer}, n::Int, m::Int, storephase::Bool)
+    nrows = 2n + (storephase ? 1 : 0)
+    size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
+    size(tableau_in, 2) == n || size(tableau_in, 2) == m ||
+        throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
+    return tableau_in isa Matrix{Int} ? tableau_in : Matrix{Int}(tableau_in)
 end
 
 @inline function _layout_from_dims(dim_nrows::Int, dim_cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})

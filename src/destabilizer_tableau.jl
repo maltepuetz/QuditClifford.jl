@@ -159,10 +159,9 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
-    eltype === Bits && return _packed_tableau(
-        DestabilizerTableau(d, n; state, basis, storephase, inversemod, eltype=UInt8,
-                            layout=:generator), layout)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
+    eltype === Bits && return _packed_preset_tableau(DestabilizerTableau, n, state_norm, basis_spec,
+                                                     storephase, inversemod, layout)
     b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
     tab = _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
                                       preset_state=state_norm, preset_basis=basis_spec)
@@ -181,9 +180,6 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
-    eltype === Bits && return _packed_tableau(
-        DestabilizerTableau(d, tableau; m, storephase, inversemod, check, eltype=UInt8,
-                            layout=:generator), layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
@@ -193,6 +189,8 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     # The build step copies the generators into the tableau's own arrays and
     # never writes to its input.
     tab_in = shape.transpose ? permutedims(tableau) : tableau
+    eltype === Bits && return _packed_matrix_tableau(DestabilizerTableau, d, shape, tab_in,
+                                                     inversemod, check, layout)
 
     tab = _build_destabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
                                       inversemod; check=check)
