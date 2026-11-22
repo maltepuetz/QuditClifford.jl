@@ -80,7 +80,7 @@ dependency bump — carries the `skip-changelog` label instead.
   paths are slower than with `UInt8` in the same layout: `stabilizer_matrix`
   in both layouts, single-qubit gates on a generator-major tableau, and
   `expect!` and `expect_int!` on a generator-major `DestabilizerTableau`. See
-  "Packed qubit storage" in the manual.
+  "Packed qubit storage" in the manual and #62 for the measurements.
 - Both tableau types can store their generators qudit-major, with the
   exponents of one qudit across all generators contiguous, instead of the
   default generator-major layout. The `layout = :generator | :qudit` keyword of
