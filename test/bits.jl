@@ -676,19 +676,21 @@ end
 
         u = bt_canon_fixture(TT, n, kind, storephase, UInt8)
         canonicalize!(u)
+        ui = bt_canon_fixture(TT, n, kind, storephase, Int)
+        canonicalize!(ui)
 
+        # qudit-major: switched to generator-major, the kernel, switched back
         q = qudit_major!(bt_canon_fixture(TT, n, kind, storephase, Bits))
         canonicalize!(q)
+        @test tableau_layout(q) === :qudit
         @test bt_canon_same(q, u)
-        for div in (0, typemax(Int))
-            qd = qudit_major!(bt_canon_fixture(TT, n, kind, storephase, Bits))
-            bt_QC._canonicalize_bits_qm!(qd, QM, div)
-            @test bt_canon_same(qd, u)
-        end
+        @test bt_canon_same(q, ui)
 
         g = bt_canon_fixture(TT, n, kind, storephase, Bits)
         gm_kernel!(g)
         @test bt_canon_same(g, u)
+        @test bt_canon_same(g, ui)
+        @test stabilizer_matrix(q) == stabilizer_matrix(g) && collect(q.phase) == collect(g.phase)
 
         if n == 130 && kind === :monitored
             @test bt_canon_allocations(canonicalize!, q) == 0
@@ -704,11 +706,16 @@ end
         g = TT(2, n; state = :mixed, eltype = Bits, layout = :generator)
         gm_kernel!(g)
         @test bt_canon_same(q, u) && bt_canon_same(g, u)
+        @test tableau_layout(q) === :qudit
         for (TL, L) in ((:qudit, QM), (:generator, GM))
             s = TT(2, n; eltype = Bits, layout = TL)
             m = which(bt_QC._canonicalize!, (typeof(s), typeof(L)))
             @test basename(String(m.file)) == "canonicalize_bits.jl"
         end
+        # the qudit-major method is the switched route
+        s = TT(2, n; eltype = Bits, layout = :qudit)
+        @test occursin("_canonicalize_bits_switched!",
+                       sprint(io -> code_lowered(bt_QC._canonicalize!, (typeof(s), typeof(QM))) .|> (c -> print(io, c))))
     end
 end
 
