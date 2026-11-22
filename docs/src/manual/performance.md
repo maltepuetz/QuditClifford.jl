@@ -124,6 +124,16 @@ generator structure, and every entanglement measure. For a pure
 [`StabilizerTableau`](@ref), deterministic measurements and expectation values
 then need only a commutation check (see [Choosing a tableau type](@ref)).
 
+### Packed storage for qubits
+
+At `d = 2`, `eltype = Bits` packs the generators of a tableau into bits (see
+[Packed qubit storage](@ref)). The tableau is 4 to 6 times smaller from
+`n = 1024` on, and gates, measurements, [`canonicalize!`](@ref) and the
+entanglement measures are mostly faster, qudit-major gates by an order of
+magnitude. A few paths, such as `stabilizer_matrix`, are slower. `UInt8` is
+still the default. The benchmark that compares the storage types on a given
+machine is in `benchmark/storage/README.md`.
+
 ### First-call latency
 
 Julia compiles each method on its first call. The package ships a precompile

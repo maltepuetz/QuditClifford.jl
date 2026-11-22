@@ -205,6 +205,76 @@ At `d ≥ 3` the rank workspace adds as much again for a `StabilizerTableau`,
 and the padding of the generator blocks adds the rest, most of it at small
 `n`.
 
+## Packed qubit storage
+
+At `d = 2`, `eltype = Bits` stores the X and Z blocks of a tableau as packed
+bits, 64 to a `UInt64` word, in either layout and for both tableau types. It is
+legal only at `d = 2`; any other `d` throws an `ArgumentError`. The default
+stays `UInt8`.
+
+Every result is identical to the `UInt8` tableau's: generators, phases, `m`,
+measurement outcomes drawn from the same `rng`, entropies and the matrices
+returned by [`stabilizer_matrix`](@ref) and [`destabilizer_matrix`](@ref).
+`==` and `hash` compare across storage types, and `copy!` needs both tableaux
+to have the same one. [`tableau_eltype`](@ref) returns the storage type chosen
+at construction, `UInt8`, `UInt16`, `Int` or [`Bits`](@ref), and `show` prints
+it on the `Storage` line.
+
+```jldoctest
+julia> tab = StabilizerTableau(2, 4; state = :ghz, layout = :qudit, eltype = Bits);
+
+julia> measure!(tab, SinglePauli(2, 1, 0); outcome = 0)
+0
+
+julia> tableau_eltype(tab), tableau_layout(tab)
+(Bits, :qudit)
+
+julia> ref = StabilizerTableau(2, 4; state = :ghz);
+
+julia> measure!(ref, SinglePauli(2, 1, 0); outcome = 0);
+
+julia> stabilizer_matrix(tab) == stabilizer_matrix(ref)
+true
+```
+
+[`qudit_major!`](@ref) and [`generator_major!`](@ref) switch a packed tableau
+in place, like any other, by transposing 64 × 64 bit strips. The switch
+allocates nothing and costs about a ninth of the `UInt8` switch.
+
+**Memory.** Measured with `Base.summarysize` on a fresh tableau, in bytes per
+`n²`, on an Apple M3 Pro:
+
+| tableau                        | `n = 1024` | `n = 2048` | `n = 4096` | `n = 16384` |
+|:-------------------------------|-----------:|-----------:|-----------:|------------:|
+| `StabilizerTableau`, `UInt8`   |       2.67 |       2.46 |       2.35 |        2.28 |
+| `StabilizerTableau`, `Bits`    |       0.59 |       0.67 |       0.59 |        0.52 |
+| `DestabilizerTableau`, `UInt8` |       4.99 |       4.62 |       4.43 |        4.30 |
+| `DestabilizerTableau`, `Bits`  |       0.84 |       1.06 |       0.90 |        0.79 |
+
+Packed tableaux are 4 to 6 times smaller from `n = 1024` on. The bump at
+`n = 2048` is the padding of the word columns.
+
+**Speed.** Compared with `UInt8` storage in the same layout at `n = 1024` and
+`2048`:
+
+- Gates and measurements are much faster. Qudit-major gates take 0.05–0.16 of
+  the `UInt8` time and random-outcome measurements 0.17–0.32; generator-major
+  random-outcome measurements take 0.18–0.38.
+- [`canonicalize!`](@ref) takes 0.08–0.21 of the time in both layouts, and a
+  whole monitored circuit 0.16–0.70. Packed qudit-major `canonicalize!` switches
+  to generator-major internally and switches back, so the layout of the tableau
+  is unchanged afterwards.
+- The entanglement measures take 0.43–0.86.
+- Generator-major `gate2` takes 0.60–0.74 and generator-major `gate1` is
+  slower, 1.1–1.6 times. On a [`DestabilizerTableau`](@ref), generator-major
+  [`expect!`](@ref) and [`expect_int!`](@ref) are 2.1–2.7 times slower. Both
+  are still faster than switching to the other packed layout and back.
+- [`stabilizer_matrix`](@ref) is slower, 1.4–2.1 times, and 1.46–1.65 times
+  in the qudit-major layout. It is a debugging and I/O path.
+
+`UInt8` remains the default until a benchmark round on the target machines
+decides otherwise. `benchmark/storage/README.md` describes the benchmark.
+
 ## Storage layout
 
 The generators of a tableau are stored in one of two layouts, which differ in
@@ -220,8 +290,8 @@ which exponents are contiguous in memory:
 The `layout` keyword of every constructor selects the layout, `:generator` by
 default. [`qudit_major!`](@ref) and [`generator_major!`](@ref) switch an
 existing tableau in place, and [`tableau_layout`](@ref) returns `:generator` or
-`:qudit`. `show` prints the layout on its `Storage` line. No operation changes
-the layout on its own, and `copy!(dst, src)` gives `dst` the layout of `src`.
+`:qudit`. `show` prints the layout on its `Storage` line. No operation leaves the layout
+changed, and `copy!(dst, src)` gives `dst` the layout of `src`.
 
 The layout affects speed, never a result: generators, phases, `m`, measurement
 outcomes drawn from the same `rng`, entropies and the matrices returned by

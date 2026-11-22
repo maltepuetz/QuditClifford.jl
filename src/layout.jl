@@ -46,8 +46,8 @@ nothing. It changes nothing else: the state, the generator basis, the phases,
 `m` and every matrix the tableau returns stay the same. On a tableau that is
 already qudit-major it does nothing.
 
-The layout affects speed only, never a result. No operation switches it on
-its own; see [`generator_major!`](@ref) for the way back and
+The layout affects speed only, never a result. No operation leaves the layout
+changed; see [`generator_major!`](@ref) for the way back and
 [`tableau_layout`](@ref) to query it. The constructors take the layout as the
 `layout` keyword.
 

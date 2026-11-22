@@ -10,6 +10,15 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Breaking
 
+- `StabilizerTableau` and `DestabilizerTableau` have four type parameters,
+  `{IM, E, W, V}`: the inverse strategy, the element type of the unpacked
+  workspaces, the block word type and the type of `phase` and `xdotz_cache`.
+  They also have a new field, `word_workspace`, and on packed tableaux
+  `phase` and `xdotz_cache` are bit planes (internal fields; read the state
+  through `stabilizer_matrix`). A tableau with `eltype = Bits` is not a
+  `StabilizerTableau{IM, UInt8}`. Dispatch on `StabilizerTableau` or
+  `DestabilizerTableau`, or use `tableau_eltype(tab)`, instead of naming the
+  parameters; code that names them positionally needs the two new ones.
 - `StabilizerTableau` and `DestabilizerTableau` have two new fields: `layout`,
   which records the layout, and `coeff_workspace`, a coefficient workspace.
   Code that calls the inner constructors positionally, or that builds the
@@ -59,14 +68,20 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Added
 
+- `eltype = Bits` stores the X and Z exponents of a `StabilizerTableau` or
+  `DestabilizerTableau` as packed bits at `d = 2`, in either layout (any other
+  `d` throws an `ArgumentError`). Results are bit-identical to `UInt8`
+  storage, and the switch between layouts stays in place and allocation-free.
+  `Bits` is exported, `tableau_eltype(tab)` returns the storage type chosen at
+  construction, and `UInt8` remains the default.
 - Both tableau types can store their generators qudit-major, with the
   exponents of one qudit across all generators contiguous, instead of the
   default generator-major layout. The `layout = :generator | :qudit` keyword of
   every constructor selects it, `qudit_major!(tab)` and `generator_major!(tab)`
   switch a tableau in place without allocating, and `tableau_layout(tab)`
   returns `:generator` or `:qudit`. Results are bit-identical in both layouts,
-  `copy!(dst, src)` gives `dst` the layout of `src`, and no operation changes
-  the layout on its own.
+  `copy!(dst, src)` gives `dst` the layout of `src`, and no operation leaves
+  the layout changed.
 - `stabilizer_matrix(tab; layout)` and `destabilizer_matrix(tab; layout)` return a
   tableau's generators as a fresh `Int` matrix, generator-major (generators in
   columns) or qudit-major.
@@ -87,6 +102,12 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- Packed qubit storage (`eltype = Bits`) makes a tableau 4–6 times smaller than
+  `UInt8` from `n = 1024` on, and gates, measurements, `canonicalize!` and the
+  entanglement measures are mostly faster, qudit-major gates by an order of
+  magnitude. It is slower for `stabilizer_matrix`, and generator-major
+  `gate1` and `expect!`/`expect_int!` on a `DestabilizerTableau` are slower
+  than with `UInt8`. See "Packed qubit storage" in the manual.
 - `show` of a tableau reports its actual layout, `generator-major` or
   `qudit-major`, on the `Storage:` line.
 - Gates and random-outcome measurements are faster on a qudit-major tableau:
