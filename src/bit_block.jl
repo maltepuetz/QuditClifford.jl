@@ -588,7 +588,7 @@ const _T64_MASKS = (0x00000000ffffffff, 0x0000ffff0000ffff, 0x00ff00ff00ff00ff,
 
 # The exchanges of `_t64!`, written out: round `r` exchanges word `i` with word
 # `i + j` for every `i` without bit `j`, `j = 32 >> (r - 1)`. The unrolled body
-# transposes a block about 1.25x faster than the same exchanges in loops.
+# transposes a block faster than the same exchanges in loops.
 function _t64_body()
     ex = Expr[]
     j = _WORD_BITS >> 1

@@ -13,20 +13,18 @@
 # Row `r` is one bit of each generator's word column, generator-major. Each
 # eliminated generator takes one pass over its words, which XORs the pivot in
 # and accumulates the parity of `x_c & z_j`; the phase planes change once
-# after the pass. Duals are XORed word by word. Against the generic algorithm
-# on the same packed blocks, which reads the pivot row bit by bit and takes
-# separate passes for the cross term and the update, this took 0.63-0.80x the
-# time (M3 Pro, n = 2048 and 4096, random and monitored states, both tableau
-# types).
+# after the pass. Duals are XORed word by word. The generic algorithm on the
+# same packed blocks reads the pivot row bit by bit and takes separate passes
+# for the cross term and the update, so it is slower on random and monitored
+# states alike.
 #
 # A qudit-major tableau is switched to generator-major in place, canonicalized
 # by the same kernel and switched back. A packed switch is two or four block
 # transposes, cheap next to the elimination. Eliminating along the qudit
 # columns instead has to gather each pivot generator across qudits, and a
-# `DestabilizerTableau` takes a parity over every dual column per pivot; such
-# a kernel takes 1.3x (random states) to 2.3x / 5.5x (monitored
-# `StabilizerTableau` / `DestabilizerTableau`) the time of the switched route
-# at n = 2048.
+# `DestabilizerTableau` takes a parity over every dual column per pivot, so
+# such a kernel is slower than the switched route, most of all on monitored
+# states.
 
 _canonicalize!(tab::_BitStab, ::QuditMajor) = _canonicalize_bits_switched!(tab)
 _canonicalize!(tab::_BitDestab, ::QuditMajor) = _canonicalize_bits_switched!(tab)

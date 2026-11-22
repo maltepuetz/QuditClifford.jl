@@ -187,8 +187,7 @@ end
 
 # The stabilizer block with its phase and cache, then the destabilizer block of
 # a `DestabilizerTableau`. Not inlined into `_apply_columns!`: compiled into
-# the same body as `_bit_prep`, a gate took about 1.4x as long (two-qubit
-# gates, qudit-major `StabilizerTableau`, n = 2048, M3 Pro).
+# the same body as `_bit_prep`, the gate loops run measurably slower.
 @noinline function _bit_apply!(tab::_BitTableau, L::TableauLayout, bp::_BitPrep)
     stab = _stab(tab, L)
     cache = _bit_cache(tab)
