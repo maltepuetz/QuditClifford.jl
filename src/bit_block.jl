@@ -523,11 +523,10 @@ _gen_submul_sites!(b::BitBlock{L}, j::Int, src::BitBlock{L}, k::Int,
 
 ##### equality #####
 
-# Whether entries `1:m` of two vectors agree: word by word for bit planes (the
-# last word masked to `m`), entry by entry otherwise.
+# Whether entries `1:m` of two plane vectors with the same number of planes
+# agree, word by word with the last word masked to `m`.
 function _first_entries_equal(pa::_BitPlanes, pb::_BitPlanes, m::Int)
     A, B = pa.planes, pb.planes
-    size(A, 2) == size(B, 2) || return _first_entries_equal_generic(pa, pb, m)
     nw = _nwords(m)
     nw == 0 && return true
     t = _tail_mask(m)
@@ -539,20 +538,12 @@ function _first_entries_equal(pa::_BitPlanes, pb::_BitPlanes, m::Int)
     end
     return true
 end
-_first_entries_equal(pa::AbstractVector{Int}, pb::AbstractVector{Int}, m::Int) =
-    _first_entries_equal_generic(pa, pb, m)
-function _first_entries_equal_generic(pa, pb, m::Int)
-    @inbounds for j in 1:m
-        pa[j] == pb[j] || return false
-    end
-    return true
-end
 
 # `_active_columns_equal` for two packed blocks of the same layout, by words:
 # generator-major the word columns `1:m` (bits past `n` are zero in both),
 # qudit-major each site's words over generators `1:m`, the last masked to `m`.
-function _active_columns_equal(a::_GMBits, pa::AbstractVector{Int},
-                               b::_GMBits, pb::AbstractVector{Int},
+function _active_columns_equal(a::_GMBits, pa::_BitPlanes,
+                               b::_GMBits, pb::_BitPlanes,
                                m::Int, storephase::Bool)
     storephase && !_first_entries_equal(pa, pb, m) && return false
     ax, az, bx, bz = a.x, a.z, b.x, b.z
@@ -562,8 +553,8 @@ function _active_columns_equal(a::_GMBits, pa::AbstractVector{Int},
     end
     return true
 end
-function _active_columns_equal(a::_QMBits, pa::AbstractVector{Int},
-                               b::_QMBits, pb::AbstractVector{Int},
+function _active_columns_equal(a::_QMBits, pa::_BitPlanes,
+                               b::_QMBits, pb::_BitPlanes,
                                m::Int, storephase::Bool)
     storephase && !_first_entries_equal(pa, pb, m) && return false
     nw = _nwords(m)

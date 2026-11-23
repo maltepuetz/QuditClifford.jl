@@ -121,23 +121,6 @@ function _copy_sites!(
     return offset + 2N
 end
 
-# Packed blocks, entry by entry through the leaves.
-function _copy_sites!(
-    ws::AbstractMatrix{T},
-    b::BitBlock,
-    m::Int,
-    sites::AbstractVector,
-    N::Int,
-    offset::Int,
-) where {T<:_StorageEltype}
-    @inbounds for j in 1:m, r in 1:N
-        q = Int(sites[r])
-        ws[offset + r, j] = _xget(b, q, j) % T
-        ws[offset + N + r, j] = _zget(b, q, j) % T
-    end
-    return offset + 2N
-end
-
 # On a bit-packed workspace, `offset` counts bits and is a multiple of 64. The
 # block takes rows offset+1:offset+2N as bits, packed as below, and the return
 # value is rounded up to the next multiple of 64, so that the next block
