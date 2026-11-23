@@ -261,8 +261,8 @@ end
     return word
 end
 
-# Write the bits of `word`, the entries `v[off+lo+1:off+lo+64]` of word `w`, into
-# `v[off+1:off+n]`; `flip` adds them mod 2 to the entries instead.
+# Write bit `k-1` of `word` to entry `v[off + 64(w-1) + k]` for every such entry
+# within `v[off+1:off+n]`; with `flip`, add it mod 2 instead.
 @inline function _unpack_word!(v::AbstractVector{E}, off::Int, w::Int, n::Int, word::UInt64,
                                flip::Bool) where {E<:_StorageEltype}
     lo = (w - 1) << _WORD_SHIFT

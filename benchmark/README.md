@@ -153,11 +153,12 @@ The `rank` group times the half-chain `entanglement_entropy` and
 `entanglement_profile!` on two pure `StabilizerTableau` states per `d` and
 `n`: a uniformly random one (`random`, half-chain entropy about `n/2`) and
 the end of 64 layers of the monitored brickwork circuit at `p = 0.15`
-(`monitored`, half-chain entropy a few to a few dozen). It covers the three
-element types the rank elimination uses: bit-packed words at `d = 2`, one
-byte per entry at `d = 3` (multiply-free updates only) and at `d = 31`
-(general multipliers). The `Int` elimination above `d = 255` is covered by the
-`modulus` leaves at `d = 443` and `d = 1031`. The `full` profile adds
+(`monitored`, half-chain entropy a few to a few dozen). It covers the
+three element types the rank elimination uses: bit-packed words at `d = 2`,
+bytes at `d = 3` (multiply-free updates only) and at `d = 31` (general
+multipliers), and, through `modulus`, `UInt16`: the `UInt16` elimination
+above `d = 251` is covered by the `modulus` leaves at `d = 443` and
+`d = 1031`. The `full` profile adds
 `n = 1024` and `2048`, where the eliminations run from about 1 ms to about
 0.4 s per sample on a development machine and building the fixtures takes
 about five minutes. A baseline without `random_state!` or

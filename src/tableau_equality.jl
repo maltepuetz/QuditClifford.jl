@@ -68,9 +68,9 @@ The tableaux are equal when they have the same `d`, `n` and `storephase`, and
 their generators span the same stabilizer group with the same phases. The
 choice of generator basis does not matter, so a tableau equals its own
 [`canonicalize!`](@ref)d form, and a [`StabilizerTableau`](@ref) can equal a
-[`DestabilizerTableau`](@ref). Destabilizers, `iscanonical` and the inversion
-strategy are ignored. With `storephase=false` only the group of Pauli strings
-is compared.
+[`DestabilizerTableau`](@ref). Destabilizers, `iscanonical`, the inversion
+strategy, the storage element type and the storage layout are ignored. With
+`storephase=false` only the group of Pauli strings is compared.
 
 `hash` agrees with `==`, so equal states collapse in a `Set` or `Dict`. A
 tableau used as a key must not be mutated afterwards, since mutation changes

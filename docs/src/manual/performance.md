@@ -19,9 +19,9 @@ Composite dimensions such as `d = 4` or `d = 6` are not supported.
 
 ### Supported arithmetic envelope
 
-Tableau entries, phases and dot products are all `Int`. Every phase and
-symplectic dot product sums `n` terms of size up to ``(d-1)^2``, and the
-odd-`d` phase update adds two such terms, so results are exact only while
+Phases and dot products are computed in `Int`, whatever type the entries are
+stored in. Every phase and symplectic dot product sums `n` terms of size up to
+``(d-1)^2``, and the odd-`d` phase update adds two such terms, so results are exact only while
 
 ```math
 \max(n, 2)\,(d-1)^2 \le \texttt{typemax(Int)}
@@ -141,6 +141,6 @@ workload that runs construction, gates, random sampling, measurements,
 channels, expectation values and the common entanglement measures for both
 tableau types at `d = 2` and `d = 3`, so these first calls are fast in a new
 session. The workload uses PrecompileTools and can be switched off through its
-preferences. Other argument types, such as a
-different integer type or an unusual Pauli representation, compile on first
-use as usual.
+preferences. Other argument types, such as a tableau built with
+`eltype = Int` or `eltype = Bits`, a different integer type or an unusual
+Pauli representation, compile on first use as usual.

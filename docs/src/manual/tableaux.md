@@ -125,9 +125,9 @@ condition instead, which is the only way to detect a tableau built behind
 ## Copying, comparing and resetting
 
 `copy(tab)` returns an independent tableau in the same generator basis.
-`copy!(dst, src)` overwrites an existing tableau of the same kind, `d`, `n` and
-`storephase` without allocating, which is the way to branch many trajectories
-off one state.
+`copy!(dst, src)` overwrites an existing tableau of the same kind, `d`, `n`,
+`storephase` and storage element type without allocating, which is the way to
+branch many trajectories off one state.
 
 `==` compares the represented states, not the stored matrices: the generator
 basis, the destabilizers and the tableau type do not matter, and `hash` agrees
@@ -166,11 +166,12 @@ type that holds every entry:
 are tested against; `UInt16` may also be chosen for `d ≤ 251`. Every result is
 identical in each element type: outcomes, expectation values, entropies and
 the matrices returned by [`stabilizer_matrix`](@ref) and
-[`destabilizer_matrix`](@ref) are the same `Int` values, phases are always
-stored as `Int`, and `==` and `hash` compare tableaux across element types.
-`copy!` needs both tableaux to have the same element type. The element type is
-the second type parameter, as in `StabilizerTableau{IM, UInt8}`, and `show`
-prints it on its `Storage` line:
+[`destabilizer_matrix`](@ref) are the same `Int` values, and `==` and `hash`
+compare tableaux across element types. Phases are stored as `Int`, or as two
+bit planes with `eltype = Bits`. `copy!` needs both tableaux to have the same
+element type. For the integer types it is the second type parameter
+(`StabilizerTableau{IM, UInt8, …}`); [`tableau_eltype`](@ref) returns it for
+any tableau, and `show` prints it on its `Storage` line:
 
 ```jldoctest storage
 julia> tab = StabilizerTableau(257, 2)
@@ -193,12 +194,12 @@ fresh tableau, in bytes per `n²`:
 
 | tableau                       | `n = 256` | `n = 1024` | `n = 4096` |
 |:------------------------------|----------:|-----------:|-----------:|
-| `StabilizerTableau`, `d = 2`   |      4.01 |       2.66 |       2.35 |
-| `StabilizerTableau`, `d = 3`   |      5.70 |       4.40 |       4.10 |
-| `DestabilizerTableau`, `d = 2` |      7.41 |       4.99 |       4.43 |
-| `DestabilizerTableau`, `d = 3` |      9.09 |       6.73 |       6.18 |
-| `StabilizerTableau`, `d = 3`, `eltype = Int`   | 35.45 | 32.84 | 32.21 |
-| `DestabilizerTableau`, `d = 3`, `eltype = Int` | 54.54 | 49.59 | 48.39 |
+| `StabilizerTableau`, `d = 2`   |      4.02 |       2.67 |       2.35 |
+| `StabilizerTableau`, `d = 3`   |      5.71 |       4.40 |       4.10 |
+| `DestabilizerTableau`, `d = 2` |      7.42 |       4.99 |       4.43 |
+| `DestabilizerTableau`, `d = 3` |      9.11 |       6.73 |       6.18 |
+| `StabilizerTableau`, `d = 3`, `eltype = Int`   | 35.54 | 32.86 | 32.21 |
+| `DestabilizerTableau`, `d = 3`, `eltype = Int` | 54.63 | 49.61 | 48.40 |
 
 The generators alone take 2 bytes per `n²` (4 with destabilizers) in `UInt8`.
 At `d ≥ 3` the rank workspace adds as much again for a `StabilizerTableau`,
@@ -273,9 +274,14 @@ packed tableau allocates about its final size.
   slower, 1.1–1.6 times. On a [`DestabilizerTableau`](@ref), generator-major
   [`expect!`](@ref) and [`expect_int!`](@ref) are 2.1–2.7 times slower. Both
   are still faster than switching to the other packed layout and back.
+- Four-qubit [`CliffordOperator`](@ref) gates on a qudit-major tableau are
+  1.15–1.18 times slower.
 - [`stabilizer_matrix`](@ref) is slower: 1.6–2.1 times in the
   generator-major layout and 1.39–1.65 times in the qudit-major layout. It is
   a debugging and I/O path.
+- Between the two packed layouts, gates and monitored circuits favor
+  qudit-major as for `UInt8`, but [`dephase!`](@ref), [`traceout!`](@ref) and
+  [`reset!`](@ref) are 2.5–10 times slower qudit-major.
 
 `UInt8` remains the default until a benchmark round on the target machines
 decides otherwise. `benchmark/storage/README.md` describes the benchmark.
@@ -310,8 +316,9 @@ nothing. It costs about one transpose of each block: two for a
 default `UInt8` entries at `n = 2048` that is about 1.6 ms and 3.3 ms on an
 Apple M3 Pro, cheap next to a phase of many gates.
 
-Which layout is faster depends on the operation. On the same machine, for
-`n` from 1023 to 2049 and `d = 2, 3, 31`:
+Which layout is faster depends on the operation. On the same machine with
+unpacked entries and stored phases, for `n` from 1023 to 2049 and
+`d = 2, 3, 31`:
 
 - Gates are 4–16 times faster qudit-major, and monitored circuits of gates and
   measurements about 2–4 times.
@@ -319,7 +326,10 @@ Which layout is faster depends on the operation. On the same machine, for
 - [`canonicalize!`](@ref), [`dephase!`](@ref), [`traceout!`](@ref) and
   [`reset!`](@ref) are about as fast or faster qudit-major, and so are
   [`expect!`](@ref) and [`expect_int!`](@ref) on a non-canonical
-  [`StabilizerTableau`](@ref).
+  [`StabilizerTableau`](@ref). The exception is [`dephase!`](@ref) when few
+  generators anticommute with the operator and the pivot is dense: it is then
+  2–12 times slower qudit-major, and 1.4–2 times slower with
+  `storephase = false` and many anticommuting generators.
 - The entropies and other rank-based quantities are about as fast in both
   layouts, up to 1.6 times slower qudit-major.
 - [`expect!`](@ref) and [`expect_int!`](@ref) are up to about 4 times slower
@@ -328,7 +338,7 @@ Which layout is faster depends on the operation. On the same machine, for
   measurement that commutes with every generator of a mixed
   [`DestabilizerTableau`](@ref) and adds a generator is about 1.1–1.2 times
   slower.
-- [`stabilizer_matrix`](@ref) and [`destabilizer_matrix`](@ref) are 1.5–2
+- [`stabilizer_matrix`](@ref) and [`destabilizer_matrix`](@ref) are 1.5–3
   times slower qudit-major (measured at `d = 3`, `n = 1024` and `2048`), and
   `==` of two qudit-major tableaux whose generators agree entry for entry
   takes the generator-major time.

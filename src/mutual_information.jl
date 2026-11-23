@@ -231,9 +231,10 @@ end
 # `_group_sites_by_label!`, and `ws` is the rank workspace.
 #
 # The rows are stacked as [D; X; Y] (see `_copy_sites!` for the layout) and
-# eliminated in that order. Each call to `rank_fp_cols!` leaves its remaining columns zero on the rows it pivoted
-# on, so the next call continues on those columns and the rows below, and the
-# pivot counts add up to the ranks of the leading row blocks.
+# eliminated in that order. Each call to `_block_rank!` leaves its remaining
+# columns zero on the rows it pivoted on, so the next call continues on those
+# columns and the rows below, and the pivot counts add up to the ranks of the
+# leading row blocks.
 function _traced_rank_pair!(
     tab::AbstractTableau,
     L::TableauLayout,

@@ -31,11 +31,13 @@ Construct a stabilizer tableau for an `n`-qudit *stabilizer density operator* (m
   then rests on a contract that may not hold, and `is_pure` will call such a
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
 - `eltype::Type`: Element type of the stored X and Z exponents: `UInt8`
-  for `d ≤ 251`, `UInt16` for `d ≤ 65521`, or `Int` for every `d`. The
-  default is the narrowest of these that holds `d`. Another type, or one too
-  narrow for `d`, throws an `ArgumentError`. The choice affects memory and
-  speed only: every result, and every matrix the tableau returns, is the same
-  `Int` value in each element type. Phases are always stored as `Int`.
+  for `d ≤ 251`, `UInt16` for `d ≤ 65521`, `Int` for every `d`, or
+  [`Bits`](@ref) for packed storage at `d = 2` only. The default is the
+  narrowest of these that holds `d`. Another type, or one too narrow for `d`,
+  throws an `ArgumentError`. The choice affects memory and speed only: every
+  result, and every matrix the tableau returns, is the same `Int` value in
+  each element type. Phases are stored as `Int`, or as two bit planes with
+  `eltype = Bits`.
 - `layout::Symbol=:generator`: Storage layout of the X and Z blocks:
   `:generator` (generator `j` in column `j`) or `:qudit` (generator `j` in row
   `j`); any other symbol throws an `ArgumentError`. It affects speed only and
@@ -132,9 +134,9 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
     eltype::Type{E}=_default_eltype(d),
     layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
+    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
     _check_eltype(eltype, d)
     _check_layout(layout)
-    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     eltype === Bits && return _packed_preset_tableau(StabilizerTableau, n, state_norm, basis_spec,
                                                      storephase, inversemod, layout)
