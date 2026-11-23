@@ -120,6 +120,39 @@ end
     end
 end
 
+# `set_operator!` with a plain exponent vector, which nothing in `src` calls on
+# a packed tableau (`measure!` and `dephase!` wrap a vector in a
+# `GeneralPauli` first), against the `UInt8` method.
+@testset "Bits set_operator! from a vector" begin
+    for TT in bt_TYPES, layout in (:generator, :qudit), n in (1, 3, 64, 65),
+        storephase in (true, false)
+
+        t = TT(2, n; state = :ghz, storephase, eltype = Bits, layout)
+        u = TT(2, n; state = :ghz, storephase, eltype = UInt8, layout)
+        L = bt_QC._layout_marker(t)
+        rng = Xoshiro(100n + storephase)
+        for i in unique((1, n))
+            # Entries outside 0:1 and phases outside 0:3 are reduced.
+            op = rand(rng, -5:5, 2n + 1)
+            @test bt_QC.set_operator!(t, L, i, op) === nothing
+            bt_QC.set_operator!(u, L, i, op)
+            @test stabilizer_matrix(t) == stabilizer_matrix(u) && st_padding_zero(t)
+            @test stabilizer_matrix(t)[1:2n, i] == mod.(op[1:2n], 2)
+            storephase && @test stabilizer_matrix(t)[2n + 1, i] == mod(op[2n + 1], 4)
+            # Without a phase entry the stored phase is cleared.
+            op2 = view(rand(rng, 0:1, 2n + 1), 1:2n)
+            bt_QC.set_operator!(t, L, i, op2)
+            bt_QC.set_operator!(u, L, i, op2)
+            @test stabilizer_matrix(t) == stabilizer_matrix(u) && st_padding_zero(t)
+            storephase && @test stabilizer_matrix(t)[2n + 1, i] == 0
+        end
+        before = stabilizer_matrix(t)
+        @test_throws ArgumentError bt_QC.set_operator!(t, L, 1, zeros(Int, 2n - 1))
+        @test_throws ArgumentError bt_QC.set_operator!(t, L, 1, zeros(Int, 2n + 2))
+        @test stabilizer_matrix(t) == before
+    end
+end
+
 @testset "Bits admissibility" begin
     for TT in bt_TYPES
         @test_throws ArgumentError TT(3, 4; eltype = Bits)
