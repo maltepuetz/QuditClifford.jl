@@ -134,6 +134,7 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, n::Int;
 ) where {T<:InverseMod, E}
     _check_eltype(eltype, d)
     _check_layout(layout)
+    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
     eltype === Bits && return _packed_preset_tableau(StabilizerTableau, n, state_norm, basis_spec,
                                                      storephase, inversemod, layout)

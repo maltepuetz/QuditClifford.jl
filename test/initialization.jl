@@ -175,6 +175,16 @@ end
         end
     end
 
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        for (d, kw) in ((2, (;)), (2, (; eltype=Bits)), (3, (;)), (3, (; eltype=Int)))
+            err = try TT(d, -1; kw...) catch e; e end
+            @test err isa ArgumentError
+            @test occursin("n must be nonnegative", sprint(showerror, err))
+            @test_throws ArgumentError TT(d, -1; state=:product, kw...)
+        end
+        @test TT(2, 0; eltype=Bits).n == 0
+    end
+
     # The preset builder has its own defensive contract in addition to the
     # public normalization layer.
     block = QuditClifford.XZBlock{QuditClifford.GeneratorMajor}(zeros(Int, 1, 1), zeros(Int, 1, 1))
