@@ -1,0 +1,49 @@
+# TEMPORARY: narrows down the segfault of the Julia 1.10 x64 job without
+# coverage. Remove before merging.
+name: Debug 1.10 (temporary)
+on:
+  pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  debug:
+    name: ${{ matrix.version }} | ${{ matrix.flags }} | ${{ matrix.files }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes --cpu-target=nehalem', files: 'bits.jl'}
+          - {version: '1.10', flags: '', files: 'bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'modular.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'tableau_storage.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'storage_types.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'layout.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes --cpu-target=nehalem', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {version: '1.10', flags: '--check-bounds=yes --code-coverage=user', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {version: '1.10', flags: '', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {version: '1.11', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {version: '1.12', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: Run
+        env:
+          FILES: ${{ matrix.files }}
+        run: |
+          julia --project=. -e 'using InteractiveUtils; versioninfo()'
+          julia --project=. --color=no ${{ matrix.flags }} -e '
+            using Test
+            @testset "debug" begin
+                for f in split(ENV["FILES"])
+                    println("FILE ", f); flush(stdout)
+                    include(joinpath(pwd(), "test", f))
+                end
+            end'
