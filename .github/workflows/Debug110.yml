@@ -8,58 +8,49 @@ concurrency:
   cancel-in-progress: true
 jobs:
   debug:
-    name: ${{ matrix.ref || 'head' }} | ${{ matrix.patch || 'unpatched' }} | ${{ matrix.files }} | ${{ matrix.rep || 1 }}
+    # @turbo is removed from every source file except `keep`.
+    name: keep ${{ matrix.keep }} | ${{ matrix.rep }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {files: 'storage_types.jl'}
-          - {files: 'storage_types.jl', rep: 2}
-          - {files: 'bits.jl'}
-          - {files: 'storage_types.jl', patch: noturbo}
-          - {files: 'storage_types.jl', patch: noturbo, rep: 2}
-          - {files: 'bits.jl', patch: noturbo}
-          - {files: 'bits.jl', patch: noturbo, rep: 2}
-          - {files: 'storage_types.jl', patch: noturbo-nosimd}
-          - {files: 'bits.jl', patch: noturbo-nosimd}
-          - {files: 'storage_types.jl', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {files: 'storage_types.jl', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078, rep: 2}
-          - {files: 'PKGTEST', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {files: 'PKGTEST', ref: d5ac52424e36d91d97dc6b25221fb2540d8099ae}
-          - {files: 'PKGTEST', ref: 45da6972a05c3e45a8a153fa57502300eafebc02}
+        keep: [ALL, modular.jl, operator.jl, xz_block.jl, span_decomposition.jl, projective_measurement.jl, destabilizer_tableau.jl, helper.jl, check_purity.jl, canonicalize.jl, entanglement_entropy.jl, stabilizer_tableau.jl, OTHERS]
+        rep: [1, 2, 3]
     steps:
+      - name: Need AVX-512
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          if grep -q avx512f /proc/cpuinfo; then echo "avx512=yes" >> "$GITHUB_OUTPUT"; else echo "SKIP: no AVX-512 on this runner"; fi
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ matrix.ref || github.event.pull_request.head.sha }}
+        if: steps.cpu.outputs.avx512 == 'yes'
       - uses: julia-actions/setup-julia@v3
+        if: steps.cpu.outputs.avx512 == 'yes'
         with:
           version: '1.10'
       - name: Patch
-        if: matrix.patch
+        if: steps.cpu.outputs.avx512 == 'yes' && matrix.keep != 'ALL'
         run: |
-          grep -rl '@turbo' src | xargs sed -i -E '/^import/! s/@turbo( [a-z_]+=[a-z]+)* //'
-          if [ "${{ matrix.patch }}" = "noturbo-nosimd" ]; then
-            grep -rlE '@simd' src | xargs sed -i -E 's/@simd( ivdep)? //'
-          fi
-          git diff --stat | tail -1
-          grep -rn '@turbo\|@simd' src | grep -v '^\S*:\s*#' | head -5 || true
+          main="modular.jl operator.jl xz_block.jl span_decomposition.jl projective_measurement.jl destabilizer_tableau.jl helper.jl check_purity.jl canonicalize.jl entanglement_entropy.jl stabilizer_tableau.jl"
+          for f in $(grep -rl '@turbo' src); do
+            b=$(basename $f)
+            if [ "${{ matrix.keep }}" = "OTHERS" ]; then
+              case " $main " in *" $b "*) ;; *) continue ;; esac
+            elif [ "$b" = "${{ matrix.keep }}" ]; then
+              continue
+            fi
+            sed -i -E '/^import/! s/@turbo( [a-z_]+=[a-z]+)* //' $f
+          done
+          echo "files still using @turbo:"; grep -rlE '^[^#]*@turbo for|&& @turbo' src || true
       - uses: julia-actions/julia-buildpkg@v1
+        if: steps.cpu.outputs.avx512 == 'yes'
       - name: Run
-        env:
-          FILES: ${{ matrix.files }}
+        if: steps.cpu.outputs.avx512 == 'yes'
         run: |
-          julia --project=. -e 'using InteractiveUtils; versioninfo()'
-          if [ "$FILES" = "PKGTEST" ]; then
-            julia --project=. --color=no -e 'using Pkg; Pkg.test(coverage=false)'
-          else
-            julia --project=. --color=no --check-bounds=yes -g2 -e '
-              using Test
-              @testset "debug" begin
-                  for f in split(ENV["FILES"])
-                      println("FILE ", f); flush(stdout)
-                      include(joinpath(pwd(), "test", f))
-                  end
-              end'
-          fi
+          julia --project=. -e 'using InteractiveUtils; versioninfo(); using LoopVectorization; VB = LoopVectorization.VectorizationBase; println("LV register size ", VB.register_size(), " width Int ", VB.pick_vector_width(Int), " width UInt8 ", VB.pick_vector_width(UInt8))'
+          julia --project=. --color=no --check-bounds=yes -g2 -e '
+            using Test
+            @testset "debug" begin
+                include(joinpath(pwd(), "test", "storage_types.jl"))
+            end'
