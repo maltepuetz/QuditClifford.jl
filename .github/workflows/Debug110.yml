@@ -8,42 +8,58 @@ concurrency:
   cancel-in-progress: true
 jobs:
   debug:
-    name: ${{ matrix.version }} | ${{ matrix.flags }} | ${{ matrix.files }}
+    name: ${{ matrix.ref || 'head' }} | ${{ matrix.patch || 'unpatched' }} | ${{ matrix.files }} | ${{ matrix.rep || 1 }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes --cpu-target=nehalem', files: 'bits.jl'}
-          - {version: '1.10', flags: '', files: 'bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'modular.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'tableau_storage.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'storage_types.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'layout.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes --cpu-target=nehalem', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
-          - {version: '1.10', flags: '--check-bounds=yes --code-coverage=user', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
-          - {version: '1.10', flags: '', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
-          - {version: '1.11', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
-          - {version: '1.12', flags: '--check-bounds=yes', files: 'modular.jl tableau_storage.jl storage_types.jl layout.jl bits.jl'}
+          - {files: 'storage_types.jl'}
+          - {files: 'storage_types.jl', rep: 2}
+          - {files: 'bits.jl'}
+          - {files: 'storage_types.jl', patch: noturbo}
+          - {files: 'storage_types.jl', patch: noturbo, rep: 2}
+          - {files: 'bits.jl', patch: noturbo}
+          - {files: 'bits.jl', patch: noturbo, rep: 2}
+          - {files: 'storage_types.jl', patch: noturbo-nosimd}
+          - {files: 'bits.jl', patch: noturbo-nosimd}
+          - {files: 'storage_types.jl', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
+          - {files: 'storage_types.jl', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078, rep: 2}
+          - {files: 'PKGTEST', ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
+          - {files: 'PKGTEST', ref: d5ac52424e36d91d97dc6b25221fb2540d8099ae}
+          - {files: 'PKGTEST', ref: 45da6972a05c3e45a8a153fa57502300eafebc02}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ matrix.ref || github.event.pull_request.head.sha }}
       - uses: julia-actions/setup-julia@v3
         with:
-          version: ${{ matrix.version }}
+          version: '1.10'
+      - name: Patch
+        if: matrix.patch
+        run: |
+          grep -rl '@turbo' src | xargs sed -i -E '/^import/! s/@turbo( [a-z_]+=[a-z]+)* //'
+          if [ "${{ matrix.patch }}" = "noturbo-nosimd" ]; then
+            grep -rlE '@simd' src | xargs sed -i -E 's/@simd( ivdep)? //'
+          fi
+          git diff --stat | tail -1
+          grep -rn '@turbo\|@simd' src | grep -v '^\S*:\s*#' | head -5 || true
       - uses: julia-actions/julia-buildpkg@v1
       - name: Run
         env:
           FILES: ${{ matrix.files }}
         run: |
           julia --project=. -e 'using InteractiveUtils; versioninfo()'
-          julia --project=. --color=no ${{ matrix.flags }} -e '
-            using Test
-            @testset "debug" begin
-                for f in split(ENV["FILES"])
-                    println("FILE ", f); flush(stdout)
-                    include(joinpath(pwd(), "test", f))
-                end
-            end'
+          if [ "$FILES" = "PKGTEST" ]; then
+            julia --project=. --color=no -e 'using Pkg; Pkg.test(coverage=false)'
+          else
+            julia --project=. --color=no --check-bounds=yes -g2 -e '
+              using Test
+              @testset "debug" begin
+                  for f in split(ENV["FILES"])
+                      println("FILE ", f); flush(stdout)
+                      include(joinpath(pwd(), "test", f))
+                  end
+              end'
+          fi
