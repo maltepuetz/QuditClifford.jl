@@ -483,9 +483,8 @@ end
     end
 end
 
-# `st_padding_zero` lives in test/storage_types.jl, which the suite includes
-# first; a standalone run of this file includes it here.
-isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_types.jl"))
+# `st_padding_zero` lives in test/storage_helpers.jl.
+isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
 
 # A random-branch fixture in `Bits` and in `UInt8`, both in `layout`; the
 # fixtures evolve through the same operations and must agree before the test.

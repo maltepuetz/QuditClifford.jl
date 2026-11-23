@@ -1,9 +1,8 @@
 using QuditClifford, Test, Random
 const bt_QC = QuditClifford
 
-# `st_padding_zero` lives in test/storage_types.jl, which the suite includes
-# first; a standalone run of this file includes it here.
-isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_types.jl"))
+# The `st_` helpers live in test/storage_helpers.jl.
+isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
 
 const bt_TYPES = (StabilizerTableau, DestabilizerTableau)
 

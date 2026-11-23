@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}${{ matrix.layout && format(' - {0}-major', matrix.layout) || '' }}${{ matrix.eltype && format(' - {0}', matrix.eltype) || '' }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }}${{ matrix.layout && format(' - {0}-major', matrix.layout) || '' }}${{ matrix.eltype && format(' - {0}', matrix.eltype) || '' }}${{ matrix.shard && format(' - {0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
-    timeout-minutes: 60
+    continue-on-error: ${{ matrix.experimental == true }}
+    timeout-minutes: 45
     permissions: # needed to allow julia-actions/cache to proactively delete old caches that it has created
       actions: write
       contents: read
@@ -24,54 +24,104 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Whole suite in one job where it is fast enough.
           - version: '1.10'
             os: ubuntu-latest
             arch: x64
-            experimental: false
-          - version: '1'
-            os: ubuntu-latest
-            arch: x64
-            experimental: false
           - version: '1'
             os: macOS-latest
             arch: aarch64
-            experimental: false
+          # Shipped defaults, split by test/runtests.jl's QC_TEST_SHARD.
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel
+            coverage: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: functional
+            coverage: true
           - version: '1'
             os: windows-latest
             arch: x64
-            experimental: false
+            shard: kernel
+          - version: '1'
+            os: windows-latest
+            arch: x64
+            shard: functional
           - version: '1'
             os: ubuntu-latest
             arch: x86
-            experimental: false
+            shard: kernel
+          - version: '1'
+            os: ubuntu-latest
+            arch: x86
+            shard: functional-1
+          - version: '1'
+            os: ubuntu-latest
+            arch: x86
+            shard: functional-2
           - version: '1'
             os: windows-latest
             arch: x86
-            experimental: false
+            shard: kernel
+          - version: '1'
+            os: windows-latest
+            arch: x86
+            shard: functional-1
+          - version: '1'
+            os: windows-latest
+            arch: x86
+            shard: functional-2
           - version: 'pre'
             os: ubuntu-latest
             arch: x64
+            shard: kernel
             experimental: true
+          - version: 'pre'
+            os: ubuntu-latest
+            arch: x64
+            shard: functional
+            experimental: true
+          # The other three configurations of the functional files.
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            experimental: false
+            shard: functional
             layout: qudit
+            coverage: true
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            experimental: false
+            shard: functional
             eltype: bits
+            coverage: true
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            experimental: false
+            shard: functional
             layout: qudit
+            eltype: bits
+            coverage: true
+          # The kernel files with both defaults switched.
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel
+            layout: qudit
+            eltype: bits
+            coverage: true
+          # Packed storage on 32-bit.
+          - version: '1'
+            os: ubuntu-latest
+            arch: x86
+            shard: functional-1
             eltype: bits
           - version: '1'
             os: ubuntu-latest
             arch: x86
-            experimental: false
+            shard: functional-2
             eltype: bits
     steps:
       - uses: actions/checkout@v7
@@ -82,13 +132,18 @@ jobs:
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+        with:
+          # Coverage instrumentation slows the tests; only the jobs that
+          # upload a report pay for it.
+          coverage: ${{ matrix.coverage == true }}
         env:
           QC_TEST_LAYOUT: ${{ matrix.layout || 'generator' }}
           QC_TEST_ELTYPE: ${{ matrix.eltype || 'uint8' }}
+          QC_TEST_SHARD: ${{ matrix.shard || 'all' }}
       - uses: julia-actions/julia-processcoverage@v1
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
+        if: matrix.coverage == true
       - uses: codecov/codecov-action@v7
-        if: matrix.version == '1' && matrix.os == 'ubuntu-latest' && matrix.arch == 'x64'
+        if: matrix.coverage == true
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

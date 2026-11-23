@@ -476,8 +476,14 @@ function ly_check_gate_stream(TT, d, E, n, storephase, seed)
             apply!(g, gate)
             apply!(q, gate)
         end
-        ok &= ly_same_state(g, q)
-        ok || (@error "layouts differ" TT d E n storephase i gate; break)
+        # The entry-wise comparison costs far more than the gate at large `n`,
+        # so there it runs on every twentieth gate. Gates are bijections on
+        # tableaux, so a difference persists until the next comparison; only
+        # the index of the offending gate is lost.
+        if n <= 64 || i % 20 == 0
+            ok &= ly_same_state(g, q)
+            ok || (@error "layouts differ" TT d E n storephase i gate; break)
+        end
     end
     ok &= ly_matrices(g) == ly_matrices(q)
     return ok
