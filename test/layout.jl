@@ -268,9 +268,6 @@ end
 # Allocations of one call, the least of three measurements after a warm-up
 # call. One function per operation: a shared varargs helper allocates on
 # Julia 1.10.
-const ly_skip_alloc_compare =
-    Sys.WORD_SIZE == 32 && Base.invokelatest(QuditClifford._default_qubit_eltype) === Bits
-
 function ly_stabilizer_matrix_allocs(t)
     stabilizer_matrix(t)
     return minimum(@allocated(stabilizer_matrix(t)) for _ in 1:3)
@@ -320,16 +317,20 @@ end
             @test state_vector(q) == state_vector(g)
         end
         @test tableau_layout(q) === :qudit && !q.iscanonical
-        # Both layouts allocate only the result. Windows reports the same
-        # allocations a few bytes apart from call to call, so the counts
-        # agree within 64 bytes, far less than any extra n × n buffer at
-        # n ≥ 31. On 32-bit runs with packed default storage
-        # (`QC_TEST_ELTYPE=bits`) the qudit-major read reports about 3 KB more
-        # in one case, so the comparison is skipped in that configuration.
-        @test abs(ly_stabilizer_matrix_allocs(q) - ly_stabilizer_matrix_allocs(g)) <= 64 skip =
-            ly_skip_alloc_compare
+        # Both layouts allocate only the result. Julia counts a malloc'd
+        # buffer by its usable size, so the two counts differ by what the
+        # allocator hands out for the same request. Windows reports a few
+        # bytes' difference from call to call. glibc serves a result of
+        # 128 KiB or more (n = 257) from a free heap chunk of the exact size
+        # when it has one and from `mmap`, rounded up to a page, when it has
+        # not, and which of the two depends on the heap at that moment. The
+        # tolerance is therefore 64 bytes for a small result and one 16 KiB
+        # page for a large one, a quarter of the smallest extra n × n buffer
+        # at n = 257.
+        tol = sizeof(Int) * 2n * n < 2^17 ? 64 : 2^14
+        @test abs(ly_stabilizer_matrix_allocs(q) - ly_stabilizer_matrix_allocs(g)) <= tol
         if TT === DestabilizerTableau
-            @test abs(ly_destabilizer_matrix_allocs(q) - ly_destabilizer_matrix_allocs(g)) <= 64
+            @test abs(ly_destabilizer_matrix_allocs(q) - ly_destabilizer_matrix_allocs(g)) <= tol
         end
         qq = copy(q)
         @test ly_equal_allocs(q, qq) == 0
