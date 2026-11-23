@@ -245,6 +245,16 @@ dependency bump — carries the `skip-changelog` label instead.
 ### Fixed
 
 - The raw-matrix constructors `StabilizerTableau(d, tableau)` and
+- `entanglement_entropy` throws an `ArgumentError` for a subsystem whose axes
+  are not 1-based, such as a view indexed by `Base.IdentityUnitRange(3:3)`,
+  also with `check=false`. Such a subsystem used to give a wrong entropy.
+- `StabilizerTableau(d, n)` and `DestabilizerTableau(d, n)` throw an
+  `ArgumentError` naming `n` for a negative `n`, in place of an internal
+  "invalid Array dimensions" error.
+- `entanglement_entropy`, `mutual_information`, `tripartite_information`,
+  `conditional_mutual_information` and `entanglement_negativity` accept a
+  subsystem whose `length` is not an `Int`, such as `big(1):big(3)`. It used
+  to throw a `MethodError`.
   `DestabilizerTableau(d, tableau)` store a copy of `tableau`. A `Matrix{Int}`
   with `n` columns in the natural orientation used to become the tableau's
   storage itself: construction reduced the caller's matrix in place, later

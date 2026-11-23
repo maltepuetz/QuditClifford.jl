@@ -36,6 +36,7 @@ function entanglement_entropy(
     subsystem::T;
     check::Bool=true,
 ) where T<:AbstractVector
+    Base.require_one_based_indexing(subsystem)
 
     # The check and the complement rank both write c_workspace, and the rank
     # writes a rank workspace, while reading `subsystem`, so a `subsystem`
@@ -46,7 +47,7 @@ function entanglement_entropy(
 end
 
 function _entanglement_entropy(tab::AbstractTableau, L::TableauLayout, subsystem::AbstractVector)
-    N_A = length(subsystem)
+    N_A = Int(length(subsystem))
     n = tab.n
     m = tab.m
 
@@ -453,7 +454,7 @@ function rank_subsystem_cols!(
 )
     n = tab.n
     if complement
-        N = n - length(subsystem)
+        N = n - Int(length(subsystem))
         N == 0 && return 0
         # Mark the subsystem in c_workspace, then compact the unmarked sites
         # into its front in increasing order. Entry k is written only after
@@ -474,7 +475,7 @@ function rank_subsystem_cols!(
         end
         return _rank_on_sites!(tab, L, view(mask, 1:N), N, mcols)
     end
-    N = length(subsystem)
+    N = Int(length(subsystem))
     N == 0 && return 0
     return _rank_on_sites!(tab, L, subsystem, N, mcols)
 end

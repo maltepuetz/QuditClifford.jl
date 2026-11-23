@@ -58,13 +58,15 @@ function mutual_information(tab::AbstractTableau, A::AbstractVector, B::Abstract
     fill!(tab.c_workspace, 0)
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), length(B))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), Int(length(A)),
+                                          Int(length(B)))
 end
 
 function mutual_information(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
     _mark_with_complement!(tab, A)
-    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), tab.n - length(A))
+    NA = Int(length(A))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), NA, tab.n - NA)
 end
 
 """
@@ -140,7 +142,7 @@ function tripartite_information(
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
     _mark_subsystem!(tab, C, 3, "subsystem C")
-    NA, NB, NC = length(A), length(B), length(C)
+    NA, NB, NC = Int(length(A)), Int(length(B)), Int(length(C))
     (NA == 0 || NB == 0 || NC == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)

@@ -80,13 +80,14 @@ function entanglement_negativity(
     fill!(tab.c_workspace, 0)
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _negativity_from_mask!(tab, _layout_marker(tab), length(A), length(B))
+    return _negativity_from_mask!(tab, _layout_marker(tab), Int(length(A)), Int(length(B)))
 end
 
 function entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
     _mark_with_complement!(tab, A)
-    return _negativity_from_mask!(tab, _layout_marker(tab), length(A), tab.n - length(A))
+    NA = Int(length(A))
+    return _negativity_from_mask!(tab, _layout_marker(tab), NA, tab.n - NA)
 end
 
 # Validate `A` and label it 1 in `c_workspace`, and every other site 2.
