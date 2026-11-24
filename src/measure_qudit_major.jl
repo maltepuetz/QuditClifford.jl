@@ -74,6 +74,38 @@ function _qm_commutators!(comm::AbstractVector{E}, b::_QMBlock, op::AbstractVect
     return comm
 end
 
+# The commutators `<g_i, op>` of the generators `1:length(comm)` of `b` into
+# `comm`, and the first generator with a nonzero one (0 if none).
+function _qm_first_anticommuting!(comm::AbstractVector, b::_QMBlock, op, d::Int)
+    _qm_commutators!(comm, b, op, d)
+    @inbounds for i in eachindex(comm)
+        comm[i] != 0 && return i
+    end
+    return 0
+end
+
+# The indices `j` with `v[j] != 0`, in order, into `idx[1:k]`; returns `k`.
+@inline function _qm_list_nonzero!(idx::Vector{Int}, v::AbstractVector)
+    k = 0
+    @inbounds for j in eachindex(v)
+        if v[j] != 0
+            k += 1
+            idx[k] = j
+        end
+    end
+    return k
+end
+
+# blk[j, q] -= coeffs[j] · a (mod d) for the rows `j` listed in `idx[1:k]`.
+@inline function _qm_submul_rows!(blk::AbstractMatrix{E}, q::Int, idx::Vector{Int}, k::Int,
+                                  coeffs::AbstractVector, a::Int, d::Int) where {E}
+    @inbounds for t in 1:k
+        j = idx[t]
+        blk[j, q] = mod(Int(blk[j, q]) - Int(coeffs[j]) * a, d) % E
+    end
+    return nothing
+end
+
 function _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::QuditMajor,
                    op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
     return _measure_qm!(rng, tab, L, op, outcome, phase_policy, _QM_SPARSE_UPDATE_DIV)
@@ -92,15 +124,7 @@ function _measure_qm!(rng::Random.AbstractRNG, tab::AbstractTableau, L::QuditMaj
     opc = _commutation_operand!(tab, op)
     stab = _stab(tab, L)
     comm = view(tab.coeff_workspace, 1:m, 1)
-    _qm_commutators!(comm, stab, opc, d)
-
-    pivot = 0
-    @inbounds for i in 1:m
-        if comm[i] != 0
-            pivot = i
-            break
-        end
-    end
+    pivot = _qm_first_anticommuting!(comm, stab, opc, d)
     pivot == 0 && return _measure_commuting!(rng, tab, L, op, kop, outcome)
     comm0 = Int(comm[pivot])
 
@@ -143,13 +167,7 @@ function _qm_absorb_pivot!(tab::AbstractTableau, L::QuditMajor, pivot::Int,
     scale_mod!(alpha, pu.ninv, d)
     @inbounds alpha[pivot] = zero(eltype(alpha))
     idx = tab.c_workspace
-    k = 0
-    @inbounds for i in 1:m
-        if alpha[i] != 0
-            k += 1
-            idx[k] = i
-        end
-    end
+    k = _qm_list_nonzero!(idx, alpha)
     k == 0 && return nothing
 
     if k <= m ÷ div
@@ -231,35 +249,16 @@ function _qm_orthogonalize_duals!(tab::DestabilizerTableau, L::QuditMajor, col::
     end
     col <= m && (@inbounds tj[col] = zero(eltype(tj)))
     idx = tab.c_workspace
-    k = 0
-    @inbounds for j in 1:m
-        if tj[j] != 0
-            k += 1
-            idx[k] = j
-        end
-    end
+    k = _qm_list_nonzero!(idx, tj)
     k == 0 && return nothing
     # The multipliers are entries of dual `col`, whose row t_j leaves alone.
     if k <= m ÷ div
-        x = destab.x
-        z = destab.z
-        E = eltype(x)
         @inbounds for s in 1:nsites
             q = sites[s]
             a = _xget(destab, q, col)
-            if a != 0
-                for t in 1:k
-                    j = idx[t]
-                    x[j, q] = mod(Int(x[j, q]) - Int(tj[j]) * a, d) % E
-                end
-            end
+            a == 0 || _qm_submul_rows!(destab.x, q, idx, k, tj, a, d)
             c = _zget(destab, q, col)
-            if c != 0
-                for t in 1:k
-                    j = idx[t]
-                    z[j, q] = mod(Int(z[j, q]) - Int(tj[j]) * c, d) % E
-                end
-            end
+            c == 0 || _qm_submul_rows!(destab.z, q, idx, k, tj, c, d)
         end
         return nothing
     end
@@ -286,15 +285,7 @@ function _dephase!(tab::AbstractTableau, L::QuditMajor, op::AbstractPauli)
     # A dense operand lives in res_workspace, which nothing below writes.
     opc = _commutation_operand!(tab, op)
     comm = view(tab.coeff_workspace, 1:m, 1)
-    _qm_commutators!(comm, _stab(tab, L), opc, d)
-
-    pivot = 0
-    @inbounds for i in 1:m
-        if comm[i] != 0
-            pivot = i
-            break
-        end
-    end
+    pivot = _qm_first_anticommuting!(comm, _stab(tab, L), opc, d)
     pivot == 0 && return tab
 
     pu = _prepare_pivot_update(tab, L, pivot, Int(comm[pivot]))

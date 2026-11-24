@@ -26,28 +26,17 @@
 # such a kernel is slower than the switched route, most of all on monitored
 # states.
 
-_canonicalize!(tab::_BitStab, ::QuditMajor) = _canonicalize_bits_switched!(tab)
-_canonicalize!(tab::_BitDestab, ::QuditMajor) = _canonicalize_bits_switched!(tab)
-_canonicalize!(tab::_BitStab, L::GeneratorMajor) = _canonicalize_gm_bits!(tab, L)
-_canonicalize!(tab::_BitDestab, L::GeneratorMajor) = _canonicalize_gm_bits!(tab, L)
+_canonicalize!(tab::_BitTableau, ::QuditMajor) = _canonicalize_bits_switched!(tab)
+_canonicalize!(tab::_BitTableau, L::GeneratorMajor) = _canonicalize_gm_bits!(tab, L)
 
-@inline _bit_canon_destab(::_BitStab, ::TableauLayout) = nothing
-@inline _bit_canon_destab(tab::_BitDestab, L::TableauLayout) = _destab(tab, L)
-
-# Exchange bits `i` and `j` of every plane of `P`.
+# Exchange bits `i` and `j` of every plane of `P`, and read bit `j` of plane `b`
+# as a `UInt64` 0 or 1; nothing and 0 without planes. Both are methods on the
+# plane matrix itself rather than a `P === nothing` branch or the shared
+# `_wordbit`: with either of those in the kernel, a `StabilizerTableau`
+# canonicalized 2.5-11% slower at n = 256 and 512 (Apple silicon), from code
+# generation alone.
 @inline _bit_plane_swap!(::Nothing, ::Int, ::Int) = nothing
-@inline function _bit_plane_swap!(P::Matrix{UInt64}, i::Int, j::Int)
-    wi, oi = _word_index(i), _bit_offset(i)
-    wj, oj = _word_index(j), _bit_offset(j)
-    @inbounds for b in axes(P, 2)
-        t = ((P[wi, b] >> oi) ⊻ (P[wj, b] >> oj)) & UInt64(1)
-        P[wi, b] ⊻= t << oi
-        P[wj, b] ⊻= t << oj
-    end
-    return nothing
-end
-
-# Bit `j` of plane `b` of `P`, as a `UInt64` 0 or 1; 0 without planes.
+@inline _bit_plane_swap!(P::Matrix{UInt64}, i::Int, j::Int) = _swap_bits!(P, i, j, axes(P, 2))
 @inline _bit_plane_bit(::Nothing, ::Int, ::Int) = UInt64(0)
 @inline _bit_plane_bit(P::Matrix{UInt64}, j::Int, b::Int) =
     @inbounds (P[_word_index(j), b] >> _bit_offset(j)) & UInt64(1)
@@ -60,7 +49,7 @@ end
 # eliminated generator.
 function _canonicalize_gm_bits!(tab::_BitTableau, L::GeneratorMajor)
     (0 <= tab.m <= tab.n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ tab.n"))
-    _canonicalize_gm_bits!(_stab(tab, L), _bit_phase_planes(tab), _bit_canon_destab(tab, L),
+    _canonicalize_gm_bits!(_stab(tab, L), _bit_phase_planes(tab), _canon_destab(tab, L),
                            tab.m, tab.pivcol_of_row)
     _bit_cache_gm!(tab.xdotz_cache.planes, _stab(tab, L), tab.m)
     tab.iscanonical = true

@@ -55,6 +55,12 @@ tableau_eltype(tab::AbstractTableau) = _storage_eltype(tab)
 # `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`,
 # `Bits` at d = 2, any other type never, `Union{UInt8, UInt16}` and `Union{}`
 # included.
+#
+# The narrow modular primitives need `d <= typemax(E)`, one more than the
+# residues need; the two differ only at d = 256 and 65536, which are not
+# prime, so a tableau never reaches the primitives with them. The phase
+# clause is implied by the first one for d >= 3 (`phase_modulus(d) == d`) and
+# for d = 2 (4 - 1 <= typemax(E)).
 function _eltype_admissible(E::Type, d::Int)
     E === Int && return true
     E === Bits && return d == 2
@@ -211,7 +217,10 @@ end
 # Overwrite the generators of a tableau with a generator-major matrix of exactly
 # the shape `stabilizer_matrix` or `destabilizer_matrix` returns, reducing its
 # entries mod `d` and its phases mod `phase_modulus(d)`, in the tableau's
-# storage layout. `m`, `iscanonical` and the caches are left alone.
+# storage layout. `m`, `iscanonical` and the caches are left alone. The package
+# itself never calls these two loaders: the tests and the benchmark workloads
+# (benchmark/workloads.jl) build tableaux in arbitrary states with them, so
+# they stay next to the storage they write.
 _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer}) =
     _load_stabilizer_matrix!(tab, _layout_marker(tab), S)
 
@@ -324,7 +333,7 @@ function _packed_preset_tableau(::Type{T}, n::Int, state_norm::Symbol, basis_spe
 end
 
 # The packed tableau of type `T` holding the generators of the generator-major
-# raw matrix `tab_in`, whose shape `shape` comes from `_infer_tableau_layout`:
+# raw matrix `tab_in`, whose shape `shape` comes from `_infer_tableau_shape`:
 # entries reduced mod 2, phases mod 4, columns `m+1:n` zero, checked as the
 # unpacked constructors check, and for a `DestabilizerTableau` with the
 # destabilizers and `xdotz_cache` rebuilt.
@@ -333,13 +342,11 @@ function _packed_matrix_tableau(::Type{T}, d::Int, shape, tab_in::AbstractMatrix
                                 layout::Symbol) where {T<:AbstractTableau}
     n, m = shape.n, shape.m
     _check_inversemod(inversemod, d)
-    (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
-    S = _generator_input(tab_in, n, m, shape.storephase)
     tab = _zero_packed_tableau(T, n, shape.storephase, inversemod, layout)
     tab.m = m
     L = _layout_marker(tab)
-    _load_bit_generators!(tab, L, S, m)
+    _load_bit_generators!(tab, L, tab_in, m)
     _init_packed_generators!(tab, L, check)
     return tab
 end

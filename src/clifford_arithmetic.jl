@@ -164,6 +164,7 @@ end
     return (0, Int64(0), 0, false)
 end
 
+# The lane width in bytes alone (0 without a lane); the tests read it.
 @inline _clifford_lane_bytes(S::Int, d::Int) = _clifford_lane(S, d)[1]
 
 # `X = 2S·d·(d-1) <= typemax(T)` for `T ∈ (Int16, Int32)`. With `S` and `d`

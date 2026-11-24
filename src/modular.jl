@@ -270,9 +270,8 @@ end
 # `a == 1` returns immediately: given the reduced-input invariant the loop is
 # the identity. At d = 2 that is EVERY call from `canonicalize!`, since the
 # pivot is nonzero (so 1) and inv(1, 2) = 1 -- so the early return skips 2n^2
-# identity divisions per `_canonicalize_tableau!`, and 4n^2 per
-# `_canonicalize_tableau_with_destab!`, which scales the stabilizer and
-# destabilizer generators in turn.
+# identity divisions per `_canonicalize_tableau!` on a `StabilizerTableau`, and
+# 4n^2 on a `DestabilizerTableau`, whose destabilizer generators it scales too.
 @inline function scale_mod!(dst::AbstractVector{Int}, a::Int, d::Int)
     a == 1 && return dst
     if a == 0

@@ -188,7 +188,7 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     # The input is read entry by entry with 1-based indices.
     Base.require_one_based_indexing(tableau)
-    shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
+    shape = _infer_tableau_shape(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
@@ -219,7 +219,6 @@ function _build_destabilizer_tableau(
 ) where {E<:_StorageEltype, T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
-    (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
     b, phase = _generator_storage(stab_in, E, d, n, m, storephase)

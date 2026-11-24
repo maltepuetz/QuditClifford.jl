@@ -163,7 +163,7 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     # The input is read entry by entry with 1-based indices.
     Base.require_one_based_indexing(tableau)
-    shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
+    shape = _infer_tableau_shape(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
@@ -193,7 +193,6 @@ function _build_stabilizer_tableau(
 ) where {E<:_StorageEltype, T<:InverseMod}
     !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
-    (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
 
     b, phase = _generator_storage(tableau_in, E, d, n, m, storephase)
@@ -240,9 +239,8 @@ _generator_storage(pre::Tuple{_GMBlock, Vector{Int}}, ::Type{E}, d::Int, n::Int,
 # type is copied into fresh arrays: entries reduced mod `d` and stored as `E`,
 # phases reduced mod `phase_modulus(d)`, and the columns `m+1:n` zero whatever
 # the input holds there.
-function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d::Int, n::Int, m::Int,
+function _generator_storage(S::AbstractMatrix{<:Integer}, ::Type{E}, d::Int, n::Int, m::Int,
                             storephase::Bool) where {E}
-    S = _generator_input(tableau_in, n, m, storephase)
     x, z = _stab_blocks(E, n)
     phase = zeros(Int, storephase ? n : 0)
     _load_generator_entries!(x, z, S, n, m, d)
@@ -283,17 +281,7 @@ function _load_generator_entries!(x::_BlockMatrix{E}, z::_BlockMatrix{E}, S::Abs
     return nothing
 end
 
-# The raw generator matrix `tableau_in` after checking its shape:
-# `2n + storephase` rows, and `n` or `m` columns.
-function _generator_input(tableau_in::AbstractMatrix{<:Integer}, n::Int, m::Int, storephase::Bool)
-    nrows = 2n + (storephase ? 1 : 0)
-    size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
-    size(tableau_in, 2) == n || size(tableau_in, 2) == m ||
-        throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
-    return tableau_in
-end
-
-@inline function _layout_from_dims(dim_nrows::Int, dim_cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
+@inline function _shape_from_dims(dim_nrows::Int, dim_cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
     storephase_dim = isodd(dim_nrows)
     n = storephase_dim ? (dim_nrows - 1) ÷ 2 : dim_nrows ÷ 2
 
@@ -318,11 +306,17 @@ end
     return nothing
 end
 
-@inline function _infer_tableau_layout(rows::Int, cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
-    cand = _layout_from_dims(rows, cols, m, storephase)
+# The shape of a raw generator matrix of `rows × cols`, stacked generator-major
+# or its transpose: `n`, `m`, `storephase` and whether it is transposed, or
+# `nothing` if it fits neither orientation (or contradicts a given `m` or
+# `storephase`). A shape it returns has `0 ≤ m ≤ n`, `2n + storephase` stacked
+# rows and `n` or `m` generator columns, which the constructors rely on
+# without checking again.
+@inline function _infer_tableau_shape(rows::Int, cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
+    cand = _shape_from_dims(rows, cols, m, storephase)
     cand !== nothing && return (transpose=false, n=cand.n, m=cand.m, storephase=cand.storephase)
 
-    cand = _layout_from_dims(cols, rows, m, storephase)
+    cand = _shape_from_dims(cols, rows, m, storephase)
     cand !== nothing && return (transpose=true, n=cand.n, m=cand.m, storephase=cand.storephase)
 
     return nothing
@@ -646,10 +640,10 @@ function _fill_ghz_state!(b, d::Int)
 end
 
 """Number of active generator columns."""
-@inline ngens(tab::StabilizerTableau) = tab.m
+@inline ngens(tab::AbstractTableau) = tab.m
 
 """True iff the represented stabilizer density operator is mixed (i.e. m < n)."""
-@inline is_mixed(tab::StabilizerTableau) = tab.m < tab.n
+@inline is_mixed(tab::AbstractTableau) = tab.m < tab.n
 
 const max_qudits_display = Ref(30)  # maximum number of qudits to display the full tableau
 

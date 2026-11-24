@@ -132,7 +132,7 @@ function _prepare_support(tab::AbstractTableau, L::TableauLayout)
     Gphase = copy(_phase(tab))
     pivcol = zeros(Int, 2n)
     xdotz = zeros(Int, n)
-    _canonicalize_tableau!(G, Gphase, n, d, true, tab.inversemod, pivcol, xdotz)
+    _canonicalize_tableau!(G, Gphase, nothing, n, d, true, tab.inversemod, pivcol, xdotz)
 
     k = 0
     for r in 1:n
