@@ -8,8 +8,9 @@
 # loop runs in a lane type `T ∈ (Int16, Int32, Int64)` chosen by
 # `_clifford_lane`: entries are widened to `T`, every product and sum is formed
 # in `T`, every unreduced value stays at most `X = 2S·d·(d-1) <= typemax(T)`,
-# and `_barrett_reduce` forms only its product `x * M` in the type of the
-# lane's constant, `T` itself or `widen(T)`. Results are stored back as `E`.
+# and `_barrett_reduce` forms only its product `x * M` elsewhere: in `T` itself
+# under the lane's signed constant, in `widen(unsigned(T))` under its unsigned
+# one. Results are stored back as `E`.
 # At `d = 2` the values are bits and sums of at most `3S + 2 <= X`, so the loop
 # runs in `Int16` whenever it holds `X`, and reduces with `&` and `⊻`. The
 # formulas are those of `_matvec`, `_phase_odd_barrett`, `_phase_qubit_closed` and
@@ -30,14 +31,15 @@
 # is the phase vector, or `nothing` for no phase work; `cache` is the
 # `xdotz_cache`, or `nothing` when there is none. `ws` is the tableau's
 # `coeff_workspace`. At odd `d`, `(T, M, s)` come from `_clifford_lane` with
-# `M` converted to its product type; `M === nothing` selects the `d = 2` pass
+# `M` converted to the type of its constant (`T`, or `unsigned(T)` for the
+# unsigned one); `M === nothing` selects the `d = 2` pass
 # (with `prep.bm != 0`, which builds `prep.Q`), so only that instance compiles
 # it.
 @inline function _qm_tuple_kernel!(b::_QMBlock, phase::Union{Nothing,Vector{Int}},
                                    cache::Union{Nothing,Vector{Int}},
                                    ws::Matrix{E}, m::Int,
                                    prep::PreparedClifford{K,S}, ::Type{T},
-                                   M::Union{Nothing,Signed},
+                                   M::Union{Nothing,Signed,Unsigned},
                                    s::Int) where {E,K,S,T<:Signed}
     t = prep.targets
     xc = ntuple(i -> view(b.x, :, t[i]), Val(K))
@@ -109,7 +111,8 @@ end
 # each combination compiles to its own loop.
 @inline function _qm_pass_odd!(xc::NTuple{K}, zc::NTuple{K}, wp::AbstractVector{E},
                                wc::AbstractVector{E}, m::Int,
-                               prep::PreparedClifford{K,S}, ::Type{T}, M::Signed, s::Int,
+                               prep::PreparedClifford{K,S}, ::Type{T},
+                               M::Union{Signed,Unsigned}, s::Int,
                                dophase::Bool, docache::Bool) where {E,K,S,T<:Signed}
     di = prep.d
     d = di % T
@@ -178,7 +181,7 @@ end
 # The whole gate on a qudit-major tableau in lane `T`: the stabilizer block with
 # its phase and cache, then the destabilizer block of a `DestabilizerTableau`.
 @inline function _qm_apply!(tab::AbstractTableau, prep::PreparedClifford,
-                            L::QuditMajor, ::Type{T}, M::Union{Nothing,Signed},
+                            L::QuditMajor, ::Type{T}, M::Union{Nothing,Signed,Unsigned},
                             s::Int) where {T<:Signed}
     stab = _stab(tab, L)
     cache = _qm_cache(tab)
@@ -190,6 +193,20 @@ end
     _after_clifford!(tab, L, prep, T, M, s)
     return nothing
 end
+
+# The same under an unsigned constant, as a function of its own. The kernel's
+# product is a widening multiply only while the compiler sees `M` zero-extended
+# from its unsigned type. Compiled into `_apply_columns!` next to the
+# constant's derivation, the test `M <= typemax(U)` there proves the extension
+# redundant, it is dropped, and the product becomes a full multiply of the
+# doubled width, which is not vectorized (4690 ns against 2800 ns per
+# two-qudit gate at d = 127, Stab, `UInt8`, n = 2048, M3 Pro, Julia 1.13).
+# The barrier also keeps these instances out of the body the signed ones are
+# compiled in, where on Julia 1.10 they slowed the two-qudit gate at d = 3
+# from 1630 ns to 2210 ns.
+@noinline _qm_apply_unsigned!(tab::AbstractTableau, prep::PreparedClifford, L::QuditMajor,
+                              ::Type{T}, M::Unsigned, s::Int) where {T<:Signed} =
+    _qm_apply!(tab, prep, L, T, M, s)
 
 @inline _qm_cache(::AbstractTableau) = nothing
 @inline _qm_cache(tab::DestabilizerTableau) = tab.xdotz_cache

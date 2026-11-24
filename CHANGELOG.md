@@ -8,6 +8,22 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Changed
+
+- One-, two- and three-qudit gates on a qudit-major tableau are faster at
+  the dimensions whose reduction multiplies in a wider type than the
+  kernel's lane, with identical results: 1.5–1.8 times at
+  `d = 127, 251, 257, 4099` and 1.03–1.19 times at `d = 5, 31, 61`
+  (`n = 2048`, both tableau types, M3 Pro; `d = 5` on one qudit and `d = 61`
+  on three keep their reduction and their speed, as do `d = 2` and `d = 3`).
+  The reduction there uses an unsigned constant of the lane's width, with a
+  product that NEON and AVX2 have a vector instruction for. Such a constant
+  exists for every odd dimension a lane holds, so the dimensions of the
+  32-bit lane that had no constant and took the per-generator path (the
+  smallest is 11777, on three qudits) run in the kernel too. At `n ≤ 16` a
+  gate at `d = 31` takes about 4 ns (up to 8%) longer. Not measured on x86
+  or on 32-bit hosts.
+
 ## 0.5.0 - 2026-11-24
 
 ### Breaking

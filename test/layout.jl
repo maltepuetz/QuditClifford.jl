@@ -338,45 +338,64 @@ end
     end
 end
 
-# The Barrett reduction of `x` evaluated in the lane type `T`, with the product
-# formed in the type of `M`.
-ly_reduce(::Type{T}, x::Integer, d::Integer, M::Signed, s::Int) where {T<:Signed} =
+# The Barrett reduction of `x` evaluated in the lane type `T`, under a signed
+# constant (product formed in its type) or an unsigned one (product formed in
+# the next wider unsigned type).
+ly_reduce(::Type{T}, x::Integer, d::Integer, M::Integer, s::Int) where {T<:Signed} =
     ly_QC._barrett_reduce(T(x), T(d), M, s)
 
 const ly_LANES = (Int16, Int32, Int64)
-
-# The type a lane forms its Barrett product in: the lane itself when it has
-# its own constant (and always for `Int64`), else the next wider type.
-ly_product_type(T, wide) = wide ? widen(T) : T
 
 # `T` holds the kernel's largest unreduced value `X = 2S·d·(d-1)`.
 ly_holds(T, S, d) = big(2S) * d * (d - 1) <= typemax(T)
 
 ly_has_constant(W, S, d) = ly_QC._clifford_barrett(W, S, d)[1] != 0
+ly_has_unsigned(T, S, d) = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)[1] != 0
 
-# A lane is usable if it holds `X` and has its own or (below Int64) a widened constant.
+# The constant a lane reduces with: its own signed one, or (`wide`) the
+# unsigned one of its width.
+ly_lane_constant(T, wide, S, d) =
+    wide ? ly_QC._clifford_barrett_unsigned(unsigned(T), S, d) : ly_QC._clifford_barrett(T, S, d)
+
+# A lane is usable if it holds `X` and has its own signed or (below Int64) an
+# unsigned constant.
 ly_lane_ok(T, S, d) = T === Int64 ? ly_has_constant(Int64, S, d) :
-    ly_holds(T, S, d) && (ly_has_constant(T, S, d) || ly_has_constant(widen(T), S, d))
+    ly_holds(T, S, d) && (ly_has_constant(T, S, d) || ly_has_unsigned(T, S, d))
 
 ly_lane_type(S, d) =
     (b = ly_QC._clifford_lane_bytes(S, d); b == 0 ? nothing : only(filter(T -> sizeof(T) == b, ly_LANES)))
 
-# Every `x ∈ 0:2S·d·(d-1)` reduces to `mod(x, d)` in the lane chosen for `(S, d)`,
-# with the constant `_clifford_lane` returns.
-function ly_lane_reduces_exactly(S, d)
-    T = ly_lane_type(S, d)
-    _, M64, s, wide = ly_QC._clifford_lane(S, d)
-    W = ly_product_type(T, wide)
-    M = M64 % W
-    (M, s) == ly_QC._clifford_barrett(W, S, d) || return false
+# Every `x ∈ 0:2S·d·(d-1)` reduces to `mod(x, d)` in lane `T` under `(M, s)`.
+function ly_reduces_exactly(::Type{T}, S, d, M, s) where {T}
     for x in 0:(2S * d * (d - 1))
         ly_reduce(T, x, d, M, s) == mod(x, d) || return false
     end
     return true
 end
 
+# The same in the lane chosen for `(S, d)`, with the constant `_clifford_lane`
+# returns.
+function ly_lane_reduces_exactly(S, d)
+    T = ly_lane_type(S, d)
+    _, M64, s, wide = ly_QC._clifford_lane(S, d)
+    M, sc = ly_lane_constant(T, wide, S, d)
+    (M64, s) == (Int64(M), sc) || return false
+    return ly_reduces_exactly(T, S, d, M, s)
+end
+
+# `(M, s)` is an exact unsigned constant of type `U` for `(S, d)`: the checks
+# of `_clifford_barrett_unsigned`, in `BigInt`.
+function ly_unsigned_constant_valid(::Type{U}, S, d, M, s) where {U}
+    M isa U || return false
+    X = big(2S) * d * (d - 1)
+    p2 = big(2)^s
+    M == cld(p2, d) || return false
+    1 <= s <= 16 * sizeof(U) - 2 || return false
+    return (big(M) * d - p2) * X < p2 && X * M <= typemax(widen(U))
+end
+
 @testset "lane selection" begin
-    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031), [4093, 13399, 16381, 23189, 32749, 65521])
+    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031), [4093, 11777, 13399, 16381, 23189, 32749, 65521])
     nwide = 0
     for S in (2, 4, 6), d in ds
         b, M, s, wide = ly_QC._clifford_lane(S, d)
@@ -389,9 +408,11 @@ end
                 @test !ly_lane_ok(T, S, d)
             elseif sizeof(T) == b
                 @test ly_holds(T, S, d)
-                # The lane's own constant when it has one, else the widened one.
+                # The lane's own signed constant when it has one, else the
+                # unsigned one.
                 @test wide == !ly_has_constant(T, S, d)
-                @test (M, s) == Tuple(Int64.(ly_QC._clifford_barrett(ly_product_type(T, wide), S, d)))
+                Mc, sc = ly_lane_constant(T, wide, S, d)
+                @test (M, s) == (Int64(Mc), sc)
                 @test M != 0
                 @test !(T === Int64 && wide)
                 nwide += wide
@@ -402,10 +423,57 @@ end
     # The lanes of the boundary d in "qudit-major gate kernel".
     @test [ly_QC._clifford_lane_bytes(2, d) for d in (89, 97, 23189)] == [2, 4, 8]
     @test [ly_QC._clifford_lane_bytes(4, d) for d in (61, 67)] == [2, 4]
-    @test [ly_QC._clifford_lane_bytes(6, d) for d in (43, 47, 13399)] == [2, 4, 8]
+    @test [ly_QC._clifford_lane_bytes(6, d) for d in (47, 53, 11777, 13399)] == [2, 4, 4, 8]
+    # d = 11777 at S = 6 has no signed constant of any width.
+    @test !ly_has_constant(Int32, 6, 11777) && !ly_has_constant(Int64, 6, 11777)
     for S in (2, 6), d in filter(ly_QC.Primes.isprime, 2:251)
         @test ly_lane_reduces_exactly(S, d)
     end
+end
+
+@testset "unsigned Barrett constant" begin
+    # Exhaustive over `0:X`, in the 16-bit lane (d <= 47) and the 32-bit lane.
+    for S in (2, 4, 6), d in (3, 5, 47, 127, 251, 257, 4099)
+        T = ly_holds(Int16, S, d) ? Int16 : Int32
+        M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
+        @test ly_unsigned_constant_valid(unsigned(T), S, d, M, s)
+        @test ly_reduces_exactly(T, S, d, M, s)
+    end
+    # The largest value of each lane, and the largest d with an Int32 lane.
+    for (T, S, d) in ((Int16, 2, 89), (Int16, 4, 61), (Int16, 6, 47),
+                      (Int32, 2, 23167), (Int32, 4, 16381), (Int32, 6, 13367))
+        @test ly_holds(T, S, d)
+        M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
+        @test ly_unsigned_constant_valid(unsigned(T), S, d, M, s)
+        X = 2S * d * (d - 1)
+        @test all(x -> ly_reduce(T, x, d, M, s) == mod(x, d), (X - 3d):X)
+    end
+    # Every odd prime whose `X` a lane holds has a constant in it; a `d` whose
+    # `X` it does not hold has none.
+    nconst = 0
+    for S in (2, 4, 6), d in filter(ly_QC.Primes.isprime, 3:23203), T in (Int16, Int32)
+        M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
+        if ly_holds(T, S, d)
+            nconst += 1
+            ly_unsigned_constant_valid(unsigned(T), S, d, M, s) ||
+                @test (T, S, d, M, s) === nothing
+        else
+            (M, s) == (0, 0) || @test (T, S, d, M, s) === nothing
+        end
+    end
+    @test nconst > 6000
+    # Any other modulus is rejected or exact, powers of two included.
+    for S in (1, 2, 6, 40), d in 2:300, T in (Int16, Int32)
+        M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
+        if M == 0
+            @test s == 0
+            @test !ly_holds(T, S, d) || ispow2(d)
+        else
+            @test ly_unsigned_constant_valid(unsigned(T), S, d, M, s)
+        end
+    end
+    @test ly_QC._clifford_barrett_unsigned(UInt16, 0, 3) == (0, 0)
+    @test ly_QC._clifford_barrett_unsigned(UInt32, 2, 1) == (0, 0)
 end
 
 @testset "coeff_workspace" begin
@@ -491,17 +559,70 @@ end
 
 @testset "qudit-major gate kernel" begin
     # Lane boundaries of "lane selection": the largest Int16 d for S = 6, 4, 2
-    # (43, 61, 89), the first Int32 d (47, 67, 97), Int32 lanes with `UInt16`
+    # (47, 61, 89), the first Int32 d (53, 67, 97), Int32 lanes with `UInt16`
     # storage (4093) and Int64 lanes (13399 for S = 6, 23189 for S = 2). Each
-    # lane runs with its own constant (d = 3; 101 and 61 at S = 6 in Int32)
-    # and with the widened one (d = 5 at S = 4, 6; 43-97, 251, 4093).
-    ds = [2, 3, 5, 43, 47, 61, 67, 89, 97, 101, 251, 257, 4093, 13399, 23189]
+    # lane runs with its own signed constant (d = 3; 101 and 61 at S = 6 in
+    # Int32) and with the unsigned one (d = 5 at S = 4, 6; 43-97, 251, 4093,
+    # and 11777, which has no signed constant at S = 6).
+    ds = [2, 3, 5, 43, 47, 53, 61, 67, 89, 97, 101, 251, 257, 4093, 11777, 13399, 23189]
     Sys.WORD_SIZE == 64 && push!(ds, 65521)
     seed = 1
     for TT in (StabilizerTableau, DestabilizerTableau), storephase in (true, false),
         d in ds, E in ly_eltypes(d), n in (5, 64, 300)
         seed += 1
         @test ly_check_gate_stream(TT, d, E, n, storephase, seed)
+    end
+end
+
+# One gate through the qudit-major kernel in lane `T` under the constant
+# `(M, s)`, bypassing the lane selection.
+function ly_apply_in_lane!(q, gate, ::Type{T}, M, s) where {T}
+    prep = gate isa CliffordOperator ?
+        ly_QC._prepare_tuple(gate, q.storephase, Val(length(gate.targets))) :
+        ly_QC._prepare(gate, q.d, q.inversemod, q.storephase)
+    ly_QC._qm_apply!(q, prep, ly_QC.QuditMajor(), T, M, s)
+    q.iscanonical = false
+    return q
+end
+
+# A stream of `K`-qudit gates applied generator-major by `apply!` and
+# qudit-major in lane `T` with the signed constant on one copy and the
+# unsigned one on another.
+function ly_check_both_forms(TT, d, K, ::Type{T}, n, storephase, seed) where {T}
+    S = 2K
+    Ms, ss = ly_QC._clifford_barrett(T, S, d)
+    Mu, su = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
+    (Ms != 0 && Mu != 0) || return false
+    rng = Xoshiro(seed)
+    g = TT(d, n; storephase, layout = :generator)
+    random_state!(rng, g; m = max(1, n - 2))
+    qs = qudit_major!(copy(g))
+    qu = qudit_major!(copy(g))
+    for i in 1:60
+        tg = randperm(rng, n)[1:K]
+        gate = K == 1 && isodd(i) ? Fourier(tg[1]) :
+               K == 2 && isodd(i) ? SUM(tg[1], tg[2], rand(rng, 1:d - 1)) :
+               random_clifford(rng, d, tg)
+        apply!(g, gate)
+        ly_apply_in_lane!(qs, gate, T, Ms, ss)
+        ly_apply_in_lane!(qu, gate, T, Mu, su)
+        (ly_same_state(g, qs) && ly_same_state(g, qu)) ||
+            (@error "reduction forms differ" TT d K T storephase i gate; return false)
+    end
+    return true
+end
+
+@testset "both reduction forms of a lane" begin
+    # (d, K, lane) with a signed constant of the lane's own type, so the
+    # selection never runs the unsigned one there.
+    cases = ((3, 1, Int16), (3, 2, Int16), (3, 3, Int16), (5, 1, Int16),
+             (101, 1, Int32), (71, 2, Int32), (61, 3, Int32))
+    seed = 100
+    for TT in (StabilizerTableau, DestabilizerTableau), storephase in (true, false),
+        (d, K, T) in cases, n in (5, 70)
+        seed += 1
+        @test ly_lane_type(2K, d) === T && !ly_QC._clifford_lane(2K, d)[4]
+        @test ly_check_both_forms(TT, d, K, T, n, storephase, seed)
     end
 end
 
