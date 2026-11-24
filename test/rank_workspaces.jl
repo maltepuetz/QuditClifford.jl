@@ -394,6 +394,40 @@ rw_types(d) = filter(E -> RW._eltype_admissible(E, d), (UInt8, UInt16, Int))
         end
     end
 
+    # The Gram products of `entanglement_negativity`, against sums formed in
+    # Int128. The UInt8 method sums runs of at most `chunk` terms in UInt32.
+    @testset "Gram dot products are exact in every element type" begin
+        rw_dots_ref(ws, xS, zS, len, ci, cj, d) =
+            (Int(mod(sum(Int128(ws[xS + t, ci]) * ws[zS + t, cj] for t in 1:len; init=Int128(0)), d)),
+             Int(mod(sum(Int128(ws[zS + t, ci]) * ws[xS + t, cj] for t in 1:len; init=Int128(0)), d)))
+        C = RW._UINT8_DOT_CHUNK
+        @test UInt64(C) * 255^2 <= typemax(UInt32) < UInt64(C + 1) * 255^2
+        rng = Xoshiro(20261124)
+        ds = Sys.WORD_SIZE == 64 ? (3, 251, 257, 65521) : (3, 251, 257)
+        for d in ds, len in (0, 1, 15, 16, 17, 64, 1000), entries in (:max, :rand)
+            nr = 2len + 5
+            vals = entries === :max ? fill(d - 1, nr, 3) : rand(rng, 0:(d - 1), nr, 3)
+            xS, zS = 2, len + 4
+            ref = rw_dots_ref(vals, xS, zS, len, 3, 1, d)
+            for E in rw_types(d)
+                # The `Int` method needs len >= 1 (see its comment).
+                E === Int && (len == 0 || d > RW.max_safe_dimension(max(len, 2))) && continue
+                @test RW._cross_dots(E.(vals), xS, zS, len, 3, 1, d) == ref
+            end
+            if d <= 251
+                for chunk in unique((1, 2, 7, max(len - 1, 1), max(len, 1), len + 1))
+                    @test RW._cross_dots(UInt8.(vals), xS, zS, len, 3, 1, d, chunk) == ref
+                end
+            end
+        end
+        # Past two full chunks of products (d - 1)^2, which a single UInt32
+        # sum would wrap.
+        len = 2C + 3
+        ws = fill(UInt8(250), 2len, 2)
+        @test RW._cross_dots(ws, 0, len, len, 1, 2, 251) == (mod(len, 251), mod(len, 251))
+        @test RW._cross_dots(ws, 0, len, len, 1, 2, 251, C) == (mod(len, 251), mod(len, 251))
+    end
+
     @testset "No allocations once compiled" begin
         # One entry per function, so a failure shows which one allocated.
         rw_allocs(tab, dest, A, B, C) = (

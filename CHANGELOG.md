@@ -33,6 +33,15 @@ dependency bump — carries the `skip-changelog` label instead.
   n = 512 and 1024, both tableau types, M3 Pro). Generator-major unpacked
   tableaux and canonical tableaux are unchanged. Not measured on x86 or on
   32-bit hosts.
+- `entanglement_negativity` is 3.8–7.9 times faster on `UInt8` storage
+  (the default for `3 ≤ d ≤ 251`), with identical results: the symplectic
+  products between the basis elements now vectorize (d = 3, 31 and 251,
+  n = 512 and 1024, half cut, both layouts, M3 Pro; 7.3–7.9 times at d = 3,
+  3.8 times at d = 251). `UInt16` storage keeps its speed (d = 257). The
+  products of both narrow types are now summed in unsigned integers wide
+  enough to stay exact on 32-bit hosts, where an `Int` sum could wrap at
+  large `n` and `d`.
+  Not measured on x86 or on 32-bit hosts.
 
 ## 0.5.0 - 2026-11-24
 

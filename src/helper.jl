@@ -63,6 +63,10 @@ end
 # `isqrt` keeps the test itself from overflowing, as in `_barrett_ok`.
 @inline max_safe_dimension(n::Int) = isqrt(typemax(Int) ÷ max(n, 2)) + 1
 
+# Number of products of at most 255^2 that a `UInt32` sum holds exactly: 66051.
+# The UInt8 dot products sum runs of at most this many terms in `UInt32`.
+const _UINT8_DOT_CHUNK = Int(typemax(UInt32) ÷ (UInt32(255) * UInt32(255)))
+
 function _warn_if_dimension_unsafe(d::Int, n::Int)
     n == 0 && return nothing
     dmax = max_safe_dimension(n)

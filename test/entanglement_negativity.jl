@@ -163,3 +163,43 @@ neg_allocated(tab, A) = @allocated entanglement_negativity(tab, A)
         end
     end
 end
+
+# The Gram products run in a different accumulator for each storage element
+# type, so the narrow types are checked against `eltype = Int` on large
+# entries: d = 251 and 257 with Bell pairs whose exponents are all 0, 1 or
+# d - 1, and random states.
+@testset "Negativity agrees across element types and layouts" begin
+    function neg_bell_pairs(TT, d, h, E, layout)
+        tab = TT(d, 2h; state=:product, basis=vcat(fill(:X, h), fill(:Z, h)), eltype=E,
+                 layout=layout)
+        for i in 1:h
+            apply!(tab, SUM(i, i + h))
+        end
+        for q in 1:(2h)
+            apply!(tab, Multiplier(q, d - 1))
+        end
+        return tab
+    end
+    neg_types(d) = filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int))
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (251, 257),
+        layout in (:generator, :qudit)
+        h = 20
+        for E in neg_types(d)
+            tab = neg_bell_pairs(TT, d, h, E, layout)
+            @test entanglement_negativity(tab, 1:h) == h
+            @test entanglement_negativity(tab, 1:h, (h + 1):(2h - 2)) == h - 2
+            @test entanglement_negativity(tab, 1:2:(2h)) == 0
+        end
+        rng = Xoshiro(hash((TT, d, layout)) % UInt)
+        for n in (9, 40), m in (n ÷ 2, n - 1, n)
+            ref = TT(d, n; eltype=Int, layout=layout)
+            random_state!(rng, ref; m)
+            A, B = neg_random_split(rng, n)
+            for E in neg_types(d)
+                tab = TT(d, stabilizer_matrix(ref); m=m, eltype=E, layout=layout)
+                @test entanglement_negativity(tab, A, B) == entanglement_negativity(ref, A, B)
+                @test entanglement_negativity(tab, A) == entanglement_negativity(ref, A)
+            end
+        end
+    end
+end
