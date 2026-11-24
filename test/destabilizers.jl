@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
 
 @inline function _symp(A::AbstractMatrix{<:Integer}, colA::Int, B::AbstractMatrix{<:Integer}, colB::Int, n::Int)
     s = 0
@@ -786,5 +787,92 @@ end
             ok || (@error "packed duality" layout step; break)
         end
         @test ok
+    end
+end
+
+# The duals of a raw-matrix `DestabilizerTableau` against an independent plain
+# `Int` elimination: `A = Sᵀ J`, its pivot columns from forward elimination
+# (the first `m` linearly independent columns), and `D` holding the inverse of
+# `A` on those columns at the pivot rows. Each storage type and layout builds
+# exactly these duals (the GF(2) path at d = 2, the transposed elimination
+# mod d above), and they are dual to the generators.
+function _ref_raw_duals(S::Matrix{Int}, d::Int, n::Int, m::Int)
+    A = zeros(Int, m, 2n)
+    for k in 1:m, q in 1:n
+        A[k, q] = mod(S[n + q, k], d)
+        A[k, n + q] = mod(-S[q, k], d)
+    end
+    W = copy(A)
+    piv = Int[]
+    r = 1
+    for c in 1:2n
+        r > m && break
+        p = findfirst(i -> W[i, c] != 0, r:m)
+        p === nothing && continue
+        p += r - 1
+        W[r, :], W[p, :] = W[p, :], W[r, :]
+        W[r, :] = mod.(W[r, :] .* invmod(W[r, c], d), d)
+        for rr in (r + 1):m
+            W[rr, :] = mod.(W[rr, :] .- W[rr, c] .* W[r, :], d)
+        end
+        push!(piv, c)
+        r += 1
+    end
+    D = zeros(Int, 2n, n)
+    length(piv) == m || return D
+    M = hcat(A[:, piv], _ref_identity(m))
+    for c in 1:m
+        p = findfirst(i -> M[i, c] != 0, c:m) + c - 1
+        M[c, :], M[p, :] = M[p, :], M[c, :]
+        M[c, :] = mod.(M[c, :] .* invmod(M[c, c], d), d)
+        for rr in 1:m
+            rr == c && continue
+            M[rr, :] = mod.(M[rr, :] .- M[rr, c] .* M[c, :], d)
+        end
+    end
+    for i in 1:m, j in 1:m
+        D[piv[i], j] = M[i, m + j]
+    end
+    return D
+end
+_ref_identity(m) = [i == j ? 1 : 0 for i in 1:m, j in 1:m]
+
+@testset "Raw-matrix duals match a reference elimination" begin
+    for d in (2, 3, 5), n in (1, 5, 64, 65, 200)
+        Es = d == 2 ? (UInt8, UInt16, Int, Bits) : (UInt8, UInt16, Int)
+        for m in unique((1, n ÷ 2 + 1, n - 1, n))
+            m >= 1 || continue
+            r = StabilizerTableau(d, n; eltype = Int, layout = :generator)
+            random_state!(Xoshiro(1000d + 10n + m), r; m)
+            S = stabilizer_matrix(r)[:, 1:m]
+            ref = _ref_raw_duals(S, d, n, m)
+            for E in Es, layout in (:generator, :qudit)
+                tab = DestabilizerTableau(d, S; eltype = E, layout)
+                @test destabilizer_matrix(tab)[:, 1:m] == ref[:, 1:m]
+                n <= 65 && _assert_duality(tab)
+            end
+        end
+    end
+    # Dependent generators (check = false) leave the duals zero.
+    for d in (2, 3), E in (d == 2 ? (UInt8, Bits) : (UInt8,)), layout in (:generator, :qudit)
+        S = zeros(Int, 13, 3); S[1, 1] = 1; S[1, 2] = 1; S[8, 3] = 1
+        @test iszero(destabilizer_matrix(DestabilizerTableau(d, S; check = false, eltype = E, layout)))
+    end
+end
+
+# The packed GHZ duals are written a word at a time; they equal the unpacked
+# ones and keep every padding bit zero, through the constructor and `reset!`.
+@testset "Packed GHZ duals by words" begin
+    for n in (1, 2, 63, 64, 65, 127, 128, 130), layout in (:generator, :qudit)
+        u = DestabilizerTableau(2, n; state = :ghz, eltype = UInt8, layout)
+        t = DestabilizerTableau(2, n; state = :ghz, eltype = Bits, layout)
+        @test destabilizer_matrix(t) == destabilizer_matrix(u)
+        @test st_padding_zero(t)
+        random_state!(Xoshiro(n), t)
+        reset!(t; state = :ghz)
+        @test destabilizer_matrix(t) == destabilizer_matrix(u)
+        @test stabilizer_matrix(t) == stabilizer_matrix(u)
+        @test st_padding_zero(t)
+        _assert_duality(t)
     end
 end

@@ -10,6 +10,48 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- The precompile workload covers packed storage (`eltype = Bits`) in both
+  layouts, the layout switch, and `stabilizer_matrix`/`destabilizer_matrix`.
+  The first calls on a packed tableau in a new session no longer compile
+  (Julia 1.13, M3 Pro: first `measure!` 1.4 s, first `==` 0.4 s, first
+  gate 70–90 ms, each now under 0.1 ms; the first keyword constructor call
+  still compiles its keyword wrapper, about 10–15 ms), and neither does the
+  first `stabilizer_matrix` (about 0.2 s, now 1 ms). Loading the package
+  takes as long as before (0.25 s on Julia 1.13, 0.38–0.39 s on Julia 1.10);
+  generating the package image takes about 8–10 s longer.
+- Building a `DestabilizerTableau` from a raw matrix is faster, with
+  identical destabilizers: at `d = 2` every storage type eliminates over
+  GF(2) on packed rows, as packed storage already did (`n = 512`: 255 to
+  4.8 ms for `UInt8`; `n = 1024`: 4.5 s to 24 ms), and at odd `d` the
+  elimination runs along contiguous columns (`n = 512`, `d = 3`: 341 to
+  82 ms for `UInt8`, 1.1 s to 48 ms for `Int`; `n = 1024`, `d = 5`: 6.3 to
+  1.1 s). M3 Pro.
+- The preset constructors no longer zero storage that is already zero
+  (`DestabilizerTableau(2, 4096)`: 1.9 to 0.6 ms for `UInt8`, 0.34 to
+  0.13 ms packed), and packed GHZ destabilizers are written a word at a time
+  (`DestabilizerTableau(2, 4096; state = :ghz, eltype = Bits)` and its
+  `reset!`: 6–16 to 0.2 ms).
+- The raw-matrix constructors read their input entry by entry in its own
+  integer type, and a transposed input through a lazy `transpose`, instead
+  of converting it to a `Matrix{Int}` (and transposing it) first. A `UInt8`
+  input of `n = 4096` qudits allocated about 550 MiB and now allocates
+  38 MiB (12 MiB packed), and takes 19 instead of 32 ms. Entries outside the
+  range of `Int`, such as a `BigInt` or a `UInt64` above `typemax(Int)`, are
+  now reduced mod `d` instead of throwing an `InexactError`.
+- Packed generator-major gates write back only the coordinates a gate
+  changes: Pauli gates 1.6–1.8, phase gates 1.2 and CNOT/CZ 1.25–1.35 times
+  faster, the Fourier gate and random two-qubit Cliffords unchanged
+  (`n = 1024, 1025`, both tableau types, M3 Pro). The random branch of
+  `measure!` with a dense operand on a packed generator-major tableau writes
+  the measured generator from the operand's packed words, 1.23–1.32 times
+  faster at `n = 1024, 1025`.
+- The rank-based quantities (entropies, mutual informations, negativity,
+  `is_independent`) normalize each pivot column once instead of dividing
+  once per eliminated column: the half-chain entropy at `n = 1024` is 8–11%
+  faster at `d = 3, 31, 251` (M3 Pro). Results are identical.
+- With `eltype = Int`, the modular primitives reduce once instead of twice
+  per entry for multipliers and dimensions outside their fast tiers
+  (1.6–1.7 times faster at `d = 131, 65537, 1000003`).
 - `measure!` with an outcome fixed by the state, the append of a new
   generator, and `expect!`/`expect_int!` are faster on packed storage
   (`eltype = Bits`), with identical results, random draws and tableaux

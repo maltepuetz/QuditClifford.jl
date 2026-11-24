@@ -203,9 +203,10 @@ function _check_generator_matrix_size(src::AbstractMatrix, nrows::Int, ncols::In
     return nothing
 end
 
-# Entry `s` reduced mod `d` in `Int` and stored as `E`, which holds every
-# residue mod `d` of an admissible `d`.
-@inline _reduced_entry(::Type{E}, s::Integer, d::Int) where {E} = mod(Int(s), d) % E
+# Entry `s` of any integer type reduced mod `d` and stored as `E`, which holds
+# every residue mod `d` of an admissible `d`. The reduction runs in the type
+# `mod` promotes `s` and `d` to, so no entry is converted to `Int` first.
+@inline _reduced_entry(::Type{E}, s::Integer, d::Int) where {E} = mod(s, d) % E
 
 # Overwrite the generators of a tableau with a generator-major matrix of exactly
 # the shape `stabilizer_matrix` or `destabilizer_matrix` returns, reducing its
@@ -316,7 +317,7 @@ function _packed_preset_tableau(::Type{T}, n::Int, state_norm::Symbol, basis_spe
                                 storephase::Bool, inversemod::InverseMod,
                                 layout::Symbol) where {T<:AbstractTableau}
     tab = _zero_packed_tableau(T, n, storephase, inversemod, layout)
-    _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
+    _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec, true)
     _check_inversemod(inversemod, 2)
     _warn_if_dimension_unsafe(2, n)
     return tab
@@ -347,70 +348,6 @@ _init_packed_generators!(tab::_BitStab, L::TableauLayout, check::Bool) =
     check && _validate_generators!(tab, L)
 _init_packed_generators!(tab::_BitDestab, L::TableauLayout, check::Bool) =
     _init_destabilizers!(tab, L, nothing, nothing, check)
-
-# The destabilizers of a packed tableau, the same as the unpacked method
-# computes. The rows `[z_k x_k]` of `A = Sᵀ J` (the signs vanish mod 2) are
-# packed, each followed by row `k` of an `m × m` identity, and reduced by
-# Gauss-Jordan elimination over GF(2). Once every column of `A` is processed
-# with `m` pivots, `A` is the identity on its pivot columns, so the identity
-# part holds the inverse of `A` restricted to them.
-function rebuild_destabilizers!(tab::_BitDestab, L::TableauLayout)
-    n, m = tab.n, tab.m
-    stab, destab = _stab(tab, L), _destab(tab, L)
-    _zero!(destab)
-    m == 0 && return destab
-
-    nw = _nwords(n)
-    W = 2nw + _nwords(m)
-    # Column `k` of `R` is packed row `k`: Z bits in words `1:nw`, X bits in
-    # words `nw+1:2nw`, the identity part after them.
-    R = zeros(UInt64, W, m)
-    @inbounds for k in 1:m
-        for q in 1:n
-            w, bit = _word_index(q), UInt64(1) << _bit_offset(q)
-            _zget(stab, q, k) == 0 || (R[w, k] |= bit)
-            _xget(stab, q, k) == 0 || (R[nw + w, k] |= bit)
-        end
-        R[2nw + _word_index(k), k] |= UInt64(1) << _bit_offset(k)
-    end
-
-    pivots = zeros(Int, m)
-    r = 1
-    @inbounds for c in 1:2n
-        r > m && break
-        cq = c <= n ? c : c - n
-        w = (c <= n ? 0 : nw) + _word_index(cq)
-        bit = UInt64(1) << _bit_offset(cq)
-        p = r
-        while p <= m && R[w, p] & bit == 0
-            p += 1
-        end
-        p > m && continue
-        if p != r
-            for v in 1:W
-                R[v, p], R[v, r] = R[v, r], R[v, p]
-            end
-        end
-        # Row `r` is zero in every column before `c`, so the words before `w`
-        # need no update.
-        for k in 1:m
-            (k == r || R[w, k] & bit == 0) && continue
-            @simd for v in w:W
-                R[v, k] ⊻= R[v, r]
-            end
-        end
-        pivots[r] = c
-        r += 1
-    end
-    # Dependent generators have no destabilizers; they stay zero.
-    r - 1 == m || return destab
-
-    @inbounds for i in 1:m, j in 1:m
-        (R[2nw + _word_index(j), i] >> _bit_offset(j)) & UInt64(1) == 0 ||
-            _rset!(destab, 1, pivots[i], j)
-    end
-    return destab
-end
 
 # The packed scratch of a packed tableau for `n` qudits: four columns of one
 # word per 64 qudits, and at least the `2·_WORD_BITS` words a layout switch

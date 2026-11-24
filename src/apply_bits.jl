@@ -151,7 +151,14 @@ end
 # The gate on the `m` active generators of a generator-major packed block, 64
 # generators per batch. Batch `w` covers generators `64(w-1)+1 … min(64w, m)`:
 # their target bits are gathered into word bits `0 … cnt-1`, and only those
-# columns are written back, so generators past `m` are never touched.
+# columns are written back, so generators past `m` are never touched. A target
+# coordinate that no generator of the batch changes is not written back: when
+# any coordinate is unchanged (a Pauli, phase or controlled gate leaves some
+# exponents alone), each changed one takes its own pass over the batch;
+# otherwise one pass writes them all. Skipping per coordinate inside the fused
+# pass made the Fourier gate about 10% slower (n = 1024, Apple silicon); this
+# form leaves it and random two-qubit gates unchanged and makes X 1.6–1.8,
+# S 1.2 and CNOT/CZ 1.25–1.35 times faster.
 @inline function _bit_gate!(b::_GMBits, P::Union{Nothing,Matrix{UInt64}},
                             C::Union{Nothing,Matrix{UInt64}}, m::Int,
                             bp::_BitPrep{K,S}) where {K,S}
@@ -169,12 +176,26 @@ end
         end
         o, l, h = _bit_gate_core(v, bp)
         flips = map(⊻, o, v)
-        for k in 0:(cnt - 1)
-            j = j0 + k + 1
+        if any(iszero, flips)
             ntuple(Val(S)) do i
                 @inline
-                @inbounds mats[i][rows[i], j] ⊻= ((flips[i] >> k) & UInt64(1)) << offs[i]
+                f = flips[i]
+                if f != 0
+                    A, r, of = mats[i], rows[i], offs[i]
+                    @inbounds for k in 0:(cnt - 1)
+                        A[r, j0 + k + 1] ⊻= ((f >> k) & UInt64(1)) << of
+                    end
+                end
                 nothing
+            end
+        else
+            for k in 0:(cnt - 1)
+                j = j0 + k + 1
+                ntuple(Val(S)) do i
+                    @inline
+                    @inbounds mats[i][rows[i], j] ⊻= ((flips[i] >> k) & UInt64(1)) << offs[i]
+                    nothing
+                end
             end
         end
         _bit_planes_update!(P, C, w, v, o, l, h, Val(K))

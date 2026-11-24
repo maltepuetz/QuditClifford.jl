@@ -138,9 +138,10 @@ machine is in `benchmark/storage/README.md`.
 
 Julia compiles each method on its first call. The package ships a precompile
 workload that runs construction, gates, random sampling, measurements,
-channels, expectation values and the common entanglement measures for both
-tableau types at `d = 2` and `d = 3`, so these first calls are fast in a new
-session. The workload uses PrecompileTools and can be switched off through its
-preferences. Other argument types, such as a tableau built with
-`eltype = Int` or `eltype = Bits`, a different integer type or an unusual
+channels, expectation values, [`stabilizer_matrix`](@ref) and the common
+entanglement measures for both tableau types at `d = 2` and `d = 3`, and at
+`d = 2` also on packed storage (`eltype = Bits`) in both layouts, so these
+first calls are fast in a new session. The workload uses PrecompileTools and
+can be switched off through its preferences. Other argument types, such as a
+tableau built with `eltype = Int`, a different integer type or an unusual
 Pauli representation, compile on first use as usual.

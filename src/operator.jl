@@ -637,6 +637,11 @@ end
 # Overwrite generator `i` of `b` with the exponents `xz[1:2n]` mod 2.
 @inline function _set_bit_generator!(b::BitBlock, i::Int, xz::AbstractVector{<:Integer}, n::Int)
     _zero_gen!(b, i)
+    return _set_bit_exponents!(b, i, xz, n)
+end
+
+# Set the odd exponents of `xz[1:2n]` in generator `i` of `b`, which is zero.
+@inline function _set_bit_exponents!(b::BitBlock, i::Int, xz::AbstractVector{<:Integer}, n::Int)
     @inbounds for q in 1:n
         isodd(xz[q]) && _xflip!(b, UInt64(1), q, i)
         isodd(xz[n+q]) && _zflip!(b, UInt64(1), q, i)

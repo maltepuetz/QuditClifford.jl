@@ -161,14 +161,17 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     _check_eltype(eltype, d)
     _check_layout(layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    # The input is read entry by entry with 1-based indices.
+    Base.require_one_based_indexing(tableau)
     shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
     ))
 
     # The build step copies the generators into the tableau's own arrays and
-    # never writes to its input.
-    tab_in = shape.transpose ? permutedims(tableau) : tableau
+    # never writes to its input. A transposed input is read through a lazy
+    # `transpose`, entry by entry, with no copy.
+    tab_in = shape.transpose ? transpose(tableau) : tableau
     eltype === Bits && return _packed_matrix_tableau(StabilizerTableau, d, shape, tab_in,
                                                      inversemod, check, layout)
 
@@ -233,18 +236,31 @@ end
 _generator_storage(pre::Tuple{_GMBlock, Vector{Int}}, ::Type{E}, d::Int, n::Int, m::Int,
                    storephase::Bool) where {E} = pre
 
-# A raw `(2n + storephase) × n` or `(2n + storephase) × m` matrix is copied into
-# fresh arrays: entries reduced mod `d` in `Int` and then stored as `E`, phases
-# reduced mod `phase_modulus(d)`, and the columns `m+1:n` zero whatever the
-# input holds there.
+# A raw `(2n + storephase) × n` or `(2n + storephase) × m` matrix of any integer
+# type is copied into fresh arrays: entries reduced mod `d` and stored as `E`,
+# phases reduced mod `phase_modulus(d)`, and the columns `m+1:n` zero whatever
+# the input holds there.
 function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d::Int, n::Int, m::Int,
                             storephase::Bool) where {E}
     S = _generator_input(tableau_in, n, m, storephase)
-    src, src_phase = _stacked_views(S, n, storephase)
-    sx, sz = src.x, src.z
     x, z = _stab_blocks(E, n)
     phase = zeros(Int, storephase ? n : 0)
+    _load_generator_entries!(x, z, S, n, m, d)
+    if storephase
+        d_phase = phase_modulus(d)
+        @inbounds for j in 1:m
+            phase[j] = _reduced_entry(Int, S[2n + 1, j], d_phase)
+        end
+    end
+    return XZBlock{GeneratorMajor}(x, z), phase
+end
 
+# The X and Z entries of generators `1:m` of the raw matrix `S`, reduced mod
+# `d`, into the zero blocks `x`, `z`.
+function _load_generator_entries!(x::_BlockMatrix{E}, z::_BlockMatrix{E}, S::Matrix{Int},
+                                  n::Int, m::Int, d::Int) where {E}
+    src, _ = _stacked_views(S, n, false)
+    sx, sz = src.x, src.z
     # The `m > 0` guard (so also n > 0) is load-bearing: `@turbo` does not
     # terminate on an empty nest of this shape. `E(r)` is exact: `0 ≤ r < d`
     # and `E` holds every residue mod `d`.
@@ -252,23 +268,29 @@ function _generator_storage(tableau_in::AbstractMatrix{<:Integer}, ::Type{E}, d:
         x[q, j] = E(mod(sx[q, j], d))
         z[q, j] = E(mod(sz[q, j], d))
     end
-    if storephase
-        d_phase = phase_modulus(d)
-        @inbounds for j in 1:m
-            phase[j] = mod(src_phase[j], d_phase)
-        end
-    end
-    return XZBlock{GeneratorMajor}(x, z), phase
+    return nothing
 end
 
-# The raw generator matrix `tableau_in` as a `Matrix{Int}` after checking its
-# shape: `2n + storephase` rows, and `n` or `m` columns.
+# Any other integer matrix, or a transposed input, entry by entry in the
+# input's own type, so neither a converted copy nor an entry outside `Int`
+# (a `BigInt`, a `UInt64` above `typemax(Int)`) gets in the way.
+function _load_generator_entries!(x::_BlockMatrix{E}, z::_BlockMatrix{E}, S::AbstractMatrix{<:Integer},
+                                  n::Int, m::Int, d::Int) where {E}
+    @inbounds for j in 1:m, q in 1:n
+        x[q, j] = _reduced_entry(E, S[q, j], d)
+        z[q, j] = _reduced_entry(E, S[n + q, j], d)
+    end
+    return nothing
+end
+
+# The raw generator matrix `tableau_in` after checking its shape:
+# `2n + storephase` rows, and `n` or `m` columns.
 function _generator_input(tableau_in::AbstractMatrix{<:Integer}, n::Int, m::Int, storephase::Bool)
     nrows = 2n + (storephase ? 1 : 0)
     size(tableau_in, 1) == nrows || throw(ArgumentError("Tableau row count must be 2n (+1 if storephase=true)."))
     size(tableau_in, 2) == n || size(tableau_in, 2) == m ||
         throw(ArgumentError("Tableau must have either n columns (capacity) or m columns (active generators)."))
-    return tableau_in isa Matrix{Int} ? tableau_in : Matrix{Int}(tableau_in)
+    return tableau_in
 end
 
 @inline function _layout_from_dims(dim_nrows::Int, dim_cols::Int, m::Union{Int,Nothing}, storephase::Union{Bool,Nothing})
@@ -346,8 +368,12 @@ function reset!(tab::StabilizerTableau; state::Symbol=:mixed, basis=:Z)
     return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
 end
 
-function _reset_preset!(tab::StabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec)
-    m = _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+# `zeroed`: the block and the phase are already zero, as in a tableau just
+# allocated, so they are not cleared again.
+function _reset_preset!(tab::StabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec,
+                        zeroed::Bool = false)
+    m = zeroed ? _fill_preset!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase) :
+                 _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
     return tab

@@ -20,3 +20,8 @@ coverage:
         # hit, or the `end` of a `@simd` loop, reported with zero hits (0.52%
         # of the lines of a 1345-line diff).
         threshold: 0.5%
+ignore:
+  # The precompile workload runs only while the package image is generated,
+  # never in the instrumented test processes, so every line of it reads as
+  # missed.
+  - "src/precompile.jl"

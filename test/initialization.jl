@@ -1,4 +1,5 @@
 using Test
+using Random
 using QuditClifford
 
 # `reset!` measured behind a function barrier, so the dynamic keyword call of
@@ -544,6 +545,70 @@ end
             @test tab.n == tab.m == 0
             @test size(stabilizer_matrix(tab)) == (sp ? 1 : 0, 0)
             @test tab.storephase == sp
+        end
+    end
+end
+
+# The raw-matrix constructors read any integer matrix entry by entry in its own
+# type: narrow and signed inputs, entries beyond `Int` (`BigInt`, `UInt64`
+# above `typemax(Int)`) and transposed inputs are reduced like the `Int`
+# matrix of their residues, and no converted or transposed copy of the input
+# is made.
+@testset "Raw-matrix constructors reduce any integer input in place" begin
+    for d in (2, 3, 257), TT in (StabilizerTableau, DestabilizerTableau)
+        n = 6
+        Es = d == 2 ? (UInt8, Int, Bits) : d == 3 ? (UInt8, UInt16, Int) : (UInt16, Int)
+        r = StabilizerTableau(d, n; eltype = Int, layout = :generator)
+        random_state!(Xoshiro(d + n), r)
+        S = stabilizer_matrix(r)
+        pm = QuditClifford.phase_modulus(d)
+        off = rand(Xoshiro(d), -3:3, size(S))
+        # Each input together with the `Int` matrix of its residues.
+        inputs = Any[
+            S .+ d .* off,
+            (d < 60 ? Int8 : Int16).(S) .- (d < 60 ? Int8 : Int16)(2d),
+            UInt8.(S .% 256),
+            BigInt.(S) .+ big(d * pm)^40 .* off,
+            UInt64.(S) .+ UInt64(d * pm) * (typemax(UInt64) ÷ UInt64(2d * pm)),
+            permutedims(BigInt.(S) .- big(d * pm)^30),
+            permutedims(UInt8.(S .% 256)),
+        ]
+        for inp in inputs, E in Es, layout in (:generator, :qudit)
+            G = size(inp) == size(S) ? inp : permutedims(inp)
+            ref = vcat(Int.(mod.(G[1:2n, :], d)), Int.(mod.(G[2n+1:2n+1, :], pm)))
+            t = TT(d, inp; eltype = E, layout)
+            @test stabilizer_matrix(t) == ref
+            @test t == TT(d, ref; eltype = E, layout)
+        end
+    end
+    # No `Int` or transposed copy: a narrow input costs about the tableau.
+    n = 256
+    r = StabilizerTableau(2, n)
+    random_state!(Xoshiro(n), r)
+    S8 = UInt8.(stabilizer_matrix(r))
+    for TT in (StabilizerTableau, DestabilizerTableau), E in (UInt8, Bits), inp in (S8, permutedims(S8))
+        f() = TT(2, inp; eltype = E, check = false)
+        f()
+        @test @allocated(f()) < 1.5 * Base.summarysize(f())
+    end
+end
+
+# A matrix indexed from 0, for the test below.
+struct init_ZeroBased{T} <: AbstractMatrix{T}
+    A::Matrix{T}
+end
+Base.size(o::init_ZeroBased) = size(o.A)
+Base.axes(o::init_ZeroBased) = (0:(size(o.A, 1) - 1), 0:(size(o.A, 2) - 1))
+Base.getindex(o::init_ZeroBased, i::Int, j::Int) = o.A[i + 1, j + 1]
+
+# The raw-matrix constructors read their input with 1-based indices, so an
+# offset-indexed input is rejected instead of being read out of bounds.
+@testset "Raw-matrix constructors reject offset-indexed input" begin
+    for d in (2, 3), TT in (StabilizerTableau, DestabilizerTableau)
+        S = stabilizer_matrix(TT(d, 3; state = :ghz))
+        for E in (d == 2 ? (UInt8, Int, Bits) : (UInt8, Int)), layout in (:generator, :qudit),
+            inp in (init_ZeroBased(S), init_ZeroBased(permutedims(S)))
+            @test_throws ArgumentError TT(d, inp; eltype = E, layout)
         end
     end
 end

@@ -100,7 +100,7 @@ end
 #   a == 1    subtract, then one conditional add        (no multiply)
 #   a == d-1  -(d-1) == +1 (mod d): add, then one conditional subtract
 #   Barrett   multiply, shift-reduce, then conditional add
-#   otherwise the divide-twice loop
+#   otherwise one `mod` per entry of `dst + (d - a)*src`
 #
 # The two multiply-free tiers cover every multiplier that occurs at d = 2 and
 # d = 3: in `canonicalize!` the multiplier is a nonzero tableau entry, and in
@@ -137,8 +137,12 @@ end
                 dst[i] = r + ifelse(r < 0, d, 0)
             end
         else
+            # dst - a*src == dst + (d - a)*src (mod d). The sum lies in
+            # [0, (d-1) + (d-1)^2], inside `Int` under the envelope above, so
+            # one `mod` is exact.
+            b = d - a
             @inbounds @simd for i in eachindex(dst)
-                dst[i] = mod(dst[i] - mod(a * src[i], d), d)
+                dst[i] = mod(dst[i] + b * src[i], d)
             end
         end
     end
@@ -173,8 +177,10 @@ end
                 dst[i] = r - ifelse(r >= d, d, 0)
             end
         else
+            # In [0, (d-1) + (d-1)^2], inside `Int` under the envelope, so one
+            # `mod` is exact.
             @inbounds @simd for i in eachindex(dst)
-                dst[i] = mod(dst[i] + mod(a * src[i], d), d)
+                dst[i] = mod(dst[i] + a * src[i], d)
             end
         end
     end
