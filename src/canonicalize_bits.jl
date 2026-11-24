@@ -58,8 +58,8 @@ end
 
 # `canonicalize!` on a packed qudit-major tableau: switched to generator-major,
 # canonicalized by the kernel, and switched back, also when the kernel throws
-# or the call is interrupted, so the tableau never stays generator-major. The
-# switches allocate nothing and leave the phase and cache planes alone.
+# or the call is interrupted during it. The switches allocate nothing and
+# leave the phase and cache planes alone.
 function _canonicalize_bits_switched!(tab::_BitTableau)
     generator_major!(tab)
     try

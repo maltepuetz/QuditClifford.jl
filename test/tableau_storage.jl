@@ -442,7 +442,8 @@ end
 @testset "no raw block access outside the block and kernel files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
     # Explicit layout construction: the block files (bit_block.jl for its
-    # unpacked copies) and the storage file (the canonical copies behind `==`).
+    # unpacked copies) and the storage file (construction and the canonical
+    # copies behind `==`).
     # `BitBlock`s are built only in the bit block file and the storage file.
     construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl")
     # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
