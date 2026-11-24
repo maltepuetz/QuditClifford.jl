@@ -153,6 +153,56 @@ const TIER_COUNTS = zeros(Int, 4)
         end
     end
 
+    @testset "Storage leaves run on the storage they name" begin
+        empty_suite = BenchmarkGroup()
+        register_storage_group!(empty_suite, (StabilizerTableau,), (8,); api = Module(:NoStorageAPI))
+        @test isempty(empty_suite)
+
+        types = (StabilizerTableau, DestabilizerTableau)
+        n = 70 # two words per packed column
+        suite = BenchmarkGroup()
+        register_storage_group!(suite, types, (n,))
+        @test Set(keys(suite["storage"])) ==
+              Set(["$(nameof(T))/$name/d=$d/n=$n" for T in types, (name, d, _) in STORAGE_KINDS])
+        for (_, group) in suite["storage"]
+            @test Set(keys(group)) == Set(["apply!/fourier", "apply!/sum", "measure!/random-Z", "canonicalize!"])
+            for (_, leaf) in group
+                trial = run(leaf; samples = 3, evals = 1, seconds = 0.05)
+                @test !isempty(trial.times)
+                @test trial.allocs == 0
+            end
+        end
+
+        for T in types, (name, d, kw) in STORAGE_KINDS
+            kwr = _wl_storage_keywords(kw)
+            # The constructor keywords give the storage the row names.
+            tab = T(d, n; state = :ghz, kwr...)
+            @test tableau_layout(tab) === kw.layout
+            @test tableau_eltype(tab) === (kw.eltype === :Bits ? Bits : UInt8)
+            @test !tab.iscanonical
+            # The measured state is the same pure state in every storage, and
+            # the measured Z anticommutes with it: the random branch.
+            S = storage_state(T, d, n, kwr)
+            R = storage_state(T, d, n, (eltype = UInt8, layout = :generator))
+            @test tableau_layout(S) === kw.layout && tableau_eltype(S) === tableau_eltype(tab)
+            @test S.m == n && _wl_stab(S) == _wl_stab(R)
+            sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
+            op = first_anticommuting(S, [SinglePauli(q, 0, 1) for q in sites])
+            @test !_wl_commutes(S, op)
+            # Both gates change the generators of the :ghz state, and their
+            # order brings it back, so the repeated evaluations of a gate leaf
+            # cycle through the same few states.
+            s1, s2 = spread_sites(n)
+            for (g, order) in ((Fourier(s1), 4), (SUM(s1, s2, 1), d))
+                t = copy(tab)
+                apply!(t, g)
+                @test _wl_stab(t) != _wl_stab(tab)
+                foreach(_ -> apply!(t, g), 2:order)
+                @test _wl_stab(t) == _wl_stab(tab)
+            end
+        end
+    end
+
     @testset "Purification is deterministic and reaches full rank" begin
         h1, l1 = purification_trajectory(d = 2, n = 8, seed = 42)
         h2, l2 = purification_trajectory(d = 2, n = 8, seed = 42)

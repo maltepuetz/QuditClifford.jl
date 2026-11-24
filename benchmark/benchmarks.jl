@@ -21,7 +21,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~205 s per revision
+#   ci     n in (64, 256)      the PR job; ~220 s per revision
 #   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
 #
 # d = 5 is in `ci` because it is the smallest prime whose dense leaves take a
@@ -121,6 +121,12 @@ register_monitored_measure_group!(SUITE, TYPES, (2, 3, 31),
 register_purifying_measure_group!(SUITE, TYPES, (2, 3, 31),
                                   PROFILE == "smoke" ? (8,) :
                                   PROFILE == "ci" ? (254,) : (254, 1022))
+
+# ----------------------------------------------------------------- storage
+# Gates, a random-outcome Z measurement and canonicalize! on packed storage
+# (d = 2) and in the qudit-major layout (d = 2 and 3, unpacked and packed), the
+# kernels the spine never reaches. The largest spine size only.
+register_storage_group!(SUITE, TYPES, (last(CONFIG.ns),))
 
 # ------------------------------------------------------------------ probes
 # One representative configuration per secondary axis. Each probe is its own

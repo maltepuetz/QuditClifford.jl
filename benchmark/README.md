@@ -89,11 +89,11 @@ deviation is definitely noise (this catches the very cheapest kernels, where
 
 | profile | sizes | dimensions | leaves | ~time/revision | used by |
 | --- | --- | --- | --- | --- | --- |
-| `smoke` | n = 8 | 2, 3 | 378 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
-| `ci` | n ∈ {64, 256} | 2, 3, 5 | 595 | ~205 s (189 s of sample budget plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
-| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048}; `monitored` and `purifying` n ∈ {254, 1022} | 2, 3, 5, 7 | 1231 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
+| `smoke` | n = 8 | 2, 3 | 410 | ~40 s | local sanity check; one sample of each leaf in the self-test job |
+| `ci` | n ∈ {64, 256} | 2, 3, 5 | 627 | ~220 s (224 s of sample budget, a cap that fast leaves do not reach, plus warmup and suite construction; at 477 leaves a local run measured 145 s of samples and 18 s of warmup) | the pull-request job |
+| `full` | n ∈ {64, 256, 512}; entropy profiles also n = 128; `rank` n ∈ {256, 1024, 2048}; `monitored` and `purifying` n ∈ {254, 1022} | 2, 3, 5, 7 | 1263 | ~30 min (budget sum plus ~5 min to build the `rank` fixtures; not measured directly) | `workflow_dispatch`; adds the Ising, purification and monitored random circuits |
 
-The `dense`, `channels`, `information`, `gates` and `tableau` groups use the
+The `dense`, `channels`, `information`, `gates`, `tableau` and `storage` groups use the
 largest `n` of the profile and the `modulus` group `n = 64` (`8` in `smoke`).
 The `rank` group runs `d = 2, 3, 31` in every profile, at `n = 8` in `smoke`
 and `n = 256` in `ci`. The `monitored` and `purifying` groups run the same
@@ -190,6 +190,23 @@ mixed state after 4 layers of the same circuit, with roughly `0.4n`
 generators, where most measurements append a generator. `measure!/append-Z`
 and `measure!/append-ZZ` take that branch, and `layer` times one more layer.
 Sizes, skip rule and checks are those of `monitored`.
+
+The `storage` group times the kernels that only packed storage and the
+qudit-major layout reach, at the largest `n` of the profile, for both tableau
+types: `apply!/fourier` and `apply!/sum` on a `:ghz` state (100 evaluations
+per sample: a packed qudit-major gate takes 15–40 ns at `n = 256`; both gates
+have finite order, so the state cycles and needs no restore),
+`measure!/random-Z` (a `Z` at the first site from the middle of the chain where
+the outcome is random, on the state left by 64 layers of the monitored circuit
+at `p = 0.15`, run in that storage) and `canonicalize!` from `:ghz`. The
+storage kinds (`STORAGE_KINDS` in `workloads.jl`) are `Bits/generator-major`
+at `d = 2`, `UInt8/qudit-major` at `d = 2` and `d = 3`, and
+`Bits/qudit-major` at `d = 2`; every other group runs the shipped storage,
+generator-major `UInt8`. A baseline without `qudit_major!` or
+`random_clifford!` skips the group, and one without `Bits` the packed kinds;
+`test_workloads.jl` checks the keys, the storage of each fixture, that every
+storage measures the same state on the random branch, and that no leaf
+allocates.
 
 The spine is eight operations × {`StabilizerTableau`, `DestabilizerTableau`} ×
 {d = 2, d = 3, d = 5} × two sizes: `construct`, the three `measure!` branches

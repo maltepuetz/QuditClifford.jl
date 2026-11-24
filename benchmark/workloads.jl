@@ -77,11 +77,12 @@ struct TableauSnapshot{TT}
     iscanonical::Bool
 end
 
+# `Vector{Int}` copies the cache, which on a packed tableau is a `_BitPlanes`.
 snapshot(tab::StabilizerTableau) = TableauSnapshot(
-    tab, copy(_wl_stab(tab)), nothing, copy(tab.xdotz_cache), tab.m, tab.iscanonical)
+    tab, copy(_wl_stab(tab)), nothing, Vector{Int}(tab.xdotz_cache), tab.m, tab.iscanonical)
 
 snapshot(tab::DestabilizerTableau) = TableauSnapshot(
-    tab, copy(_wl_stab(tab)), copy(_wl_destab(tab)), copy(tab.xdotz_cache), tab.m, tab.iscanonical)
+    tab, copy(_wl_stab(tab)), copy(_wl_destab(tab)), Vector{Int}(tab.xdotz_cache), tab.m, tab.iscanonical)
 
 """Put the tableau back into the state it had when the snapshot was taken."""
 function restore!(s::TableauSnapshot)
@@ -1627,6 +1628,96 @@ function register_random_group!(suite, types, ds, ns; ks = (1, 2, 8),
             suite["circuit"]["monitored/d=2/n=$nn"] =
                 @benchmarkable(monitored_trajectory(d = 2, n = $nn, seed = 1234), evals = 1)
         end
+    end
+    return suite
+end
+
+# ------------------------------------------------------------ storage kinds
+#
+# The spine runs every tableau in the shipped storage: generator-major, one
+# byte per entry. Packed `Bits` storage (d = 2) and the qudit-major layout
+# have kernels of their own, which these rows time.
+
+"""
+The storage configurations of [`storage_group`](@ref), as
+`(name, d, keywords)`: packed generator-major at d = 2, unpacked qudit-major at
+d = 2 and 3, and packed qudit-major at d = 2. The keywords go to the tableau
+constructor.
+"""
+const STORAGE_KINDS = (
+    ("Bits/generator-major", 2, (eltype = :Bits, layout = :generator)),
+    ("UInt8/qudit-major", 2, (eltype = :UInt8, layout = :qudit)),
+    ("UInt8/qudit-major", 3, (eltype = :UInt8, layout = :qudit)),
+    ("Bits/qudit-major", 2, (eltype = :Bits, layout = :qudit)),
+)
+
+# The constructor keywords of a storage kind, with the element type resolved
+# in `api` (a baseline may lack `Bits`).
+_wl_storage_keywords(kw; api::Module = QuditClifford) =
+    (eltype = kw.eltype === :Bits ? getfield(api, :Bits) : UInt8, layout = kw.layout)
+
+# Whether `api` has the storage kind's element type and layouts.
+_wl_has_storage(kw; api::Module = QuditClifford) =
+    isdefined(api, :qudit_major!) && (kw.eltype !== :Bits || isdefined(api, :Bits))
+
+"""
+    storage_state(T, d, n, kw; seed = 20261119)
+
+The state of the `measure!/random-Z` leaf of [`storage_group`](@ref): a `:Z`
+product tableau in the storage `kw`, after 64 layers of the monitored
+brickwork circuit at `p = 0.15` (as [`monitored_measure_group`](@ref) uses),
+run on that tableau itself. Every storage gives the same generators.
+"""
+function storage_state(T, d::Int, n::Int, kw; seed::Int = 20261119)
+    rng = Random.Xoshiro(seed)
+    tab = T(d, n; state = :Z, kw...)
+    bonds = [QuditClifford.random_clifford(rng, d, [q, mod1(q + 1, n)]) for q in 1:n]
+    return monitored_layers!(tab, bonds, rng, 64; p = 0.15)
+end
+
+"""
+    storage_group(; d, n, T, kw)
+
+The four operations whose kernels differ by storage, on a tableau built with
+the constructor keywords `kw`: a one-qudit gate (`Fourier`) and a two-qudit
+gate (`SUM`) on a `:ghz` state, `READONLY_EVALS` evaluations per sample, a
+random-outcome `Z` measurement on
+[`storage_state`](@ref), and `canonicalize!` from `:ghz`.
+"""
+function storage_group(; d::Int, n::Int, T, kw)
+    mk = (state; basis = :Z) -> T(d, n; state = state, basis = basis, kw...)
+    s1, s2 = spread_sites(n)
+    g = BenchmarkGroup()
+    # A packed qudit-major gate touches a few words and takes nanoseconds, far
+    # below the timer tick of a single evaluation. Both gates have finite order
+    # (`Fourier^4 = SUM^d = 1`), so repeated evaluations cycle through at most
+    # four states of the same structure and need no restore.
+    for (key, gate) in (("apply!/fourier", Fourier(s1)), ("apply!/sum", SUM(s1, s2, 1)))
+        tab = mk(:ghz)
+        g[key] = @benchmarkable(apply!($tab, $gate), evals = READONLY_EVALS)
+    end
+    tab = storage_state(T, d, n, kw)
+    sites = [mod1(n ÷ 2 + k, n) for k in 0:(n - 1)]
+    g["measure!/random-Z"] = bench_measure_on(tab, first_anticommuting(tab, [SinglePauli(q, 0, 1) for q in sites]))
+    g["canonicalize!"] = bench_canonicalize(mk)
+    return g
+end
+
+"""
+    register_storage_group!(suite, types, ns; api = QuditClifford)
+
+One [`storage_group`](@ref) per tableau type, storage kind in
+[`STORAGE_KINDS`](@ref) and `n`, under `suite["storage"]`. A baseline without
+the layout switch skips the group, and one without `Bits` the packed kinds;
+without `random_clifford!` the measurement state cannot be built, so the
+group is skipped too.
+"""
+function register_storage_group!(suite, types, ns; api::Module = QuditClifford)
+    isdefined(api, :random_clifford!) || return suite
+    for T in types, (name, d, kw) in STORAGE_KINDS, n in ns
+        _wl_has_storage(kw; api) || continue
+        suite["storage"]["$(nameof(T))/$name/d=$d/n=$n"] =
+            storage_group(; d, n, T, kw = _wl_storage_keywords(kw; api))
     end
     return suite
 end

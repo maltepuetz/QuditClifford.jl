@@ -40,11 +40,13 @@ envlist(k, default) = String.(split(get(ENV, k, default), ','; keepempty = false
 # Ising chain with `entanglement_profile` after each layer; `monitored_p05` and
 # `monitored_p15` are brickwork layers of random two-qudit gates with Z
 # measurements at rate p; `brickwork` is the same layers without measurements.
+# `==` compares with a copy, `==_other_basis` with a canonicalized copy.
 const ALL_OPS = ("gate1", "gate2", "apply_dense4", "brickwork", "monitored_p05", "monitored_p15",
                  "measZ_random", "measZ_det", "measZ_append", "measZZ_random", "measX_random", "ising",
                  "random_state", "switch", "canonicalize", "expect", "expect_int", "dephase",
                  "traceout", "reset_sites", "entropy_half", "entropy_profile", "mutual_info", "cmi",
-                 "tmi", "negativity", "is_pure_verify", "copy!", "==", "stabilizer_matrix")
+                 "tmi", "negativity", "is_pure_verify", "copy!", "==", "==_other_basis", "hash",
+                 "stabilizer_matrix")
 
 const LAYOUTS = Symbol.(envlist("QC_BENCH_LAYOUTS", "generator,qudit"))
 const ELTYPES = envlist("QC_BENCH_ELTYPES", "default,Bits")
@@ -68,8 +70,10 @@ function median!(v::Vector{Float64})
 end
 
 # Median ns per op over fresh states from `mk` (not timed), and the rep count:
-# a first call (also a warm-up) sets it from the budget, within `minreps:maxreps`.
+# after an untimed warm-up call (which compiles), a timed call sets it from the
+# budget, within `minreps:maxreps`.
 function timeit(f!, mk, nops; maxreps = 41, minreps = 5)
+    f!(mk())
     s = mk()
     t0 = time_ns(); f!(s); t1 = time_ns() - t0
     reps = clamp(round(Int, BUDGET_NS / max(t1, 1)), t1 > 1e9 ? 3 : minreps, maxreps)
@@ -253,6 +257,13 @@ function run_case!(io, T, tn, layout, eltype, d, n)
         other = copy(tab0)
         rec!("==", timeit(t -> t == other, () -> tab0, 1))
     end
+    # the same state in another generator basis, so `==` compares canonical copies
+    if want("==_other_basis")
+        other = copy(tab0)
+        canonicalize!(other)
+        rec!("==_other_basis", timeit(t -> t == other, () -> tab0, 1))
+    end
+    want("hash") && rec!("hash", timeit(hash, () -> tab0, 1))
     want("stabilizer_matrix") && rec!("stabilizer_matrix", timeit(stabilizer_matrix, () -> tab0, 1))
 end
 
