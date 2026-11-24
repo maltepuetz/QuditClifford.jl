@@ -42,6 +42,12 @@ dependency bump — carries the `skip-changelog` label instead.
   enough to stay exact on 32-bit hosts, where an `Int` sum could wrap at
   large `n` and `d`.
   Not measured on x86 or on 32-bit hosts.
+- `is_pure(tab; verify = true)` and the commutation check of the raw-matrix
+  constructors (`check = true`) are 4.9–7.9 times faster on generator-major
+  `UInt8` storage, with identical results, including which pair of
+  generators an error names (d = 3 and 31, n = 512 and 1024, M3 Pro). The
+  products of the commutation check now vectorize. Qudit-major and `UInt16`
+  storage are unchanged. Not measured on x86 or on 32-bit hosts.
 
 ## 0.5.0 - 2026-11-24
 
