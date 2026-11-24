@@ -9,22 +9,15 @@ concurrency:
 jobs:
   debug:
     # @turbo is removed from every source file except `keep`.
-    name: ${{ matrix.ref && 'main' || 'head' }} keep ${{ matrix.keep }} | ${{ matrix.rep }}
+    name: fixed | ${{ matrix.file }} | ${{ matrix.rep }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        keep: [canonicalize.jl, destabilizer_tableau.jl, span_decomposition.jl, xz_block.jl, canonicalize_qudit_major.jl, entanglement_negativity.jl, rank_workspaces.jl, state_expansion.jl]
-        rep: [1, 2, 3, 4, 5]
-        ref: ['']
-        include:
-          - {keep: ALL, rep: 1, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {keep: ALL, rep: 2, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {keep: ALL, rep: 3, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {keep: ALL, rep: 4, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {keep: ALL, rep: 5, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
-          - {keep: ALL, rep: 6, ref: e4dfc66b1c5d779618fcc3d700e25c6e95e1a078}
+        keep: [ALL]
+        file: [storage_types.jl, bits.jl]
+        rep: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - name: Need AVX-512
         id: cpu
@@ -60,5 +53,5 @@ jobs:
           julia --project=. --color=no --check-bounds=yes -g2 -e '
             using Test
             @testset "debug" begin
-                include(joinpath(pwd(), "test", "storage_types.jl"))
+                include(joinpath(pwd(), "test", "${{ matrix.file }}"))
             end'
