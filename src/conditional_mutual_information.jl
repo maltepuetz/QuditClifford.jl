@@ -66,16 +66,7 @@ function conditional_mutual_information(
     B::AbstractVector,
     C::AbstractVector,
 )
-    # Marking writes c_workspace while reading the subsystems, so one stored
-    # there is copied first. None is read after marking.
-    A = Base.unalias(tab.c_workspace, A)
-    B = Base.unalias(tab.c_workspace, B)
-    C = Base.unalias(tab.c_workspace, C)
-    fill!(tab.c_workspace, 0)
-    _mark_subsystem!(tab, A, 1, "subsystem A")
-    _mark_subsystem!(tab, B, 2, "subsystem B")
-    _mark_subsystem!(tab, C, 3, "subsystem C")
-    NA, NB, NC = Int(length(A)), Int(length(B)), Int(length(C))
+    NA, NB, NC = _mark_subsystems!(tab, (A, B, C))
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)
@@ -89,21 +80,7 @@ function conditional_mutual_information(
     # Rows are stacked as [D; X; Y] with Y the smaller of A and B, since Y is
     # eliminated twice.
     x, y = NA >= NB ? (1, 2) : (2, 1)
-    return _cmi_from_groups!(tab, _layout_marker(tab), first, counts, x, y)
-end
-
-function _cmi_from_groups!(
-    tab::AbstractTableau,
-    L::TableauLayout,
-    first::NTuple{4,Int},
-    counts::NTuple{4,Int},
-    x::Int,
-    y::Int,
-)
-    if tab.d == 2
-        return _cmi_from_groups!(tab, L, tab.bit_workspace, first, counts, x, y)
-    end
-    return _cmi_from_groups!(tab, L, tab.rank_workspace, first, counts, x, y)
+    return _cmi_from_groups!(tab, _layout_marker(tab), _rank_workspace(tab), first, counts, x, y)
 end
 
 function _cmi_from_groups!(

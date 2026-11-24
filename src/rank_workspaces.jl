@@ -9,10 +9,10 @@
 #   d >= 3      `rank_workspace`, 2n x n of the storage element type `E`,
 #               eliminated with the primitives in src/modular.jl
 #
-# Every entry point branches on `d == 2` and passes the selected workspace to
-# one routine. Each elimination streams the remaining matrix once per pivot,
-# so the cost at large n is set by how many bytes an entry takes, not by the
-# arithmetic.
+# Every entry point passes `_rank_workspace(tab)`, the workspace `d` selects,
+# to one routine; the call union-splits over the two matrix types. Each
+# elimination streams the remaining matrix once per pivot, so the cost at
+# large n is set by how many bytes an entry takes, not by the arithmetic.
 
 # 2n x n of `E` for d >= 3, else empty.
 _storage_rank_workspace(::Type{E}, d::Int, n::Int) where {E} =
@@ -35,10 +35,6 @@ _bit_rank_workspace(d::Int, n::Int) =
     v = Base.unalias(tab.bit_workspace, v)
     return Base.unalias(tab.rank_workspace, v)
 end
-
-# `dst .= mod.(dst .- a .* src, d)` for any storage element type.
-@inline _submul_col!(dst::AbstractVector, src::AbstractVector, a::Int, d::Int) =
-    submul_mod!(dst, src, a, d)
 
 # Exchange columns `c` and `j` of `A` on `rows`.
 @inline function _swap_cols!(A::AbstractMatrix, rows::UnitRange{Int}, c::Int, j::Int)

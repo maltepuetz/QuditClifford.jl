@@ -51,15 +51,8 @@ julia> mutual_information(ghz, [1])             # twice entanglement_entropy(ghz
 ```
 """
 function mutual_information(tab::AbstractTableau, A::AbstractVector, B::AbstractVector)
-    # Marking writes c_workspace while reading A and B, so a subsystem stored
-    # there is copied first. Neither is read after marking.
-    A = Base.unalias(tab.c_workspace, A)
-    B = Base.unalias(tab.c_workspace, B)
-    fill!(tab.c_workspace, 0)
-    _mark_subsystem!(tab, A, 1, "subsystem A")
-    _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _mutual_information_from_mask!(tab, _layout_marker(tab), Int(length(A)),
-                                          Int(length(B)))
+    NA, NB = _mark_subsystems!(tab, (A, B))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), NA, NB)
 end
 
 function mutual_information(tab::AbstractTableau, A::AbstractVector)
@@ -135,30 +128,11 @@ function tripartite_information(
     B::AbstractVector,
     C::AbstractVector,
 )
-    A = Base.unalias(tab.c_workspace, A)
-    B = Base.unalias(tab.c_workspace, B)
-    C = Base.unalias(tab.c_workspace, C)
-    fill!(tab.c_workspace, 0)
-    _mark_subsystem!(tab, A, 1, "subsystem A")
-    _mark_subsystem!(tab, B, 2, "subsystem B")
-    _mark_subsystem!(tab, C, 3, "subsystem C")
-    NA, NB, NC = Int(length(A)), Int(length(B)), Int(length(C))
+    NA, NB, NC = _mark_subsystems!(tab, (A, B, C))
     (NA == 0 || NB == 0 || NC == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)
-    return _tripartite_from_groups!(tab, _layout_marker(tab), first, counts)
-end
-
-function _tripartite_from_groups!(
-    tab::AbstractTableau,
-    L::TableauLayout,
-    first::NTuple{4,Int},
-    counts::NTuple{4,Int},
-)
-    if tab.d == 2
-        return _tripartite_from_groups!(tab, L, tab.bit_workspace, first, counts)
-    end
-    return _tripartite_from_groups!(tab, L, tab.rank_workspace, first, counts)
+    return _tripartite_from_groups!(tab, _layout_marker(tab), _rank_workspace(tab), first, counts)
 end
 
 # `first` and `counts` describe the site list built by `_group_sites_by_label!`
@@ -192,10 +166,7 @@ end
 # site. `NA` and `NB` are the sizes of A and B.
 function _mutual_information_from_mask!(tab::AbstractTableau, L::TableauLayout, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
-    if tab.d == 2
-        return _mutual_information_from_mask!(tab, L, tab.bit_workspace, NA, NB)
-    end
-    return _mutual_information_from_mask!(tab, L, tab.rank_workspace, NA, NB)
+    return _mutual_information_from_mask!(tab, L, _rank_workspace(tab), NA, NB)
 end
 
 function _mutual_information_from_mask!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix,

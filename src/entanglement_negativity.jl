@@ -73,14 +73,8 @@ function entanglement_negativity(
     A::AbstractVector,
     B::AbstractVector,
 )
-    # Marking writes c_workspace while reading A and B, so a subsystem stored
-    # there is copied first. Neither is read after marking.
-    A = Base.unalias(tab.c_workspace, A)
-    B = Base.unalias(tab.c_workspace, B)
-    fill!(tab.c_workspace, 0)
-    _mark_subsystem!(tab, A, 1, "subsystem A")
-    _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _negativity_from_mask!(tab, _layout_marker(tab), Int(length(A)), Int(length(B)))
+    NA, NB = _mark_subsystems!(tab, (A, B))
+    return _negativity_from_mask!(tab, _layout_marker(tab), NA, NB)
 end
 
 function entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
@@ -200,10 +194,7 @@ end
 # site. `NA` and `NB` are the sizes of A and B.
 function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
-    if tab.d == 2
-        return _negativity_from_mask!(tab, L, tab.bit_workspace, NA, NB)
-    end
-    return _negativity_from_mask!(tab, L, tab.rank_workspace, NA, NB)
+    return _negativity_from_mask!(tab, L, _rank_workspace(tab), NA, NB)
 end
 
 function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix, NA::Int,
