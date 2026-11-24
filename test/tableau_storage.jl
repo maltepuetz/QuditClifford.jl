@@ -428,57 +428,99 @@ end
     @test !hasmethod(QuditClifford._destab, Tuple{DestabilizerTableau})
 end
 
-@testset "no raw storage access outside the storage files" begin
-    srcdir = joinpath(pkgdir(QuditClifford), "src")
-    allowed = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl", "layout.jl")
-    for f in readdir(srcdir)
-        endswith(f, ".jl") || continue
-        text = read(joinpath(srcdir, f), String)
-        f in allowed || @test !occursin(r"\.(stab|destab)_[xz]\b", text)
-        @test !occursin(r"\.(stab|destab)\b", text)
-        @test !occursin(r"\b_(de)?stab\(\s*[A-Za-z_][A-Za-z_0-9]*\s*\)", text)
+# The code of a source file without its docstrings and comments, so the
+# guards below see only code. No string literal in src/ contains a `#`.
+ts_code(text) =
+    replace(replace(replace(text, r"\"\"\"[\s\S]*?\"\"\"" => "\"\""), r"#=[\s\S]*?=#" => ""),
+            r"#.*" => "")
+
+# Raw tableau fields: only the storage files, the two constructor files and the
+# layout switch touch them, by name or through `getfield`.
+const ts_FIELD_OK = ("tableau_storage.jl", "stabilizer_tableau.jl", "destabilizer_tableau.jl", "layout.jl")
+const ts_FIELD = r"\.(stab|destab)_[xz]\b|getfield\(\s*\w+\s*,\s*:(de)?stab_[xz]"
+
+# Explicit layout construction: the block files (bit_block.jl for its unpacked
+# copies) and the storage file (construction and the canonical copies behind
+# `==`). `BitBlock`s are built only in the bit block file and the storage file.
+const ts_XZBLOCK_OK = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl")
+const ts_BITBLOCK_OK = ("bit_block.jl", "tableau_storage.jl")
+
+# Raw block access: the `x` and `z` fields of an `XZBlock` or a `BitBlock`, on
+# any receiver. `SinglePauli` and `PauliGate` have `x` and `z` fields too;
+# src/ reads them only through arguments named `op` and `g`, which are not
+# counted. The number of allowed matches per file, outside xz_block.jl (which
+# defines the leaves): the layout-specific kernels, the packed block file and
+# its kernel files, and the storage files that build tableaux from blocks.
+# Every other file has none.
+const ts_RAW = r"(?<!\bop)(?<!\bg)\.[xz]\b|get(field|property)\(\s*[^,()]+,\s*:[xz]\b"
+const ts_RAW_OK = Dict(
+    "bit_block.jl" => 70,
+    "rank_workspaces.jl" => 10,
+    "span_decomposition.jl" => 8,
+    "rank_copies_bits.jl" => 8,
+    "apply_bits.jl" => 4,
+    "measure_bits.jl" => 22,
+    "span_decomposition_bits.jl" => 12,
+    "canonicalize_bits.jl" => 6,
+    "entanglement_entropy.jl" => 6,
+    "check_purity.jl" => 4,
+    "apply_qudit_major.jl" => 2,
+    "measure_qudit_major.jl" => 4,
+    "canonicalize_qudit_major.jl" => 6,
+    "stabilizer_tableau.jl" => 2,
+    "tableau_storage.jl" => 4,
+)
+
+# The words of a packed `phase` or `xdotz_cache` (`_BitPlanes`): the packed
+# block file, the packed kernels and the storage file.
+const ts_PLANES_OK = ("bit_block.jl", "apply_bits.jl", "measure_bits.jl", "span_decomposition_bits.jl",
+                      "canonicalize_bits.jl", "tableau_storage.jl")
+
+# Every breach of the storage rules in `files` (file name => source text), as
+# `file => rule` pairs.
+function ts_storage_misuse(files)
+    bad = Pair{String,String}[]
+    for f in sort!(collect(keys(files)))
+        code = ts_code(files[f])
+        f in ts_FIELD_OK || !occursin(ts_FIELD, code) || push!(bad, f => "raw storage field")
+        occursin(r"\.(stab|destab)\b", code) && push!(bad, f => "tab.stab / tab.destab")
+        occursin(r"\b_(de)?stab\(\s*[A-Za-z_][A-Za-z_0-9]*\s*\)", code) && push!(bad, f => "_stab without a layout")
+        f in ts_XZBLOCK_OK || !occursin(r"XZBlock\{(GeneratorMajor|QuditMajor)\}\(", code) ||
+            push!(bad, f => "XZBlock construction")
+        f in ts_BITBLOCK_OK || !occursin(r"BitBlock\{\w+\}\(", code) || push!(bad, f => "BitBlock construction")
+        f in ts_PLANES_OK || !occursin(r"\.planes\b", code) || push!(bad, f => "_BitPlanes words")
+        if f != "xz_block.jl"
+            k, allowed = count(ts_RAW, code), get(ts_RAW_OK, f, 0)
+            k == allowed || push!(bad, f => "raw block access: $k matches, $allowed allowed")
+        end
     end
+    return bad
 end
 
-@testset "no raw block access outside the block and kernel files" begin
+@testset "no raw storage or block access outside the storage, block and kernel files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
-    # Explicit layout construction: the block files (bit_block.jl for its
-    # unpacked copies) and the storage file (construction and the canonical
-    # copies behind `==`).
-    # `BitBlock`s are built only in the bit block file and the storage file.
-    construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl")
-    # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
-    # the layout-specific kernels, the packed block file and its kernel files,
-    # and the storage files that build tableaux from blocks. Kernel files that
-    # do not exist count as zero matches.
-    raw_ok = Dict(
-        "bit_block.jl" => 62,
-        "rank_workspaces.jl" => 14,
-        "span_decomposition.jl" => 9,
-        "rank_copies_bits.jl" => 8,
-        "apply_bits.jl" => 4,
-        "measure_bits.jl" => 12,
-        "span_decomposition_bits.jl" => 6,
-        "canonicalize_bits.jl" => 4,
-        "entanglement_entropy.jl" => 6,
-        "check_purity.jl" => 4,
-        "apply_qudit_major.jl" => 2,
-        "measure_qudit_major.jl" => 2,
-        "canonicalize_qudit_major.jl" => 4,
-        "destabilizer_tableau.jl" => 4,
-        "tableau_storage.jl" => 4,
-    )
-    raw = r"\bb\.x\b|\bb\.z\b|\.x\[|\.z\["
-    for f in readdir(srcdir)
-        endswith(f, ".jl") || continue
-        text = read(joinpath(srcdir, f), String)
-        f in construct_ok ||
-            @test !occursin(r"XZBlock\{(GeneratorMajor|QuditMajor)\}\(", text)
-        f in ("bit_block.jl", "tableau_storage.jl") ||
-            @test !occursin(r"BitBlock\{\w+\}\(", text)
-        f == "xz_block.jl" && continue
-        @test (f => count(raw, text)) == (f => get(raw_ok, f, 0))
-    end
+    files = Dict(f => read(joinpath(srcdir, f), String) for f in readdir(srcdir) if endswith(f, ".jl"))
+    @test ts_storage_misuse(files) == []
+    # Every kernel file in the count list exists, so a renamed file cannot
+    # leave a stale entry behind.
+    @test issubset(keys(ts_RAW_OK), keys(files))
+    @test issubset(ts_PLANES_OK, keys(files))
+
+    # The guard catches each kind of breach, and ignores comments and docstrings.
+    planted(f, code) = ts_storage_misuse(merge(files, Dict(f => get(files, f, "") * "\n" * code * "\n")))
+    @test planted("channels.jl", "x = destab.x") == ["channels.jl" => "raw block access: 1 matches, 0 allowed"]
+    @test planted("channels.jl", "v = _stab(tab, L).z[1, 1]") ==
+          ["channels.jl" => "raw block access: 1 matches, 0 allowed"]
+    @test planted("channels.jl", "w = getproperty(db, :x)") ==
+          ["channels.jl" => "raw block access: 1 matches, 0 allowed"]
+    @test planted("measure_bits.jl", "s = stab.z") ==
+          ["measure_bits.jl" => "raw block access: 23 matches, 22 allowed"]
+    @test planted("channels.jl", "A = getfield(tab, :stab_x)") == ["channels.jl" => "raw storage field"]
+    @test planted("channels.jl", "A = tab.destab_z") == ["channels.jl" => "raw storage field"]
+    @test planted("channels.jl", "p = tab.phase.planes") == ["channels.jl" => "_BitPlanes words"]
+    @test planted("channels.jl", "# b.x, tab.stab_x, tab.phase.planes") == []
+    @test planted("channels.jl", "\"\"\"\n    f(b)\n\nReads `b.x[q, j]`.\n\"\"\"\nf(b) = 0") == []
+    @test planted("channels.jl", "#= b.z =# y = op.x + g.z") == []
 end
 
 @testset "no 32-bit-unsafe shifts in bit code" begin
