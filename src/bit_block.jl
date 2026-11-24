@@ -615,6 +615,8 @@ end
 # `W < G` are transposed and stored in each other's place. Nothing outside the
 # view is read or written.
 function _transpose_bit_block!(A::_BlockMatrix{UInt64}, buf::AbstractArray{UInt64})
+    length(buf) >= 2 * _WORD_BITS || throw(ArgumentError(
+        "_transpose_bit_block!: the buffer holds $(length(buf)) words, fewer than $(2 * _WORD_BITS)."))
     nw = size(A, 1)
     P = parent(A)
     off = first(parentindices(A)[2]) - 1

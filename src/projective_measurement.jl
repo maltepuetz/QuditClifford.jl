@@ -816,6 +816,22 @@ function _measure_generic!(rng::Random.AbstractRNG, tab::AbstractTableau, L::Tab
     return _measure_commuting!(rng, tab, L, op, kop, outcome)
 end
 
+# The outcome fixed by the state for an in-span operator with reduced phase
+# exponent `kop`, `kacc` being the phase exponent of the generator product that
+# equals it up to phase.
+@inline function _deterministic_outcome(kacc::Int, kop::Int, d::Int)
+    d == 2 || return mod(-kacc + kop, d)
+    # The eigenvalue is i^k; a Hermitian operator on Hermitian generators has
+    # even k, and (-1)^t = i^(2t).
+    k = mod(-kacc + kop, phase_modulus(d))
+    isodd(k) && throw(ArgumentError(
+        "the measured operator has eigenvalue $(k == 1 ? "i" : "-i") on this state, " *
+        "so it has no outcome in 0:1: the operator or a stored generator is not " *
+        "Hermitian. Pass phase_policy=1 to measure the Hermitian operator, or use " *
+        "expect_int! for the phase exponent."))
+    return k >> 1
+end
+
 # The branch of `measure!` for an `op` that commutes with every generator,
 # with `kop` the reduced phase exponent of `op`. It overwrites res_workspace.
 function _measure_commuting!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
@@ -843,20 +859,7 @@ function _measure_commuting!(rng::Random.AbstractRNG, tab::AbstractTableau, L::T
     if in_span
         # deterministic outcome, state unchanged
         if tab.storephase
-            kacc = phase_exponent_from_coeffs!(tab, L)
-            if d == 2
-                # The eigenvalue is i^k; a Hermitian operator on Hermitian
-                # generators has even k, and (-1)^t = i^(2t).
-                k = mod(-kacc + kop, phase_modulus(d))
-                isodd(k) && throw(ArgumentError(
-                    "the measured operator has eigenvalue $(k == 1 ? "i" : "-i") on this state, " *
-                    "so it has no outcome in 0:1: the operator or a stored generator is not " *
-                    "Hermitian. Pass phase_policy=1 to measure the Hermitian operator, or use " *
-                    "expect_int! for the phase exponent."))
-                return k >> 1
-            else
-                return mod(-kacc + kop, d)
-            end
+            return _deterministic_outcome(phase_exponent_from_coeffs!(tab, L), kop, d)
         else
             return 0
         end
