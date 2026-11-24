@@ -175,17 +175,27 @@ function _qm_dual_accumulate!(db::_QMBlock, ::_QMDualAcc{A}, c::Int, beta::Abstr
     return nothing
 end
 
+# The kernel on the blocks of `tab`, with its workspaces; then the x·z cache.
 function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
                            tab::AbstractTableau, div::Int)
-    ws = tab.coeff_workspace
+    _canonicalize_qm!(b, phase, db, dual, tab.m, tab.d, tab.storephase, tab.inversemod,
+                      tab.coeff_workspace, tab.c_workspace, tab.pivcol_of_row, div)
+    _qm_xdotz_cache!(tab.xdotz_cache, b, tab.m, tab.d)
+    tab.iscanonical = true
+    return nothing
+end
+
+# The elimination on the generators `1:m` of `b` (and the duals `db`, through
+# `dual`), with the multipliers and cross terms in columns 1 and 2 of `ws`
+# (`m × 2` at least, of the entry type of `b`), the list of nonzero
+# multipliers in `idx` (length `m` at least) and the pivot table in
+# `pivcol_of_row` (length `2n`). It reads and writes nothing else, so it also
+# runs on a private copy of a tableau's blocks with fresh scratch.
+function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
+                           m::Int, d::Int, storephase::Bool, inv::InverseMod,
+                           ws::AbstractMatrix, idx::Vector{Int},
+                           pivcol_of_row::Vector{Int}, div::Int)
     E = eltype(ws)
-    idx = tab.c_workspace
-    m = tab.m
-    d = tab.d
-    storephase = tab.storephase
-    inv = tab.inversemod
-    pivcol_of_row = tab.pivcol_of_row
-    xdotz_cache = tab.xdotz_cache
     fill!(pivcol_of_row, 0)
 
     n = _nq(b)
@@ -313,21 +323,25 @@ function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
         r += 1
         c += 1
     end
+    return nothing
+end
 
-    # x·z of every generator, accumulated column by column. `Int` sums wrap the
-    # same way in any order, so the reduction equals `dot_xz_col`'s. The loop
-    # is `@simd`, not `@turbo`: with narrow entries and `Int` sums, the code
-    # `@turbo` generates for 512-bit registers corrupts memory on Julia 1.10.
+# x·z of every generator `1:m` of `b` into `xdotz_cache`, accumulated column by
+# column. `Int` sums wrap the same way in any order, so the reduction equals
+# `dot_xz_col`'s. The loop is `@simd`, not `@turbo`: with narrow entries and
+# `Int` sums, the code `@turbo` generates for 512-bit registers corrupts memory
+# on Julia 1.10.
+function _qm_xdotz_cache!(xdotz_cache::Vector{Int}, b::_QMBlock, m::Int, d::Int)
     fill!(xdotz_cache, 0)
-    @inbounds for q in 1:n
+    @inbounds for q in 1:_nq(b)
+        xq = _qm_xcol(b, q, m)
+        zq = _qm_zcol(b, q, m)
         @simd for jj in 1:m
-            xdotz_cache[jj] += Int(x[jj, q]) * Int(z[jj, q])
+            xdotz_cache[jj] += Int(xq[jj]) * Int(zq[jj])
         end
     end
     @inbounds for jj in 1:m
         xdotz_cache[jj] = mod(xdotz_cache[jj], d)
     end
-
-    tab.iscanonical = true
-    return nothing
+    return xdotz_cache
 end

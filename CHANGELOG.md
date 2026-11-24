@@ -23,6 +23,16 @@ dependency bump — carries the `skip-changelog` label instead.
   smallest is 11777, on three qudits) run in the kernel too. At `n ≤ 16` a
   gate at `d = 31` takes about 4 ns (up to 8%) longer. Not measured on x86
   or on 32-bit hosts.
+- `==` and `hash` on a tableau that is not canonical are faster on packed
+  and on qudit-major storage, with identical results: the canonical copy
+  they compare is now made by the storage's own `canonicalize!` kernel.
+  Packed (`eltype = Bits`) tableaux: `hash` 11–18 times and `==` 17–30
+  times faster, with a seventh to an eighth of the allocation; unpacked
+  qudit-major tableaux: `hash` 4.1–5.5 times and `==` 4.5–6.1 times faster,
+  allocating 17–37% more for the padded copies (random states, d = 2 and 3,
+  n = 512 and 1024, both tableau types, M3 Pro). Generator-major unpacked
+  tableaux and canonical tableaux are unchanged. Not measured on x86 or on
+  32-bit hosts.
 
 ## 0.5.0 - 2026-11-24
 

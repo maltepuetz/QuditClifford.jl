@@ -48,7 +48,9 @@ end
 
 # The tableau's own block and phase when it is already canonical, otherwise
 # canonical copies. The scratch passed to `_canonicalize_tableau!` is fresh, so
-# the tableau's pivot table and x·z cache are left alone.
+# the tableau's pivot table and x·z cache are left alone. Packed and unpacked
+# qudit-major tableaux have methods in src/tableau_storage.jl that run their
+# own canonicalization kernels on the copies.
 function _canonical_stab(tab::AbstractTableau, L::TableauLayout)
     b, phase = _stab(tab, L), _phase(tab)
     tab.iscanonical && return b, phase

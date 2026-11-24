@@ -234,3 +234,77 @@ end
         end
     end
 end
+
+# The same state in every storage type and layout: a random state (`m`
+# generators) or a product state, scrambled by the same random Cliffords, so
+# the basis is not canonical.
+function tce_storage_variants(TT, d, n, m, storephase, kind, seed)
+    Es = d == 2 ? (UInt8, UInt16, Int, Bits) : (UInt8, UInt16, Int)
+    out = Any[]
+    for E in Es, layout in (:generator, :qudit)
+        rng = Xoshiro(seed)
+        t = TT(d, n; eltype = E, layout = layout, storephase = storephase)
+        kind === :random && random_state!(rng, t; m = m)
+        for _ in 1:(kind === :random ? 2 : 2n)
+            apply!(t, random_clifford(rng, d, randperm(rng, n)[1:min(2, n)]))
+        end
+        push!(out, (E, layout, t))
+    end
+    return out
+end
+
+@testset "== and hash across storage types and layouts" begin
+    for (label, TT) in TCE_TABLEAU_TYPES, d in (2, 3), n in (1, 5, 63, 64, 65, 130),
+        storephase in (true, false), kind in (:random, :local)
+
+        ms = kind === :random ? unique((n, max(0, n - 3), n ÷ 2)) : (n,)
+        for m in ms
+            seed = 1000n + 10d + m
+            vars = tce_storage_variants(TT, d, n, m, storephase, kind, seed)
+            # The reference: `Int` generator-major, compared through the
+            # generic canonical copy.
+            _, _, ref = vars[findfirst(v -> v[1] === Int && v[2] === :generator, vars)]
+            refc = copy(ref); canonicalize!(refc)
+            # A different state (with high probability), by one more gate.
+            rng = Xoshiro(seed + 1)
+            g = random_clifford(rng, d, randperm(rng, n)[1:min(2, n)])
+            ref2 = apply!(copy(ref), g)
+            href = hash(ref)
+            @test href == hash(refc)
+            for (E, layout, t) in vars
+                @testset "$label d=$d n=$n m=$m storephase=$storephase $kind $E $layout" begin
+                    t.m == 0 || @test !t.iscanonical
+                    before = tce_snapshot(t)
+                    @test hash(t) == href
+                    @test t == ref
+                    @test ref == t
+                    @test t == refc
+                    @test t == t
+                    L = QuditClifford._layout_marker(t)
+                    @test QuditClifford._tableaux_equal(t, L, t, L)
+                    t2 = apply!(copy(t), g)
+                    @test (t == t2) == (ref == ref2)
+                    @test (t2 == ref2) && (ref2 == t2)
+                    @test (hash(t2) == hash(t)) == (hash(ref2) == href)
+                    c = copy(t); canonicalize!(c)
+                    @test c == t && hash(c) == href
+                    @test tce_snapshot(t) == before
+                    # Both of a pair non-canonical, of each other's storage.
+                    for (_, _, u) in vars
+                        @test t == u
+                    end
+                    @test tce_snapshot(t) == before
+                end
+            end
+        end
+    end
+    # Packed and unpacked qudit-major tableaux canonicalize their copies with
+    # their own kernels; unpacked generator-major ones with the generic one.
+    for (E, layout, file) in ((Bits, :generator, "tableau_storage.jl"), (Bits, :qudit, "tableau_storage.jl"),
+                              (UInt8, :qudit, "tableau_storage.jl"), (UInt8, :generator, "tableau_equality.jl"))
+        t = StabilizerTableau(2, 5; eltype = E, layout = layout)
+        L = QuditClifford._layout_marker(t)
+        meth = which(QuditClifford._canonical_stab, (typeof(t), typeof(L)))
+        @test basename(String(meth.file)) == file
+    end
+end

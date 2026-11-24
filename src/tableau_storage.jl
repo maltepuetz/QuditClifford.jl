@@ -414,3 +414,50 @@ end
 
 # The packed scratch of a packed tableau for `n` qudits.
 _word_workspace(n::Int) = zeros(UInt64, max(_nwords(n), 32), 4)
+
+##### canonical copies for `==` and `hash` #####
+
+# `_canonical_stab` (src/tableau_equality.jl) for the layouts that have a
+# canonicalization kernel of their own: the stabilizer blocks are copied, the
+# kernel runs on the copies with a copy of the phases and fresh scratch, and
+# the tableau itself (blocks, phases, `iscanonical`, pivot table, x·z cache,
+# workspaces) is only read. Without `storephase` the tableau's own empty phase
+# is returned, since nothing reads it.
+
+# A packed tableau: canonicalized generator-major by the packed kernel, the
+# copies of a qudit-major tableau transposed first.
+_canonical_stab(tab::_BitTableau, L::GeneratorMajor) = _canonical_stab_bits(tab, L)
+_canonical_stab(tab::_BitTableau, L::QuditMajor) = _canonical_stab_bits(tab, L)
+
+function _canonical_stab_bits(tab::_BitTableau, L::TableauLayout)
+    phase = _phase(tab)
+    tab.iscanonical && return _stab(tab, L), phase
+    n = tab.n
+    x = _copy_bit_block(tab.stab_x, n)
+    z = _copy_bit_block(tab.stab_z, n)
+    if L isa QuditMajor
+        buf = Vector{UInt64}(undef, 2 * _WORD_BITS)
+        _transpose_bit_block!(x, buf)
+        _transpose_bit_block!(z, buf)
+    end
+    S = BitBlock{GeneratorMajor}(x, z, n)
+    Sphase = tab.storephase ? copy(phase) : phase
+    _canonicalize_gm_bits!(S, tab.storephase ? Sphase.planes : nothing, nothing,
+                           tab.m, Vector{Int}(undef, 2n))
+    return S, Sphase
+end
+
+# An unpacked qudit-major tableau: canonicalized in its own layout by the
+# qudit-major kernel, so that the canonical copies of two qudit-major tableaux
+# are compared in storage order.
+function _canonical_stab(tab::AbstractTableau, L::QuditMajor)
+    phase = _phase(tab)
+    tab.iscanonical && return _stab(tab, L), phase
+    n = tab.n
+    S = XZBlock{QuditMajor}(_copy_block(tab.stab_x), _copy_block(tab.stab_z))
+    Sphase = tab.storephase ? copy(phase) : phase
+    _canonicalize_qm!(S, Sphase, nothing, nothing, tab.m, tab.d, tab.storephase,
+                      tab.inversemod, similar(tab.coeff_workspace, n, 2),
+                      Vector{Int}(undef, n), Vector{Int}(undef, 2n), _QM_CANON_SPARSE_DIV)
+    return S, Sphase
+end
