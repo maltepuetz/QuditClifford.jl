@@ -68,13 +68,16 @@ function _canonicalize_gm_bits!(tab::_BitTableau, L::GeneratorMajor)
 end
 
 # `canonicalize!` on a packed qudit-major tableau: switched to generator-major,
-# canonicalized by the kernel, and switched back. The switches allocate
-# nothing and leave the phase and cache planes alone.
+# canonicalized by the kernel, and switched back, also when the kernel throws
+# or the call is interrupted, so the tableau never stays generator-major. The
+# switches allocate nothing and leave the phase and cache planes alone.
 function _canonicalize_bits_switched!(tab::_BitTableau)
-    (0 <= tab.m <= tab.n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ tab.n"))
     generator_major!(tab)
-    _canonicalize_gm_bits!(tab, GeneratorMajor())
-    qudit_major!(tab)
+    try
+        _canonicalize_gm_bits!(tab, GeneratorMajor())
+    finally
+        qudit_major!(tab)
+    end
     return nothing
 end
 
