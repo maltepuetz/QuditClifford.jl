@@ -317,6 +317,13 @@ end
         @test (@allocated qudit_major!(tab)) == 0
         @test (@allocated generator_major!(tab)) == 0
     end
+    # The switch needs two 64-word tiles of scratch, which the workspace has
+    # for every n, and refuses a shorter buffer.
+    tab = StabilizerTableau(2, 3; eltype = Bits)
+    @test length(tab.word_workspace) >= 128
+    S = stabilizer_matrix(tab)
+    @test_throws ArgumentError bt_QC._transpose_bit_block!(tab.stab_x, zeros(UInt64, 127))
+    @test stabilizer_matrix(tab) == S
 end
 
 @testset "_t64! is a transpose" begin
@@ -660,6 +667,9 @@ function bt_stream_pauli(rng, n)
     return GeneralPauli(v, mod(sum(v[1:n] .* v[n+1:2n]), 2) + 2 * rand(rng, 0:1))
 end
 
+# The reference is the per-generator `_measure_generic!` on `UInt8` storage in
+# the same layout, so qudit-major the packed kernel is not compared with
+# another kernel.
 @testset "same rng stream, Bits vs UInt8" begin
     for TT in bt_TYPES, layout in (:generator, :qudit)
         n = 70
@@ -678,7 +688,7 @@ end
             end
             op = bt_stream_pauli(oprng, n)
             push!(outs_t, measure!(rt, t, op))
-            push!(outs_u, measure!(ru, u, op))
+            push!(outs_u, bt_QC._measure_generic!(ru, u, bt_QC._layout_marker(u), op, nothing, 0))
             ok &= outs_t[end] == outs_u[end] && stabilizer_matrix(t) == stabilizer_matrix(u) &&
                   st_padding_zero(t)
             ok || (@error "Bits outcome stream differs" TT layout i op; break)
@@ -687,6 +697,84 @@ end
         @test outs_t == outs_u
         @test bt_same(t, u)
         @test rand(rt) == rand(ru)
+    end
+end
+
+@testset "bit measurement kernels against the generic functions" begin
+    # measure! and dephase! on packed storage (`t`) against `_measure_generic!`
+    # and `_dephase_generic!` on `UInt8` storage in the same layout (`u`), and
+    # against `_dephase_generic!` on packed storage (`g`), after every call.
+    seed = 0
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false),
+        n in (5, 64, 65, 130)
+
+        seed += 1
+        t = TT(2, n; storephase, eltype = Bits, layout)
+        g = TT(2, n; storephase, eltype = Bits, layout)
+        u = TT(2, n; storephase, eltype = UInt8, layout)
+        mm = isodd(seed) ? n : n - 3
+        foreach(x -> random_state!(Xoshiro(seed), x; m = mm), (t, g, u))
+        L = bt_QC._layout_marker(t)
+        rt, rg, ru = Xoshiro(seed), Xoshiro(seed), Xoshiro(seed)
+        rng = Xoshiro(80_000 + seed)
+        bad = 0
+        for i in 1:150
+            c = rand(rng, 1:10)
+            vt = vg = vu = nothing
+            if c <= 2
+                f = bt_rand_gate(rng, n)
+                foreach(f, (t, g, u))
+            elseif c <= 7
+                op = bt_stream_pauli(rng, n)
+                vt = measure!(rt, t, op)
+                vg = measure!(rg, g, op)
+                vu = bt_QC._measure_generic!(ru, u, L, op, nothing, 0)
+            else
+                op = bt_stream_pauli(rng, n)
+                dephase!(t, op)
+                bt_QC._dephase_generic!(g, L, op)
+                bt_QC._dephase_generic!(u, L, op)
+            end
+            ok = vt == vg == vu && bt_same(t, g) && bt_same(t, u) && rt == rg == ru &&
+                 st_padding_zero(t) && st_padding_zero(g)
+            if !ok
+                bad += 1
+                @error "packed kernel differs from the generic function" TT layout storephase n i
+                break
+            end
+        end
+        @test bad == 0
+    end
+
+    # The packed dual update against `_orthogonalize_duals_generic!` on the
+    # same packed tableau, on its site-restricted and its dense path: generator
+    # `col` is overwritten with an operand, as measure! does, and the other
+    # duals are made orthogonal to it.
+    for layout in (:generator, :qudit), n in (5, 64, 65, 130)
+        t = DestabilizerTableau(2, n; eltype = Bits, layout)
+        random_state!(Xoshiro(n), t; m = n - 2)
+        L = bt_QC._layout_marker(t)
+        rng = Xoshiro(90_000 + n)
+        changed = 0
+        for trial in 1:12
+            col = rand(rng, 1:t.m)
+            op = bt_stream_pauli(rng, n)
+            kernel, sparse, dense = copy(t), copy(t), copy(t)
+            for (x, f!, sp) in ((kernel, bt_QC._orthogonalize_duals!, true),
+                                (sparse, bt_QC._orthogonalize_duals_generic!, true),
+                                (dense, bt_QC._orthogonalize_duals_generic!, false))
+                bt_QC.set_operator!(x, L, col, op)
+                nsupp = bt_QC._column_support!(x.support_workspace, bt_QC._stab(x, L), col)
+                nsites = bt_QC._column_support!(x.zacc_workspace, bt_QC._destab(x, L), col)
+                f!(x, L, col, x.m, x.support_workspace, nsupp, x.zacc_workspace, nsites, sp)
+            end
+            @test destabilizer_matrix(kernel) == destabilizer_matrix(sparse) ==
+                  destabilizer_matrix(dense)
+            @test stabilizer_matrix(kernel) == stabilizer_matrix(sparse)
+            @test st_padding_zero(kernel) && st_padding_zero(sparse) && st_padding_zero(dense)
+            changed += destabilizer_matrix(kernel) != destabilizer_matrix(t)
+        end
+        @test changed > 0
     end
 end
 
@@ -836,6 +924,286 @@ bt_eq_allocations(a, b) = (a == b; @allocated a == b)
         P = typeof(t.phase)
         m = which(bt_QC._active_columns_equal, (B, P, B, P, Int, Bool))
         @test basename(String(m.file)) == "bit_block.jl"
+    end
+end
+
+
+# An operand for the span tests: a product of a random subset of the generators
+# of `t`, moved out of the span by one flipped exponent a quarter of the time;
+# an operand measured earlier (`pool`); or a random sparse or dense Pauli with
+# X, Y and Z components. Phases are arbitrary, so many operands are not
+# Hermitian.
+function bt_span_pauli(rng, t, n, pool)
+    c = rand(rng, 1:6)
+    if c <= 2 && t.m > 0
+        S = stabilizer_matrix(t)
+        v = zeros(Int, 2n)
+        for j in 1:t.m
+            rand(rng, Bool) && (v .⊻= S[1:2n, j])
+        end
+        rand(rng, 1:4) == 1 && (v[rand(rng, 1:2n)] ⊻= 1)
+        return GeneralPauli(v, rand(rng, 0:3))
+    elseif c == 3 && !isempty(pool)
+        return rand(rng, pool)
+    elseif c == 4
+        return GeneralPauli(rand(rng, -2:3, 2n), rand(rng, -3:6))
+    elseif c == 5
+        return SinglePauli(rand(rng, 1:n), rand(rng, 0:1), rand(rng, 0:1), rand(rng, 0:3))
+    end
+    k = rand(rng, 1:min(n, 4))
+    return NPauli(Tuple(randperm(rng, n)[1:k]), Tuple(rand(rng, -2:3, k)),
+                  Tuple(rand(rng, -2:3, k)), rand(rng, -3:6))
+end
+
+# The value of `f()`, or the message of the `ArgumentError` it throws.
+bt_try(f) = try
+    (:ok, f())
+catch e
+    e isa ArgumentError || rethrow()
+    (:err, e.msg)
+end
+
+# `measure!` with the commuting branches taken through the generic
+# `_measure_commuting!`, whatever the storage.
+function bt_generic_measure!(rng, g, op, outcome, phase_policy)
+    L = bt_QC._layout_marker(g)
+    bt_QC._commutes_with_generators(g, L, op) ||
+        return measure!(rng, g, op; outcome, phase_policy)
+    kop = bt_QC._measurement_phase(g, op, outcome, phase_policy)
+    return bt_QC._measure_commuting!(rng, g, L, op, kop, outcome)
+end
+
+# Bit `q` of word column `c` of a word workspace.
+bt_ws_bit(ws, q, c) = Int((ws[(q - 1) >> 6 + 1, c] >> ((q - 1) & 63)) & UInt64(1))
+
+@testset "bit span kernels" begin
+    # The packed commuting branches of measure! and expect_int! against the
+    # generic pipeline on a packed copy (`g`) and against `_measure_generic!`
+    # and `_expect_int_generic!` on `UInt8` storage (`u`), after every call.
+    seed = 0
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false)
+        counts = Dict{Symbol,Int}()
+        hit(k) = (counts[k] = get(counts, k, 0) + 1)
+        bad = 0
+        for n in (1, 5, 63, 64, 65, 130), pure in (true, false)
+            seed += 1
+            mm = pure ? n : rand(Xoshiro(seed), 0:n)
+            t = TT(2, n; storephase, eltype = Bits, layout)
+            g = TT(2, n; storephase, eltype = Bits, layout)
+            u = TT(2, n; storephase, eltype = UInt8, layout)
+            for x in (t, g, u)
+                random_state!(Xoshiro(seed), x; m = mm)
+            end
+            L = bt_QC._layout_marker(t)
+            rt, rg, ru = Xoshiro(seed), Xoshiro(seed), Xoshiro(seed)
+            rng = Xoshiro(60_000 + seed)
+            pool = Any[]
+            for i in 1:(n <= 5 ? 250 : 90)
+                c = rand(rng, 1:20)
+                vt = vg = vu = nothing
+                if c <= 3
+                    U = random_clifford(rng, 2, randperm(rng, n)[1:min(n, rand(rng, 1:2))])
+                    foreach(x -> apply!(x, U), (t, g, u))
+                elseif c <= 5
+                    foreach(canonicalize!, (t, g, u))
+                elseif c == 6
+                    # A fresh state that withholds up to three generators of a
+                    # pure one; they commute with the rest and lie outside its
+                    # span, so measuring one from the pool appends it.
+                    r = StabilizerTableau(2, n; storephase, eltype = UInt8)
+                    random_state!(rng, r)
+                    S = stabilizer_matrix(r)
+                    k = rand(rng, 1:min(n, 3))
+                    Sm = hcat(S[:, 1:(n - k)], zeros(Int, size(S, 1), k))
+                    t, g, u = (TT(2, Sm; m = n - k, storephase, eltype = E, layout)
+                               for E in (Bits, Bits, UInt8))
+                    empty!(pool)
+                    for j in (n - k + 1):n
+                        push!(pool, GeneralPauli(S[1:2n, j], storephase ? S[2n + 1, j] : 0))
+                    end
+                elseif c <= 14
+                    op = bt_span_pauli(rng, t, n, pool)
+                    outcome = rand(rng, 1:4) == 1 ? rand(rng, 0:1) : nothing
+                    pp = rand(rng, 1:2)
+                    commutes = bt_QC._commutes_with_generators(g, L, op)
+                    m0 = g.m
+                    vt = bt_try(() -> measure!(rt, t, op; outcome, phase_policy = pp))
+                    vg = bt_try(() -> bt_generic_measure!(rg, g, op, outcome, pp))
+                    vu = bt_try(() -> bt_QC._measure_generic!(ru, u, L, op, outcome, pp))
+                    if !commutes
+                        hit(:random)
+                    elseif g.m > m0
+                        hit(:append)
+                        # The generic residual tells which unit vector the dual grew from.
+                        g isa DestabilizerTableau &&
+                            hit(any(!iszero, g.res_workspace[1:n]) ? :append_x : :append_z)
+                    else
+                        hit(vg[1] === :ok ? :fixed : :fixed_nonhermitian)
+                        op isa GeneralPauli || hit(:fixed_sparse)
+                        t isa StabilizerTableau && hit(t.iscanonical ? :fixed_canonical : :fixed_solve)
+                    end
+                    length(pool) < 6 ? push!(pool, op) : (pool[rand(rng, 1:6)] = op)
+                else
+                    op = bt_span_pauli(rng, t, n, pool)
+                    vt = bt_try(() -> expect_int!(t, op))
+                    vg = bt_try(() -> bt_QC._expect_int_generic!(g, L, op))
+                    vu = bt_try(() -> bt_QC._expect_int_generic!(u, L, op))
+                    hit(vg == (:ok, -1) ? :expect_out : :expect_in)
+                    vg[2] in (1, 3) && hit(:expect_imaginary)
+                end
+                ok = vt == vg == vu && bt_same(t, g) && bt_same(t, u) && rt == rg == ru &&
+                     st_padding_zero(t)
+                if !ok
+                    bad += 1
+                    @error "packed span kernel differs" TT layout storephase n pure i vt vg vu
+                    break
+                end
+            end
+        end
+        @test bad == 0
+        for k in (:random, :append, :fixed, :fixed_sparse, :expect_in, :expect_out)
+            @test (k => get(counts, k, 0) > 0) == (k => true)
+        end
+        if storephase
+            @test get(counts, :fixed_nonhermitian, 0) > 0
+            @test get(counts, :expect_imaginary, 0) > 0
+        end
+        if TT === DestabilizerTableau
+            @test get(counts, :append_x, 0) > 0 && get(counts, :append_z, 0) > 0
+        else
+            @test get(counts, :fixed_canonical, 0) > 0 && get(counts, :fixed_solve, 0) > 0
+        end
+    end
+
+    # The pieces against the generic ones on the same tableau: the coefficient
+    # mask, the residual and the phase exponent, with the qudit-major kernel
+    # forced through its sparse and its dense path.
+    QM = bt_QC.QuditMajor()
+    paths = Dict{Symbol,Int}()
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false),
+        n in (1, 5, 63, 64, 65, 130, 200, 330), kind in (:random, :local)
+
+        seed += 1
+        rng = Xoshiro(70_000 + seed)
+        t = TT(2, n; storephase, eltype = Bits, layout, state = :mixed)
+        if kind === :random
+            random_state!(rng, t; m = rand(rng, (n, max(n - 2, 0))))
+        else
+            for q in 1:2:n
+                measure!(rng, t, SinglePauli(q, 0, 1))
+            end
+            for q in 1:(n - 1)
+                rand(rng, Bool) && apply!(t, random_clifford(rng, 2, [q, q + 1]))
+            end
+        end
+        t isa StabilizerTableau && canonicalize!(t)
+        L = bt_QC._layout_marker(t)
+        ws = t.word_workspace
+        stab = bt_QC._stab(t, L)
+        P = bt_QC._bit_phase_planes(t)
+        m = t.m
+        nwm = bt_QC._nwords(m)
+        ok = true
+        for trial in 1:12
+            op = bt_span_pauli(rng, t, n, ())
+            in_ref = bt_QC.in_span_and_coeffs!(t, L, op)
+            c_ref = t.c_workspace[1:m] .& 1
+            res_ref = t.res_workspace[1:2n] .& 1
+            k_ref = bt_QC.phase_exponent_from_coeffs!(t, L)
+            cut = bt_QC._bit_span_sparse_cut(nwm, storephase)
+            for c in (cut, nwm, -1)
+                opc = bt_QC._commutation_operand!(t, op)
+                bt_QC._bit_pack_operand!(ws, opc, n)
+                bt_QC._bit_coeff_mask!(t, L, opc)
+                ok &= [bt_ws_bit(ws, j, 1) for j in 1:m] == c_ref
+                ok &= all(iszero, [bt_ws_bit(ws, j, 1) for j in (m + 1):(64 * nwm)])
+                if L === QM
+                    nz = count(!iszero, ws[1:nwm, 1])
+                    paths[nz <= cut ? :sparse : :dense] = 1
+                    in_span, k = bt_QC._qm_bit_residual_phase!(ws, stab, P, m, t.zacc_workspace, c)
+                else
+                    in_span, k = bt_QC._gm_bit_residual_phase!(ws, stab, P, m)
+                end
+                ok &= in_span == in_ref && k == k_ref
+                ok &= [bt_ws_bit(ws, q, 3) for q in 1:n] == res_ref[1:n] &&
+                      [bt_ws_bit(ws, q, 4) for q in 1:n] == res_ref[(n + 1):(2n)]
+                ok &= (in_span, k) == bt_QC._bit_residual_phase!(
+                    (bt_QC._bit_pack_operand!(ws, opc, n); bt_QC._bit_coeff_mask!(t, L, opc); t), L)
+                # The phase alone, as a pure state takes it.
+                storephase || continue
+                # The kernel left the residual where the operand was.
+                remask!() = (bt_QC._bit_pack_operand!(ws, opc, n); bt_QC._bit_coeff_mask!(t, L, opc))
+                L === QM || continue
+                remask!()
+                pairs = bt_QC._qm_bit_pair_parity!(ws, stab, m, t.zacc_workspace, c)
+                ok &= mod(bt_QC._bit_mask_phase(ws, P, m) + 2 * pairs, 4) == k_ref
+                remask!()
+                ok &= bt_QC._qm_bit_mask_product_phase!(t, L) == k_ref
+                paths[nz == 1 ? :one_word : nz <= bt_QC._BIT_SPAN_PROBE_WORDS ?
+                      :probed : :unprobed] = 1
+                count(!iszero, c_ref) == 1 && (paths[:one_generator] = 1)
+            end
+            ok || (@error "packed span pieces differ" TT layout storephase n kind trial op; break)
+        end
+        @test ok
+        for O in (SinglePauli, GeneralPauli)
+            mth = which(bt_QC._expect_int!, (typeof(t), typeof(L), O))
+            @test basename(String(mth.file)) == "span_decomposition_bits.jl"
+        end
+    end
+    for k in (:sparse, :dense, :one_word, :probed, :unprobed, :one_generator)
+        @test (k => haskey(paths, k)) == (k => true)
+    end
+end
+
+function bt_span_allocations(f, t)
+    for _ in 1:3
+        f(t)
+    end
+    return @allocated f(t)
+end
+
+@testset "bit span kernels allocate nothing" begin
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false)
+        n = 130
+        r = TT(2, n; storephase, eltype = UInt8)
+        random_state!(Xoshiro(5), r)
+        measure!(Xoshiro(6), r, SinglePauli(7, 0, 1))
+        apply!(r, random_clifford(Xoshiro(7), 2, [1, 2]))
+        S = stabilizer_matrix(r)
+        zq = SinglePauli(7, 0, 1)
+        v = reduce((a, b) -> a .⊻ b, (S[1:2n, j] for j in 1:3:n))
+        dense = GeneralPauli(v, mod(sum(v[1:n] .* v[(n + 1):(2n)]), 2))
+        rng = Xoshiro(8)
+
+        # Pure state: fixed outcomes and expectation values.
+        t = TT(2, S; eltype = Bits, layout, storephase)
+        for canonical in (TT === StabilizerTableau ? (false, true) : (false,))
+            canonical && canonicalize!(t)
+            for op in (zq, dense)
+                @test bt_span_allocations(x -> measure!(rng, x, op), t) == 0
+                (canonical || TT === DestabilizerTableau) &&
+                    @test bt_span_allocations(x -> expect_int!(x, op), t) == 0
+            end
+        end
+
+        # One generator short: fixed outcomes, and the append of the missing one
+        # (dense) or of a single-qubit operand on a qubit the state leaves mixed.
+        Sm = hcat(S[:, 1:(n - 1)], zeros(Int, size(S, 1)))
+        last = GeneralPauli(S[1:2n, n], storephase ? S[2n + 1, n] : 0)
+        a = TT(2, Sm; m = n - 1, eltype = Bits, layout, storephase)
+        w = copy(a)
+        @test bt_span_allocations(x -> expect_int!(x, last), a) == 0
+        @test bt_span_allocations(x -> (copy!(x, a); measure!(rng, x, last)), w) == 0
+        @test w.m == n
+        b = TT(2, n; state = :mixed, eltype = Bits, layout, storephase)
+        for q in 1:(n - 1)
+            measure!(rng, b, DoublePauli(q, 0, 1, q + 1, 0, 1))
+        end
+        w = copy(b)
+        for op in (SinglePauli(64, 0, 1), SinglePauli(65, 1, 0, 0), DoublePauli(1, 0, 1, 130, 0, 1))
+            @test bt_span_allocations(x -> (copy!(x, b); measure!(rng, x, op)), w) == 0
+        end
     end
 end
 

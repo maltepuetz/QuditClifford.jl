@@ -24,10 +24,18 @@ A pure tableau (`m == n`) with `storephase=false` skips them: there `op` is in t
 span exactly when it commutes with every generator. The generator basis and
 `iscanonical` are unchanged; dense operators reuse the residual workspace.
 This costs `O(km)` for a sparse Pauli on `k` qudits, or `O(nm)` for a dense Pauli.
+
+A packed tableau (`eltype = Bits`) takes the same steps on 64 generators or
+qudits per word, with identical results. A pure qudit-major one uses the
+commutation test with phases too, and then computes only the phase.
 """
 expect_int!(tab::AbstractTableau, op::AbstractPauli) = _expect_int!(tab, _layout_marker(tab), op)
 
-function _expect_int!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
+_expect_int!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli) =
+    _expect_int_generic!(tab, L, op)
+
+# The per-generator `expect_int!`, for every layout and storage.
+function _expect_int_generic!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     _check_pauli_support(tab, op)
     d = tab.d
     kP = op.phase

@@ -28,7 +28,9 @@
 #
 # Exactly one outcome is drawn per random measurement, through the same
 # `_random_outcome` call as the unpacked kernels, and none when the operand
-# commutes with every generator; the commuting branch is the shared one.
+# commutes with every generator; the commuting branches are in
+# src/span_decomposition_bits.jl, which lists what they keep in
+# `word_workspace`.
 
 # The commutation operand of `_commutation_operand!`: reduced sparse exponents,
 # or a dense exponent vector `[x; z]` in `res_workspace`.
@@ -217,7 +219,7 @@ function _measure!(rng::Random.AbstractRNG, tab::_BitTableau, L::GeneratorMajor,
     ws = tab.word_workspace
     _gm_bit_pack_operand!(ws, opc, tab.n)
     pivot = _gm_bit_first(stab, opc, ws, 1, m)
-    pivot == 0 && return _measure_commuting!(rng, tab, L, op, kop, outcome)
+    pivot == 0 && return _bit_measure_commuting!(rng, tab, L, op, opc, kop, outcome)
 
     # The outcome is random; draw it before anything in tab changes.
     t = _random_outcome(rng, outcome, 2)
@@ -523,7 +525,7 @@ function _measure_bits_qm!(rng::Random.AbstractRNG, tab::_BitTableau, L::QuditMa
     opc = _commutation_operand!(tab, op)
     stab = _stab(tab, L)
     pivot = _qm_bit_mask!(tab.word_workspace, stab, opc, m)
-    pivot == 0 && return _measure_commuting!(rng, tab, L, op, kop, outcome)
+    pivot == 0 && return _bit_measure_commuting!(rng, tab, L, op, opc, kop, outcome)
 
     # The outcome is random; draw it before anything in tab changes.
     t = _random_outcome(rng, outcome, 2)

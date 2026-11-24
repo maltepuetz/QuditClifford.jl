@@ -105,7 +105,10 @@ mutable struct StabilizerTableau{IM<:InverseMod, E<:_StorageEltype, W<:Union{E, 
     generator_workspace::Vector{Int}   # length 2n + storephase
     pivot_workspace::Vector{E}         # length 2n, [x; z] of a measure!/dephase! pivot (no phase)
     coeff_workspace::Matrix{E}         # n×3, per-generator coefficients of apply! (phase and cache deltas) and the measure! random branch
-    word_workspace::Matrix{UInt64}     # max(_nwords(n), 32)×4 packed scratch with Bits storage, else 0×0
+    # max(_nwords(n), 32)×4 packed scratch with Bits storage, else 0×0. A layout
+    # switch uses its first 128 words, and canonicalize! on a packed qudit-major
+    # tableau switches twice, so nothing survives there across either.
+    word_workspace::Matrix{UInt64}
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)

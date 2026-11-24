@@ -412,8 +412,10 @@ function rebuild_destabilizers!(tab::_BitDestab, L::TableauLayout)
     return destab
 end
 
-# The packed scratch of a packed tableau for `n` qudits.
-_word_workspace(n::Int) = zeros(UInt64, max(_nwords(n), 32), 4)
+# The packed scratch of a packed tableau for `n` qudits: four columns of one
+# word per 64 qudits, and at least the `2·_WORD_BITS` words a layout switch
+# needs (`_transpose_bit_block!`).
+_word_workspace(n::Int) = zeros(UInt64, max(_nwords(n), cld(2 * _WORD_BITS, 4)), 4)
 
 ##### canonical copies for `==` and `hash` #####
 

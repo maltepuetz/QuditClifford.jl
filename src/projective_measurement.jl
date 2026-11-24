@@ -349,36 +349,6 @@ end
     return nothing
 end
 
-# Packed storage: the same cross terms through the leaves, and the update
-# through the bit composites.
-@inline function _absorb_pivot_power!(tab::_BitTableau, L::TableauLayout, col::Int, a::Int,
-                                      pu::_PivotUpdate)
-    a == 0 && return nothing
-    stab = _stab(tab, L)
-    genws = tab.pivot_workspace
-    n = tab.n
-    d = tab.d
-    track = tab isa DestabilizerTableau
-    sites = tab.zacc_workspace
-    cb = 0
-    cz = 0
-    if track || tab.storephase
-        nq = pu.sparse ? pu.nsupp : n
-        @inbounds for k in 1:nq
-            q = pu.sparse ? sites[k] : k
-            cb += Int(genws[q]) * _zget(stab, q, col)
-            track && (cz += _xget(stab, q, col) * Int(genws[n+q]))
-        end
-    end
-    _absorb_pivot_scalars!(tab, col, a, mod(cb, d), cz, pu)
-    if pu.sparse
-        _gen_addmul_sites!(stab, col, genws, sites, pu.nsupp, a, d)
-    else
-        _gen_addmul!(stab, col, genws, a, d)
-    end
-    return nothing
-end
-
 ############################################
 # Projective measurement (mixed-state)     #
 ############################################
@@ -734,7 +704,9 @@ _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout, op::A
           outcome::Union{Int,Nothing}, phase_policy::Int) =
     _measure_generic!(rng, tab, L, op, outcome, phase_policy)
 
-# The per-generator `measure!`, for every layout and storage.
+# The per-generator `measure!`, for every layout of unpacked storage. A packed
+# tableau has its own `_measure!` methods; of this function only the commuting
+# branch (`_measure_commuting!`) runs on packed storage, through the leaves.
 function _measure_generic!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
                            op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
     kop = _measurement_phase(tab, op, outcome, phase_policy)
@@ -816,6 +788,22 @@ function _measure_generic!(rng::Random.AbstractRNG, tab::AbstractTableau, L::Tab
     return _measure_commuting!(rng, tab, L, op, kop, outcome)
 end
 
+# The outcome fixed by the state for an in-span operator with reduced phase
+# exponent `kop`, `kacc` being the phase exponent of the generator product that
+# equals it up to phase.
+@inline function _deterministic_outcome(kacc::Int, kop::Int, d::Int)
+    d == 2 || return mod(-kacc + kop, d)
+    # The eigenvalue is i^k; a Hermitian operator on Hermitian generators has
+    # even k, and (-1)^t = i^(2t).
+    k = mod(-kacc + kop, phase_modulus(d))
+    isodd(k) && throw(ArgumentError(
+        "the measured operator has eigenvalue $(k == 1 ? "i" : "-i") on this state, " *
+        "so it has no outcome in 0:1: the operator or a stored generator is not " *
+        "Hermitian. Pass phase_policy=1 to measure the Hermitian operator, or use " *
+        "expect_int! for the phase exponent."))
+    return k >> 1
+end
+
 # The branch of `measure!` for an `op` that commutes with every generator,
 # with `kop` the reduced phase exponent of `op`. It overwrites res_workspace.
 function _measure_commuting!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
@@ -843,20 +831,7 @@ function _measure_commuting!(rng::Random.AbstractRNG, tab::AbstractTableau, L::T
     if in_span
         # deterministic outcome, state unchanged
         if tab.storephase
-            kacc = phase_exponent_from_coeffs!(tab, L)
-            if d == 2
-                # The eigenvalue is i^k; a Hermitian operator on Hermitian
-                # generators has even k, and (-1)^t = i^(2t).
-                k = mod(-kacc + kop, phase_modulus(d))
-                isodd(k) && throw(ArgumentError(
-                    "the measured operator has eigenvalue $(k == 1 ? "i" : "-i") on this state, " *
-                    "so it has no outcome in 0:1: the operator or a stored generator is not " *
-                    "Hermitian. Pass phase_policy=1 to measure the Hermitian operator, or use " *
-                    "expect_int! for the phase exponent."))
-                return k >> 1
-            else
-                return mod(-kacc + kop, d)
-            end
+            return _deterministic_outcome(phase_exponent_from_coeffs!(tab, L), kop, d)
         else
             return 0
         end

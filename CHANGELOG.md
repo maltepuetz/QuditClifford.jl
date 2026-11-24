@@ -10,6 +10,34 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- `measure!` with an outcome fixed by the state, the append of a new
+  generator, and `expect!`/`expect_int!` are faster on packed storage
+  (`eltype = Bits`), with identical results, random draws and tableaux
+  afterwards: the decomposition of the operand over the generators, which
+  ran bit by bit, now works on 64 generators or qudits per word. For an
+  operand that is a product of many generators (single-qubit `Z` and a
+  dense Pauli on scrambled states, medians of three interleaved runs, M3
+  Pro), a `DestabilizerTableau` takes 30–78 times less at `n = 256` and
+  90–183 times less at `n = 1024`, in both layouts (a fixed `Z` outcome at
+  `n = 1024`: 793 to 4.9 µs generator-major, 1050 to 11.6 µs qudit-major),
+  and a canonical `StabilizerTableau` 9–43 and 13–188 times less. Appending
+  a dense operand is 7–16 and 22–44 times faster, appending a single-qubit
+  one 1.0–4.4 times. At `n = 16` the gains are 2.1–6.5 times (the dense
+  append 1.6–2.3 times). These calls are now 70–118 times faster than
+  `UInt8` storage for a `DestabilizerTableau` at `n = 1024` instead of up to
+  2.4 times slower. In a monitored brickwork circuit at `n = 1024` with `Z`
+  measurements at rate 0.16, where one measurement in seventeen has a
+  fixed outcome and its operand is a product of one or two generators,
+  such a measurement takes 2.2 instead of 7.2 µs on a qudit-major
+  `DestabilizerTableau` and a layer 0.52 instead of 0.58 ms. A
+  `StabilizerTableau` that is not canonical still solves for the
+  coefficients on a copy in `measure!`, which dominates there (1.1–1.2
+  times faster). The random branch is unchanged. A pure qudit-major packed
+  tableau takes an operand that commutes with every generator as in the
+  span without computing a residual, as every pure tableau already does
+  without phases; results differ only for a tableau built with
+  `check = false` whose `n` generators are not independent and commuting.
+  Not measured on x86 or on 32-bit hosts.
 - One-, two- and three-qudit gates on a qudit-major tableau are faster at
   the dimensions whose reduction multiplies in a wider type than the
   kernel's lane, with identical results: 1.5–1.8 times at

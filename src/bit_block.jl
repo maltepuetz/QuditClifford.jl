@@ -24,6 +24,25 @@
 #
 # Words are `UInt64` on every host, and masks are built from `UInt64(1)`, so
 # no shift goes through a 32-bit `Int`.
+#
+# The leaves and composites below are the whole block contract of
+# src/xz_block.jl, so every generic algorithm runs on a packed tableau. The
+# package itself reaches only part of it there, because `apply!`, `measure!`,
+# `expect_int!`, `dephase!` and `canonicalize!` have word-level kernels. These
+# methods are reached on packed storage only by tests: test/bits.jl calls them
+# directly and runs the generic span pipeline, `_dephase_generic!` and
+# `_orthogonalize_duals_generic!` on packed tableaux as references for the
+# kernels:
+#
+# - `dot_xz_ws_vs_col` and `dot_xz_col_vs_zacc`;
+# - `_rget`, `_gen_scale!` and the qudit-major `_swap_gens!`;
+# - the four `_gen_xor!` with `_gen_addmul!` and `_gen_submul!`;
+# - `_gen_addmul_sites!` and `_gen_submul_sites!`;
+# - `_vec_submul!`, which `reset!` compiles into its append hook and never
+#   calls there, since no generator touches a site it has traced out.
+#
+# They stay so that a generic operation without a kernel is correct on packed
+# storage instead of a `MethodError`.
 
 """
     Bits
@@ -615,6 +634,8 @@ end
 # `W < G` are transposed and stored in each other's place. Nothing outside the
 # view is read or written.
 function _transpose_bit_block!(A::_BlockMatrix{UInt64}, buf::AbstractArray{UInt64})
+    length(buf) >= 2 * _WORD_BITS || throw(ArgumentError(
+        "_transpose_bit_block!: the buffer holds $(length(buf)) words, fewer than $(2 * _WORD_BITS)."))
     nw = size(A, 1)
     P = parent(A)
     off = first(parentindices(A)[2]) - 1
