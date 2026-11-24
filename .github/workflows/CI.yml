@@ -123,6 +123,22 @@ jobs:
             arch: x86
             shard: functional-2
             eltype: bits
+          # The kernel files with both defaults switched on 32-bit: the
+          # qudit-major and packed kernels have width-dependent code (lane
+          # types, dual accumulators, word transposes).
+          - version: '1'
+            os: ubuntu-latest
+            arch: x86
+            shard: kernel
+            layout: qudit
+            eltype: bits
+          # The whole suite with both defaults switched on the oldest
+          # supported Julia, which splits fewer unions than later versions.
+          - version: '1.10'
+            os: ubuntu-latest
+            arch: x64
+            layout: qudit
+            eltype: bits
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
