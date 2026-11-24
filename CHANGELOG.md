@@ -10,6 +10,15 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- The precompile workload covers packed storage (`eltype = Bits`) in both
+  layouts, the layout switch, and `stabilizer_matrix`/`destabilizer_matrix`.
+  The first calls on a packed tableau in a new session no longer compile
+  (Julia 1.13, M3 Pro: first `measure!` 1.4 s, first `==` 0.4 s, first
+  gate 70–90 ms, each now under 0.1 ms; the first keyword constructor call
+  still compiles its keyword wrapper, about 10–15 ms), and neither does the
+  first `stabilizer_matrix` (about 0.2 s, now 1 ms). Loading the package
+  takes as long as before (0.25 s on Julia 1.13, 0.38–0.39 s on Julia 1.10);
+  generating the package image takes about 8–10 s longer.
 - `measure!` with an outcome fixed by the state, the append of a new
   generator, and `expect!`/`expect_int!` are faster on packed storage
   (`eltype = Bits`), with identical results, random draws and tableaux
