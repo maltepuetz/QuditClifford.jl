@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 @inline function _measurement_symp(
     A::AbstractMatrix{<:Integer},

@@ -1,4 +1,5 @@
 using QuditClifford, Test, Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 const ts_QC = QuditClifford
 
 ts_eye(n) = Int.((1:n) .== (1:n)')

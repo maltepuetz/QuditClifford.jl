@@ -2,6 +2,7 @@ using QuditClifford
 using Test
 using Random
 using LinearAlgebra
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Every top-level name in this file is prefixed `chan_`: runtests.jl includes all
 # test files into one module.

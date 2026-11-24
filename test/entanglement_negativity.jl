@@ -2,6 +2,7 @@ using QuditClifford
 using Test
 using Random
 using LinearAlgebra
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Dense reference: trace out every site outside A ∪ B, transpose B, and take
 # log_d of the trace norm. Sites are in kron order, qudit 1 most significant.

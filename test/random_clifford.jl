@@ -2,6 +2,7 @@ using QuditClifford
 using Test
 using Random
 using LinearAlgebra
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 const QC = QuditClifford
 

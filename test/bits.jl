@@ -1,4 +1,5 @@
 using QuditClifford, Test, Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 const bt_QC = QuditClifford
 
 # The `st_` helpers live in test/storage_helpers.jl.

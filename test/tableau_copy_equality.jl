@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 const TCE_TABLEAU_TYPES = [("StabilizerTableau", StabilizerTableau),
                            ("DestabilizerTableau", DestabilizerTableau)]

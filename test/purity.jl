@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 @testset "Purity checks" begin
     # Z1, Z2 -- commuting, independent, m == n.

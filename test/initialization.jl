@@ -1,6 +1,7 @@
 using Test
 using Random
 using QuditClifford
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # `reset!` measured behind a function barrier, so the dynamic keyword call of
 # the testset scope is not counted.
