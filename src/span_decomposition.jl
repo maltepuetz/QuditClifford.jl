@@ -484,7 +484,7 @@ function _solve_generator_rows!(
             β = mod(Int(ws[off + ℓ, q]) * inversemod(Int(ws[poff + ℓ, pq]), d), d)
             # Rows of different sites sit in different columns, and the X and
             # Z rows of one site in disjoint halves of its column (m <= h).
-            _submul_col!(view(ws, (off + ℓ):(off + m), q), view(ws, (poff + ℓ):(poff + m), pq), β, d)
+            submul_mod!(view(ws, (off + ℓ):(off + m), q), view(ws, (poff + ℓ):(poff + m), pq), β, d)
             o = mod(o - β * opv[p], d)
             ℓ += 1
         end

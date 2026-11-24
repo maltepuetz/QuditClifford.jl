@@ -93,6 +93,8 @@ end
             end
             P[j, i] = s
         end
+    elseif T === UInt8 && eltype(x) === UInt8 && eltype(z) === UInt8
+        _uint8_gram_mod!(P, x, z, n, m, d)
     else
         # Not `@turbo`: it narrows `s` to `T` before reducing it.
         @inbounds for i in 1:m, j in 1:m
@@ -107,6 +109,32 @@ end
         mod(Int(P[j, i]) - Int(P[i, j]), d) != 0 && return (j, i)
     end
     return (0, 0)
+end
+
+# `P[j, i] = (x[1:n, j] · z[1:n, i]) mod d` for UInt8 exponents. An `Int` sum
+# of UInt8 products does not vectorize; a `UInt32` one does, with twice the
+# lanes of `UInt64`. Runs of `chunk` sites (at most `_UINT8_DOT_CHUNK`, so
+# that a run of products of at most 255^2 cannot wrap) are summed in `UInt32` and
+# added into a `UInt64` total. A `@simd` loop, not `@turbo` (see the generic
+# branch).
+function _uint8_gram_mod!(P::AbstractMatrix{UInt8}, x::AbstractMatrix{UInt8},
+                          z::AbstractMatrix{UInt8}, n::Int, m::Int, d::Int,
+                          chunk::Int=_UINT8_DOT_CHUNK)
+    @inbounds for i in 1:m, j in 1:m
+        s = zero(UInt64)
+        q0 = 0
+        while q0 < n
+            q1 = min(q0 + chunk, n)
+            a = zero(UInt32)
+            @simd for q in (q0 + 1):q1
+                a += UInt32(x[q, j]) * UInt32(z[q, i])
+            end
+            s += a
+            q0 = q1
+        end
+        P[j, i] = (s % UInt64(d)) % UInt8
+    end
+    return P
 end
 
 # Qudit-major: generator j's exponents on site q sit at `x[j, q]`, so `P` is

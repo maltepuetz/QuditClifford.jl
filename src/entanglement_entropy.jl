@@ -240,6 +240,24 @@ function _check_subsystem!(tab::AbstractTableau, subsystem::AbstractVector)
     return nothing
 end
 
+# Zero `c_workspace`, then mark the sites of `subsystems[l]` with label `l`
+# (named "subsystem A", "B", "C" in errors), validating each as
+# `_mark_subsystem!` does, and return their lengths as `Int`s. Marking writes
+# `c_workspace` while reading the subsystems, so one stored there is copied
+# first; none is read after marking.
+@inline function _mark_subsystems!(tab::AbstractTableau, subsystems::Tuple)
+    subsystems = map(s -> Base.unalias(tab.c_workspace, s), subsystems)
+    fill!(tab.c_workspace, 0)
+    _mark_labelled!(tab, 1, subsystems...)
+    return map(s -> Int(length(s)), subsystems)
+end
+
+@inline _mark_labelled!(::AbstractTableau, ::Int) = nothing
+@inline function _mark_labelled!(tab::AbstractTableau, label::Int, s::AbstractVector, rest...)
+    _mark_subsystem!(tab, s, label, ("subsystem A", "subsystem B", "subsystem C")[label])
+    return _mark_labelled!(tab, label + 1, rest...)
+end
+
 # Write `label` (nonzero) into `c_workspace` at every site of `subsystem`,
 # throwing unless each site is an integer in `1:tab.n` that is not marked yet.
 # The caller zeroes the mask once and then marks one or more subsystems, so a
@@ -396,7 +414,7 @@ function _profile_pivots!(
             beta = Int(ws[r, jj])
             beta == 0 && continue
             # jj > c, so the source and destination occupy disjoint columns.
-            _submul_col!(view(ws, rows, jj), src, mul_mod(beta, alpha, d), d)
+            submul_mod!(view(ws, rows, jj), src, mul_mod(beta, alpha, d), d)
         end
         profile[cld(r, 2) + 1] += 1
         c += 1
@@ -483,16 +501,10 @@ end
 # Rank of the generator columns 1:mcols restricted to `sites[1:N]`.
 function _rank_on_sites!(tab::AbstractTableau, L::TableauLayout, sites::AbstractVector, N::Int,
                          mcols::Int)
-    d = tab.d
     mcols == 0 && return 0
-    if d == 2
-        W = tab.bit_workspace
-        nw = _pack_sites_gf2!(W, _stab(tab, L), mcols, sites, N)
-        return _rank_gf2_cols!(view(W, 1:nw, 1:mcols), 2N)
-    end
-    ws = tab.rank_workspace
-    _copy_sites!(ws, _stab(tab, L), mcols, sites, N, 0)
-    return rank_fp_cols!(view(ws, 1:(2N), 1:mcols), d, tab.inversemod)
+    ws = _rank_workspace(tab)
+    rows = _copy_sites!(ws, _stab(tab, L), mcols, sites, N, 0)
+    return _block_rank!(ws, 0, rows, 1:mcols, tab.d, tab.inversemod, 2N)
 end
 
 # Column-wise Gaussian elimination over F_d; returns the number of pivots.
@@ -560,7 +572,7 @@ function rank_fp_cols!(
             beta = Int(A[r, jj])
             beta == 0 && continue
             # jj > c, so these are disjoint columns.
-            _submul_col!(view(A, rows, jj), src, mul_mod(beta, alpha, d), d)
+            submul_mod!(view(A, rows, jj), src, mul_mod(beta, alpha, d), d)
         end
 
         piv += 1

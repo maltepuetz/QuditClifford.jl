@@ -144,6 +144,52 @@ end
             end
         end
     end
+
+    # The UInt8 products are summed in UInt32 over runs of at most `chunk`
+    # sites; a forced small chunk puts run boundaries inside every column.
+    @testset "UInt8 products: entries d - 1 and run boundaries" begin
+        rng = MersenneTwister(20261124)
+        for d in (3, 251), n in (1, 5, 33, 70), entries in (:max, :rand)
+            m = n
+            x = entries === :max ? fill(UInt8(d - 1), n, m) : rand(rng, UInt8(0):UInt8(d - 1), n, m)
+            z = entries === :max ? fill(UInt8(d - 1), n, m) : rand(rng, UInt8(0):UInt8(d - 1), n, m)
+            ref = UInt8.(mod.(transpose(Int.(x)) * Int.(z), d))
+            for chunk in unique((1, 2, 7, max(n - 1, 1), n, n + 1, QuditClifford._UINT8_DOT_CHUNK))
+                P = fill(0xff, m, m)
+                @test QuditClifford._uint8_gram_mod!(P, x, z, n, m, d, chunk) == ref
+            end
+        end
+        # Past two full runs of products (d - 1)^2, which a single UInt32 sum
+        # would wrap.
+        n = 2 * QuditClifford._UINT8_DOT_CHUNK + 3
+        x = fill(UInt8(250), n, 2)
+        @test QuditClifford._uint8_gram_mod!(fill(0xff, 2, 2), x, x, n, 2, 251) ==
+              fill(UInt8(mod(n, 251)), 2, 2)
+    end
+
+    # Every generator is Z^(d-1) on every site, and generator k adds X^(d-1)
+    # on site 1, so it fails to commute with every other one. The first pair
+    # in order is then (1, k), whatever the element type, layout or entry
+    # point.
+    @testset "the first pair is the same in every element type and layout" begin
+        for d in (3, 251), n in (5, 70)
+            stab = zeros(Int, 2n, n)
+            stab[(n + 1):(2n), :] .= d - 1
+            k = max(n ÷ 2, 2)
+            stab[1, k] = d - 1
+            ref = reference_pair(stab, n, n, d)
+            @test ref == (1, k)
+            @test kernel(stab, n, n, d) == ref
+            for TT in (StabilizerTableau, DestabilizerTableau), E in (UInt8, UInt16, Int),
+                layout in (:generator, :qudit)
+                tab = TT(d, stab; m=n, eltype=E, layout=layout, check=false)
+                @test QuditClifford._first_noncommuting_pair(tab, QuditClifford._layout_marker(tab)) == ref
+                @test !is_pure(tab; verify=true)
+                msg = try; TT(d, stab; m=n, eltype=E, layout=layout); "" catch e; e.msg end
+                @test occursin("generators 1 and $k do not", msg)
+            end
+        end
+    end
 end
 
 # The generator contract -- pairwise commuting, and independent -- is stated in

@@ -73,14 +73,8 @@ function entanglement_negativity(
     A::AbstractVector,
     B::AbstractVector,
 )
-    # Marking writes c_workspace while reading A and B, so a subsystem stored
-    # there is copied first. Neither is read after marking.
-    A = Base.unalias(tab.c_workspace, A)
-    B = Base.unalias(tab.c_workspace, B)
-    fill!(tab.c_workspace, 0)
-    _mark_subsystem!(tab, A, 1, "subsystem A")
-    _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _negativity_from_mask!(tab, _layout_marker(tab), Int(length(A)), Int(length(B)))
+    NA, NB = _mark_subsystems!(tab, (A, B))
+    return _negativity_from_mask!(tab, _layout_marker(tab), NA, NB)
 end
 
 function entanglement_negativity(tab::AbstractTableau, A::AbstractVector)
@@ -141,37 +135,66 @@ function _copy_site_rows!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMa
 end
 
 # The dot products x_i·z_j and z_i·x_j of columns `ci` and `cj` of `ws`, with
-# X exponents on rows xS+1:xS+len and Z exponents on rows zS+1:zS+len,
-# unreduced. Each has len <= n terms below (d-1)^2, inside the package's
-# arithmetic envelope (see `max_safe_dimension`).
-@inline function _cross_dots(ws::AbstractMatrix{Int}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
+# X exponents on rows xS+1:xS+len and Z exponents on rows zS+1:zS+len, each
+# reduced mod `d` into `0:d-1`. On `Int` each sum has len <= n terms below
+# (d-1)^2, inside the package's arithmetic envelope (see
+# `max_safe_dimension`); the narrow methods are exact for every `len` and `d`.
+# The `Int` method needs `len >= 1`: on Julia 1.10 its `@turbo` loop reads
+# memory even for an empty range, which can crash. The caller has len >= 1.
+@inline function _cross_dots(ws::AbstractMatrix{Int}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int,
+                             d::Int)
     xz = 0
     zx = 0
     @turbo for t in 1:len
         xz += ws[xS + t, ci] * ws[zS + t, cj]
         zx += ws[zS + t, ci] * ws[xS + t, cj]
     end
-    return xz, zx
+    return rem(xz, d), rem(zx, d)
 end
 
-@inline function _cross_dots(ws::AbstractMatrix{<:_NarrowEltype}, xS::Int, zS::Int, len::Int, ci::Int, cj::Int)
-    xz = 0
-    zx = 0
+# The sums run in `UInt64`, which holds len·(d-1)^2 for any `len` below 2^32
+# at `d <= 65535`, so they are exact on 32-bit too, where an `Int` product
+# alone overflows past d = 46341.
+@inline function _cross_dots(ws::AbstractMatrix{UInt16}, xS::Int, zS::Int, len::Int, ci::Int,
+                             cj::Int, d::Int)
+    xz = zero(UInt64)
+    zx = zero(UInt64)
     @inbounds @simd for t in 1:len
-        xz += Int(ws[xS + t, ci]) * Int(ws[zS + t, cj])
-        zx += Int(ws[zS + t, ci]) * Int(ws[xS + t, cj])
+        xz += UInt64(ws[xS + t, ci]) * UInt64(ws[zS + t, cj])
+        zx += UInt64(ws[zS + t, ci]) * UInt64(ws[xS + t, cj])
     end
-    return xz, zx
+    return Int(xz % UInt64(d)), Int(zx % UInt64(d))
+end
+
+# A `UInt32` sum fits twice as many lanes in a vector as the `UInt64` lanes
+# an `Int` accumulator takes, and an `Int` sum of `UInt8` products does not
+# vectorize at all. Runs of `chunk` terms (at most `_UINT8_DOT_CHUNK`)
+# are summed in `UInt32` and added into `UInt64` totals.
+@inline function _cross_dots(ws::AbstractMatrix{UInt8}, xS::Int, zS::Int, len::Int, ci::Int,
+                             cj::Int, d::Int, chunk::Int=_UINT8_DOT_CHUNK)
+    xz = zero(UInt64)
+    zx = zero(UInt64)
+    t0 = 0
+    while t0 < len
+        t1 = min(t0 + chunk, len)
+        a = zero(UInt32)
+        b = zero(UInt32)
+        @inbounds @simd for t in (t0 + 1):t1
+            a += UInt32(ws[xS + t, ci]) * UInt32(ws[zS + t, cj])
+            b += UInt32(ws[zS + t, ci]) * UInt32(ws[xS + t, cj])
+        end
+        xz += a
+        zx += b
+        t0 = t1
+    end
+    return Int(xz % UInt64(d)), Int(zx % UInt64(d))
 end
 
 # `c_workspace[q]` labels site `q`: 1 for A, 2 for B and 0 for a traced-out
 # site. `NA` and `NB` are the sizes of A and B.
 function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, NA::Int, NB::Int)
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
-    if tab.d == 2
-        return _negativity_from_mask!(tab, L, tab.bit_workspace, NA, NB)
-    end
-    return _negativity_from_mask!(tab, L, tab.rank_workspace, NA, NB)
+    return _negativity_from_mask!(tab, L, _rank_workspace(tab), NA, NB)
 end
 
 function _negativity_from_mask!(tab::AbstractTableau, L::TableauLayout, ws::AbstractMatrix, NA::Int,
@@ -217,8 +240,8 @@ function _symplectic_gram!(ws::AbstractMatrix, R0::Int, NS::Int, R::Int, piv::In
         cj = piv + j
         ws[R + j, j] = zero(T)
         for i in 1:(j - 1)
-            xz, zx = _cross_dots(ws, xS, zS, NS, piv + i, cj)
-            v = rem(xz, d) - rem(zx, d)
+            xz, zx = _cross_dots(ws, xS, zS, NS, piv + i, cj, d)
+            v = xz - zx
             v < 0 && (v += d)
             ws[R + i, j] = v % T
             ws[R + j, i] = (v == 0 ? 0 : d - v) % T
