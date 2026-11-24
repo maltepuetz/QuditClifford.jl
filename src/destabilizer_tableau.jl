@@ -186,6 +186,8 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     _check_eltype(eltype, d)
     _check_layout(layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    # The input is read entry by entry with 1-based indices.
+    Base.require_one_based_indexing(tableau)
     shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
@@ -383,7 +385,8 @@ function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}, L::TableauLayou
     # rather than tableau fields: this runs at most once per tableau, only from
     # the raw-matrix constructor, and a preset never reaches it at all (it goes
     # to `_preset_destabilizers!`). Hoisting them onto the struct would put
-    # about 4n^2 entries of `E` on every tableau to save an allocation on a
+    # 6n^2 entries of `E` on every tableau (`At` and `Awork` 2n × m each,
+    # `Wt` and `invT` m × m each, at m = n) to save an allocation on a
     # path that is already O(n^3). They hold entries reduced mod d in the
     # storage element type, which holds every residue, and are eliminated with
     # the primitives in src/modular.jl for that type. Each matrix is stored

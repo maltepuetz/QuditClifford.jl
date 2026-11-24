@@ -592,3 +592,23 @@ end
         @test @allocated(f()) < 1.5 * Base.summarysize(f())
     end
 end
+
+# A matrix indexed from 0, for the test below.
+struct init_ZeroBased{T} <: AbstractMatrix{T}
+    A::Matrix{T}
+end
+Base.size(o::init_ZeroBased) = size(o.A)
+Base.axes(o::init_ZeroBased) = (0:(size(o.A, 1) - 1), 0:(size(o.A, 2) - 1))
+Base.getindex(o::init_ZeroBased, i::Int, j::Int) = o.A[i + 1, j + 1]
+
+# The raw-matrix constructors read their input with 1-based indices, so an
+# offset-indexed input is rejected instead of being read out of bounds.
+@testset "Raw-matrix constructors reject offset-indexed input" begin
+    for d in (2, 3), TT in (StabilizerTableau, DestabilizerTableau)
+        S = stabilizer_matrix(TT(d, 3; state = :ghz))
+        for E in (d == 2 ? (UInt8, Int, Bits) : (UInt8, Int)), layout in (:generator, :qudit),
+            inp in (init_ZeroBased(S), init_ZeroBased(permutedims(S)))
+            @test_throws ArgumentError TT(d, inp; eltype = E, layout)
+        end
+    end
+end

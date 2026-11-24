@@ -161,6 +161,8 @@ Base.@constprop :aggressive function StabilizerTableau(d::Int, tableau::Abstract
     _check_eltype(eltype, d)
     _check_layout(layout)
     m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    # The input is read entry by entry with 1-based indices.
+    Base.require_one_based_indexing(tableau)
     shape = _infer_tableau_layout(size(tableau, 1), size(tableau, 2), m, storephase)
     shape === nothing && throw(ArgumentError(
         "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
