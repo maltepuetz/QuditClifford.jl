@@ -14,3 +14,9 @@ coverage:
         # split over processes (function headers and `end` lines appear with
         # zero hits), so allow that much before failing.
         threshold: 0.5%
+    patch:
+      default:
+        # The same artefact in a diff: the header of a function whose body is
+        # hit, or the `end` of a `@simd` loop, reported with zero hits (0.52%
+        # of the lines of a 1345-line diff).
+        threshold: 0.5%

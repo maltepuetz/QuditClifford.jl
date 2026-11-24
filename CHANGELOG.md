@@ -8,6 +8,8 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-24
+
 ### Breaking
 
 - `StabilizerTableau` and `DestabilizerTableau` have four type parameters,
@@ -44,6 +46,14 @@ dependency bump — carries the `skip-changelog` label instead.
   state throws an `ArgumentError` instead of returning `1` or `3`. This needs a
   non-Hermitian operator kept by `phase_policy` `0` or `2`, or a non-Hermitian
   stored generator; `phase_policy=1` and `expect_int!` are unaffected.
+- `measure!` draws its outcome only when the measurement is random: when `op`
+  anticommutes with a generator, or commutes with all of them without lying in
+  their span. A deterministic measurement no longer advances the RNG, so code
+  seeded with `Random.seed!` that mixes deterministic and random measurements
+  produces a different outcome sequence than under 0.4.0. Each random draw is
+  `rand(rng, 0:(d - 1))` as before. The `outcome` keyword defaults to `nothing`
+  in place of an eager `rand(0:tab.d-1)`; an explicit `outcome` still replaces
+  the draw.
 - `measure!` throws an `ArgumentError` for an `outcome` outside `0:(d-1)`.
   Such a value was used modulo `d` for the state but returned as given.
 - `StabilizerTableau` and `DestabilizerTableau` no longer have the field `stab`,
@@ -61,10 +71,11 @@ dependency bump — carries the `skip-changelog` label instead.
   at `d = 3` and `31`: entropies 4.6–8.9×, the deterministic `measure!`
   2.3–6.1×). `copy!` between tableaux of different element types throws an
   `ArgumentError`.
-- `show` of a tableau prints a `Storage:` line with the layout and element
-  type after the generator count.
-- The internal fields `workspace` and `narrow_workspace` are gone; a tableau
-  holds one rank workspace of its storage element type instead.
+- `show` of a tableau prints a `Storage:` line with the layout
+  (`generator-major` or `qudit-major`) and the element type after the
+  generator count.
+- The internal field `workspace` is gone; a tableau holds one rank workspace
+  of its storage element type instead.
 
 ### Added
 
@@ -110,8 +121,6 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
-- `show` of a tableau reports its actual layout, `generator-major` or
-  `qudit-major`, on the `Storage:` line.
 - Gates and random-outcome measurements are faster on a qudit-major tableau:
   gates 4–16 times and random-outcome measurements 1.05–2.7 times at
   n = 1023–2049 (M3 Pro, `UInt8`). `canonicalize!`, `dephase!`, `traceout!`
@@ -168,14 +177,6 @@ dependency bump — carries the `skip-changelog` label instead.
   stored under `phase_policy` `0` or `2`, can a fixed outcome on a
   `StabilizerTableau` differ: the stabilizer group then holds `-I`, and the
   outcome depends on the basis it is computed in.
-- `measure!` draws its outcome only when the measurement is random: when `op`
-  anticommutes with a generator, or commutes with all of them without lying in
-  their span. A deterministic measurement no longer advances the RNG, so code
-  seeded with `Random.seed!` that mixes deterministic and random measurements
-  produces a different outcome sequence than under 0.4.0. Each random draw is
-  `rand(rng, 0:(d - 1))` as before. The `outcome` keyword defaults to `nothing`
-  in place of an eager `rand(0:tab.d-1)`; an explicit `outcome` still replaces
-  the draw.
 - A precompile workload (PrecompileTools.jl, a new dependency) caches the
   common calls for both tableau types: a fresh session's first `measure!`,
   `apply!`, `canonicalize!`, entanglement and `random_clifford` calls no longer
@@ -227,7 +228,7 @@ dependency bump — carries the `skip-changelog` label instead.
   faster, two-qudit random gates 1.1–4.4×, random-outcome measurements
   1.2–2.3× and `canonicalize!` 1.4–4.3×; at `d = 257` (`UInt16`) the
   half-chain entropy is 10× faster.
-  Full timings are in the pull request description.
+  Full timings are in #60.
 
 ### Documentation
 
