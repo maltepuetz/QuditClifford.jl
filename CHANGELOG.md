@@ -19,6 +19,25 @@ dependency bump — carries the `skip-changelog` label instead.
   first `stabilizer_matrix` (about 0.2 s, now 1 ms). Loading the package
   takes as long as before (0.25 s on Julia 1.13, 0.38–0.39 s on Julia 1.10);
   generating the package image takes about 8–10 s longer.
+- Building a `DestabilizerTableau` from a raw matrix is faster, with
+  identical destabilizers: at `d = 2` every storage type eliminates over
+  GF(2) on packed rows, as packed storage already did (`n = 512`: 255 to
+  4.8 ms for `UInt8`; `n = 1024`: 4.5 s to 24 ms), and at odd `d` the
+  elimination runs along contiguous columns (`n = 512`, `d = 3`: 341 to
+  82 ms for `UInt8`, 1.1 s to 48 ms for `Int`; `n = 1024`, `d = 5`: 6.3 to
+  1.1 s). M3 Pro.
+- The preset constructors no longer zero storage that is already zero
+  (`DestabilizerTableau(2, 4096)`: 1.9 to 0.6 ms for `UInt8`, 0.34 to
+  0.13 ms packed), and packed GHZ destabilizers are written a word at a time
+  (`DestabilizerTableau(2, 4096; state = :ghz, eltype = Bits)` and its
+  `reset!`: 6–16 to 0.2 ms).
+- The raw-matrix constructors read their input entry by entry in its own
+  integer type, and a transposed input through a lazy `transpose`, instead
+  of converting it to a `Matrix{Int}` (and transposing it) first. A `UInt8`
+  input of `n = 4096` qudits allocated about 550 MiB and now allocates
+  38 MiB (12 MiB packed), and takes 19 instead of 32 ms. Entries outside the
+  range of `Int`, such as a `BigInt` or a `UInt64` above `typemax(Int)`, are
+  now reduced mod `d` instead of throwing an `InexactError`.
 - `measure!` with an outcome fixed by the state, the append of a new
   generator, and `expect!`/`expect_int!` are faster on packed storage
   (`eltype = Bits`), with identical results, random draws and tableaux

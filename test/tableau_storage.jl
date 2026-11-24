@@ -452,7 +452,7 @@ end
     # and the storage files that build tableaux from blocks. Kernel files that
     # do not exist count as zero matches.
     raw_ok = Dict(
-        "bit_block.jl" => 60,
+        "bit_block.jl" => 62,
         "rank_workspaces.jl" => 14,
         "span_decomposition.jl" => 9,
         "rank_copies_bits.jl" => 8,

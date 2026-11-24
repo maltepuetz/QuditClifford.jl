@@ -202,10 +202,39 @@ end
     return v
 end
 
+# Set bits `lo:hi` (1-based) of word column `c`, a word at a time.
+function _setbits!(A::_BlockMatrix{UInt64}, lo::Int, hi::Int, c::Int)
+    lo > hi && return A
+    wlo, whi = _word_index(lo), _word_index(hi)
+    @inbounds for w in wlo:whi
+        mask = typemax(UInt64)
+        w == wlo && (mask &= typemax(UInt64) << _bit_offset(lo))
+        w == whi && (mask &= typemax(UInt64) >> (_WORD_BITS - 1 - _bit_offset(hi)))
+        A[w, c] |= mask
+    end
+    return A
+end
+
 @inline _xget(b::_GMBits, q::Int, j::Int) = _getbit(b.x, q, j)
 @inline _zget(b::_GMBits, q::Int, j::Int) = _getbit(b.z, q, j)
 @inline _xset!(b::_GMBits, v::Int, q::Int, j::Int) = _setbit!(b.x, v, q, j)
 @inline _zset!(b::_GMBits, v::Int, q::Int, j::Int) = _setbit!(b.z, v, q, j)
+# The X exponents of the GHZ duals `D_j = X_1 ... X_{j-1}` in a zero block:
+# generator `j` takes qudits `1:j-1`; qudit-major, qudit `q` is in the duals
+# `q+1:n`.
+function _ghz_duals_x!(b::_GMBits, n::Int)
+    for j in 2:n
+        _setbits!(b.x, 1, j - 1, j)
+    end
+    return b
+end
+function _ghz_duals_x!(b::_QMBits, n::Int)
+    for q in 1:(n - 1)
+        _setbits!(b.x, q + 1, n, q)
+    end
+    return b
+end
+
 @inline _xget(b::_QMBits, q::Int, j::Int) = _getbit(b.x, j, q)
 @inline _zget(b::_QMBits, q::Int, j::Int) = _getbit(b.z, j, q)
 @inline _xset!(b::_QMBits, v::Int, q::Int, j::Int) = _setbit!(b.x, v, j, q)

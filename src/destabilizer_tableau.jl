@@ -192,8 +192,9 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     ))
 
     # The build step copies the generators into the tableau's own arrays and
-    # never writes to its input.
-    tab_in = shape.transpose ? permutedims(tableau) : tableau
+    # never writes to its input. A transposed input is read through a lazy
+    # `transpose`, entry by entry, with no copy.
+    tab_in = shape.transpose ? transpose(tableau) : tableau
     eltype === Bits && return _packed_matrix_tableau(DestabilizerTableau, d, shape, tab_in,
                                                      inversemod, check, layout)
 
@@ -262,7 +263,7 @@ function _init_destabilizers!(tab::DestabilizerTableau, L::TableauLayout,
         rebuild_destabilizers!(tab, L)
         _recompute_xdotz_cache!(tab, L)
     else
-        _preset_destabilizers!(tab, L, preset_state, preset_basis)
+        _preset_destabilizers!(tab, L, preset_state, preset_basis, true)
     end
 
     return tab
@@ -272,30 +273,12 @@ end
 # Destabilizer construction #
 #############################
 
-# Swap rows `r` and `s` of `A` over the columns `1:ncols`.
-@inline function _swap_rows!(A::AbstractMatrix, r::Int, s::Int, ncols::Int)
-    @turbo for j in 1:ncols
-        t = A[r, j]
-        A[r, j] = A[s, j]
-        A[s, j] = t
-    end
-    return A
-end
-
-# A plain loop for bytes. There `@turbo` runs 64 lanes and builds its remainder
-# mask with the 64-bit `bzhi` instruction, which LLVM cannot always compile for
-# 32-bit x86. On 64-bit machines the plain loop is also the faster one for bytes.
-@inline function _swap_rows!(A::AbstractMatrix{UInt8}, r::Int, s::Int, ncols::Int)
-    @inbounds for j in 1:ncols
-        t = A[r, j]
-        A[r, j] = A[s, j]
-        A[s, j] = t
-    end
-    return A
-end
-
-@inline function _pivot_columns!(
-    A::AbstractMatrix{<:_StorageEltype},
+# Row-reduce the `m` rows of a matrix stored transposed in `At` (`ncols × m`:
+# row `k` is column `k` of `At`, so every row operation runs along a
+# contiguous column). Forward elimination only; the pivot column of row `i`
+# goes to `pivots[i]`. Returns the number of pivots.
+function _pivot_columns!(
+    At::AbstractMatrix{<:_StorageEltype},
     m::Int,
     ncols::Int,
     d::Int,
@@ -305,9 +288,9 @@ end
     r = 1
     c = 1
     pivcount = 0
-    while r <= m && c <= ncols
+    @inbounds while r <= m && c <= ncols
         pivot = r
-        while pivot <= m && A[pivot, c] == 0
+        while pivot <= m && At[c, pivot] == 0
             pivot += 1
         end
         if pivot > m
@@ -315,19 +298,17 @@ end
             continue
         end
 
-        pivot != r && _swap_rows!(A, r, pivot, ncols)
+        pivot != r && _swap_cols!(At, 1:ncols, r, pivot)
 
-        # Row-strided rather than column-strided, but the contract is the same:
-        # `rebuild_destabilizers!` fills `A` through `mod(..., d)`, so every
-        # entry is reduced into [0, d) before this runs.
-        α = inversemod(Int(A[r, c]), d)
-        scale_mod!(view(A, r, c:ncols), α, d)
+        # `rebuild_destabilizers!` fills `At` with entries reduced into [0, d).
+        α = inversemod(Int(At[c, r]), d)
+        scale_mod!(view(At, c:ncols, r), α, d)
 
         for rr in (r+1):m
-            β = Int(A[rr, c])
+            β = Int(At[c, rr])
             β == 0 && continue
-            # rr >= r+1, so these are disjoint rows.
-            submul_mod!(view(A, rr, c:ncols), view(A, r, c:ncols), β, d)
+            # rr >= r+1, so these are disjoint columns.
+            submul_mod!(view(At, c:ncols, rr), view(At, c:ncols, r), β, d)
         end
 
         pivcount += 1
@@ -338,53 +319,53 @@ end
     return pivcount
 end
 
+# The inverse mod `d` of the `m × m` matrix stored transposed in `Wt`, written
+# transposed into `invT`, by Gauss-Jordan elimination on the columns of both.
+# `Wt` is overwritten.
 function _inv_matrix_mod!(
-    invA::AbstractMatrix{T},
-    Awork::AbstractMatrix{T},
+    invT::AbstractMatrix{T},
+    Wt::AbstractMatrix{T},
     m::Int,
     d::Int,
     inversemod::InverseMod,
 ) where {T<:_StorageEltype}
-    (size(Awork, 1) >= m && size(Awork, 2) >= m) || throw(ArgumentError("Matrix workspace too small."))
-    (size(invA, 1) >= m && size(invA, 2) >= m) || throw(ArgumentError("Inverse workspace too small."))
+    (size(Wt, 1) >= m && size(Wt, 2) >= m) || throw(ArgumentError("Matrix workspace too small."))
+    (size(invT, 1) >= m && size(invT, 2) >= m) || throw(ArgumentError("Inverse workspace too small."))
 
-    fill!(invA, zero(T))
+    fill!(invT, zero(T))
     @inbounds for i in 1:m
-        invA[i, i] = one(T)
+        invT[i, i] = one(T)
     end
 
-    for c in 1:m
+    @inbounds for c in 1:m
         pivot = c
-        while pivot <= m && Awork[pivot, c] == 0
+        while pivot <= m && Wt[c, pivot] == 0
             pivot += 1
         end
         pivot > m && throw(ArgumentError("Matrix is singular modulo d."))
 
         if pivot != c
-            _swap_rows!(Awork, c, pivot, m)
-            _swap_rows!(invA, c, pivot, m)
+            _swap_cols!(Wt, 1:m, c, pivot)
+            _swap_cols!(invT, 1:m, c, pivot)
         end
 
-        # `Awork` and `invA` are separate matrices, so scaling row `c` takes
-        # one `scale_mod!` pass over each. Both operands start reduced --
-        # `Awork` is copied from the `mod`-reduced `A`, `invA` from the
-        # identity -- and at d = 2 every α is 1, which `scale_mod!` skips
-        # outright.
-        α = inversemod(Int(Awork[c, c]), d)
-        scale_mod!(view(Awork, c, 1:m), α, d)
-        scale_mod!(view(invA, c, 1:m), α, d)
+        # Both start reduced: `Wt` is copied from the reduced `At`, `invT`
+        # from the identity. At d = 2 every α is 1, which `scale_mod!` skips.
+        α = inversemod(Int(Wt[c, c]), d)
+        scale_mod!(view(Wt, 1:m, c), α, d)
+        scale_mod!(view(invT, 1:m, c), α, d)
 
         for rr in 1:m
             rr == c && continue
-            β = Int(Awork[rr, c])
+            β = Int(Wt[c, rr])
             β == 0 && continue
-            # rr != c (guarded above), so these are disjoint rows.
-            submul_mod!(view(Awork, rr, 1:m), view(Awork, c, 1:m), β, d)
-            submul_mod!(view(invA, rr, 1:m), view(invA, c, 1:m), β, d)
+            # rr != c (guarded above), so these are disjoint columns.
+            submul_mod!(view(Wt, 1:m, rr), view(Wt, 1:m, c), β, d)
+            submul_mod!(view(invT, 1:m, rr), view(invT, 1:m, c), β, d)
         end
     end
 
-    return invA
+    return invT
 end
 
 function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}, L::TableauLayout) where {IM, E}
@@ -396,61 +377,115 @@ function rebuild_destabilizers!(tab::DestabilizerTableau{IM, E}, L::TableauLayou
 
     _zero!(destab)
     m == 0 && return destab
+    d == 2 && return _rebuild_destabilizers_gf2!(stab, destab, n, m)
 
-    # The five matrices below are scratch for this call alone, so they are
-    # locals rather than tableau fields: this runs at most once per tableau,
-    # only from the raw-matrix constructor, and a preset never reaches it at all
-    # (it goes to `_preset_destabilizers!`). Hoisting them onto the struct would
-    # put 6n^2 entries of `E` and n Ints on every tableau to save an allocation
-    # on a path that is already O(n^3). They hold entries reduced mod d in the
+    # The matrices below are scratch for this call alone, so they are locals
+    # rather than tableau fields: this runs at most once per tableau, only from
+    # the raw-matrix constructor, and a preset never reaches it at all (it goes
+    # to `_preset_destabilizers!`). Hoisting them onto the struct would put
+    # about 4n^2 entries of `E` on every tableau to save an allocation on a
+    # path that is already O(n^3). They hold entries reduced mod d in the
     # storage element type, which holds every residue, and are eliminated with
-    # the primitives in src/modular.jl for that type.
-    #
-    # A and Awork are allocated n rows but only 1:m are ever touched, since
-    # every row index below is bounded by m. `zeros` rather than `undef` for
-    # the unused rows: one O(n^2) fill against an O(n^3) routine.
+    # the primitives in src/modular.jl for that type. Each matrix is stored
+    # transposed, a row per column, so every row operation of the elimination
+    # streams one contiguous column.
 
-    # Build A = Sᵀ J (size m × 2n)
-    A = zeros(E, n, 2n)
+    # Row k of A = Sᵀ J (size m × 2n), as column k of At. The generator
+    # entries are reduced, so the negation needs no division.
+    At = Matrix{E}(undef, 2n, m)
     @inbounds for k in 1:m
         for q in 1:n
-            A[k, q] = mod(_zget(stab, q, k), d) % E
-            A[k, n+q] = mod(-_xget(stab, q, k), d) % E
+            At[q, k] = _zget(stab, q, k) % E
+            x = _xget(stab, q, k)
+            At[n+q, k] = (x == 0 ? 0 : d - x) % E
         end
     end
 
-    # The copies below use `copy` and plain loops, not `@turbo`. On `UInt8`
-    # entries `@turbo` runs 64 lanes and builds its remainder mask with the
-    # 64-bit `bzhi` instruction, which LLVM cannot compile for 32-bit x86 once
-    # the mask is shared between loops. Each copy is O(n^2) in an O(n^3)
-    # routine.
-    Awork = copy(A)
+    # `copy` and plain loops, not `@turbo`: on `UInt8` entries `@turbo` runs 64
+    # lanes and builds its remainder mask with the 64-bit `bzhi` instruction,
+    # which LLVM cannot compile for 32-bit x86 once the mask is shared between
+    # loops. Each copy is O(n^2) in an O(n^3) routine.
+    Awork = copy(At)
 
     pivots = zeros(Int, n)
     pivcount = _pivot_columns!(Awork, m, 2n, d, tab.inversemod, pivots)
     # If generators are not independent, destabilizers are undefined; leave them zeroed.
     pivcount == m || return destab
 
-    A_P = zeros(E, n, n)
-    @inbounds for j in 1:m
-        pj = pivots[j]
-        for i in 1:m
-            A_P[i, j] = A[i, pj]
-        end
+    # A restricted to its pivot columns, A_P[i, j] = A[i, pivots[j]], stored
+    # transposed: Wt[j, i] = A_P[i, j].
+    Wt = Matrix{E}(undef, m, m)
+    @inbounds for i in 1:m, j in 1:m
+        Wt[j, i] = At[pivots[j], i]
     end
 
+    invT = Matrix{E}(undef, m, m)
+    _inv_matrix_mod!(invT, Wt, m, d, tab.inversemod)
+
+    # D_j holds entry (A_P⁻¹)[i, j] = invT[j, i] at row pivots[i].
     @inbounds for j in 1:m, i in 1:m
-        Awork[i, j] = A_P[i, j]
+        _rset!(destab, Int(invT[j, i]), pivots[i], j)
+    end
+    return destab
+end
+
+# The destabilizers at d = 2. The rows `[z_k x_k]` of `A = Sᵀ J` (the signs
+# vanish mod 2) are packed, each followed by row `k` of an `m × m` identity,
+# and reduced by Gauss-Jordan elimination over GF(2). Once every column of `A`
+# is processed with `m` pivots, `A` is the identity on its pivot columns, so
+# the identity part holds the inverse of `A` restricted to them, and the
+# destabilizers equal those of the elimination mod `d`. Reads and writes the
+# blocks through their leaves only, so it serves every storage; `destab` must
+# be zero.
+function _rebuild_destabilizers_gf2!(stab, destab, n::Int, m::Int)
+    nw = _nwords(n)
+    W = 2nw + _nwords(m)
+    # Column `k` of `R` is packed row `k`: Z bits in words `1:nw`, X bits in
+    # words `nw+1:2nw`, the identity part after them.
+    R = zeros(UInt64, W, m)
+    @inbounds for k in 1:m
+        for q in 1:n
+            w, bit = _word_index(q), UInt64(1) << _bit_offset(q)
+            _zget(stab, q, k) == 0 || (R[w, k] |= bit)
+            _xget(stab, q, k) == 0 || (R[nw + w, k] |= bit)
+        end
+        R[2nw + _word_index(k), k] |= UInt64(1) << _bit_offset(k)
     end
 
-    A_inv = zeros(E, n, n)
-    _inv_matrix_mod!(A_inv, Awork, m, d, tab.inversemod)
-
-    @inbounds for i in 1:m
-        p = pivots[i]
-        for j in 1:m
-            _rset!(destab, mod(Int(A_inv[i, j]), d), p, j)
+    pivots = zeros(Int, m)
+    r = 1
+    @inbounds for c in 1:2n
+        r > m && break
+        cq = c <= n ? c : c - n
+        w = (c <= n ? 0 : nw) + _word_index(cq)
+        bit = UInt64(1) << _bit_offset(cq)
+        p = r
+        while p <= m && R[w, p] & bit == 0
+            p += 1
         end
+        p > m && continue
+        if p != r
+            for v in 1:W
+                R[v, p], R[v, r] = R[v, r], R[v, p]
+            end
+        end
+        # Row `r` is zero in every column before `c`, so the words before `w`
+        # need no update.
+        for k in 1:m
+            (k == r || R[w, k] & bit == 0) && continue
+            @simd for v in w:W
+                R[v, k] ⊻= R[v, r]
+            end
+        end
+        pivots[r] = c
+        r += 1
+    end
+    # Dependent generators have no destabilizers; they stay zero.
+    r - 1 == m || return destab
+
+    @inbounds for i in 1:m, j in 1:m
+        (R[2nw + _word_index(j), i] >> _bit_offset(j)) & UInt64(1) == 0 ||
+            _rset!(destab, 1, pivots[i], j)
     end
     return destab
 end
@@ -466,25 +501,28 @@ chain (`:ghz`), so their duals can be written down:
   ghz:                 `D_1 = Z_1^(d-1)`,  `D_j = X_1...X_{j-1}` for `j >= 2`
 
 Each satisfies the duality relation `<D_j, S_k> = delta_jk` directly. `:mixed`
-has no active generators, so its dual block stays zero.
+has no active generators, so its dual block stays zero. With `zeroed`, the dual
+block and the cache are already zero (a tableau just built) and are not
+cleared again.
 """
-function _preset_destabilizers!(tab::DestabilizerTableau, L::TableauLayout, state::Symbol, basis_spec)
+function _preset_destabilizers!(tab::DestabilizerTableau, L::TableauLayout, state::Symbol, basis_spec,
+                                zeroed::Bool = false)
     n = tab.n
     d = tab.d
     destab = _destab(tab, L)
     cache = tab.xdotz_cache
 
-    _zero!(destab)
-    fill!(cache, 0)
+    if !zeroed
+        _zero!(destab)
+        fill!(cache, 0)
+    end
 
     if state === :mixed
         return nothing
     elseif state === :ghz
         n == 0 && return nothing
         _zset!(destab, d - 1, 1, 1)         # D_1 = Z_1^(d-1)
-        @inbounds for j in 2:n, q in 1:(j-1)
-            _xset!(destab, 1, q, j)           # D_j = X_1 ... X_{j-1}
-        end
+        _ghz_duals_x!(destab, n)            # D_j = X_1 ... X_{j-1}
         return nothing                      # every GHZ generator has x.z = 0
     elseif state === :product
         @inbounds for j in 1:n
@@ -500,6 +538,15 @@ function _preset_destabilizers!(tab::DestabilizerTableau, L::TableauLayout, stat
     end
 
     throw(ArgumentError("Unknown preset state: $state."))
+end
+
+# The X exponents of the GHZ duals `D_j = X_1 ... X_{j-1}` (`j ≥ 2`) in a
+# zero block; a packed block takes whole words (src/bit_block.jl).
+function _ghz_duals_x!(b, n::Int)
+    @inbounds for j in 2:n, q in 1:(j-1)
+        _xset!(b, 1, q, j)
+    end
+    return b
 end
 
 @inline _preset_basis_at(basis::Symbol, ::Int) = _canonical_basis_symbol(basis)
@@ -610,11 +657,15 @@ function reset!(tab::DestabilizerTableau; state::Symbol=:mixed, basis=:Z)
     return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
 end
 
-function _reset_preset!(tab::DestabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec)
-    m = _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
+# `zeroed`: the blocks, the phase and the cache are already zero, as in a
+# tableau just allocated, so they are not cleared again.
+function _reset_preset!(tab::DestabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec,
+                        zeroed::Bool = false)
+    m = zeroed ? _fill_preset!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase) :
+                 _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
     tab.m = m
     tab.iscanonical = false
-    _preset_destabilizers!(tab, L, state_norm, basis_spec)
+    _preset_destabilizers!(tab, L, state_norm, basis_spec, zeroed)
     return tab
 end
 
