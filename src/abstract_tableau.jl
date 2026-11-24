@@ -21,7 +21,7 @@ function _check_copy_compatible(dst::AbstractTableau, src::AbstractTableau)
             "(d=$(src.d), n=$(src.n), storephase=$(src.storephase))."))
     Ed, Es = _storage_eltype(dst), _storage_eltype(src)
     Ed === Es || throw(ArgumentError(
-        "copy! needs matching storage element types; got destination eltype = $Ed " *
-        "and source eltype = $Es."))
+        "copy! needs matching storage element types; got destination eltype = " *
+        "$(nameof(Ed)) and source eltype = $(nameof(Es))."))
     return nothing
 end

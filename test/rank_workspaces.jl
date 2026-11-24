@@ -528,3 +528,93 @@ rw_qm_allocs(ws, bit, P, qb, m, d, sites, all_sites) = (
         @test rw_qm_allocs(ws, bit, P, qb, m, d, subset, perm) == ntuple(_ -> 0, 7)
     end
 end
+
+# The same random entries (generators m+1:n zero) as a `UInt8` block and as a
+# packed block, both in layout `L`.
+function rw_packed_pair(rng, L, n, m)
+    X = rand(rng, UInt8(0):UInt8(1), n, n)
+    Z = rand(rng, UInt8(0):UInt8(1), n, n)
+    X[:, (m + 1):n] .= 0
+    Z[:, (m + 1):n] .= 0
+    u8 = L === RW.GeneratorMajor ? RW.XZBlock{L}(copy(X), copy(Z)) :
+         RW.XZBlock{L}(permutedims(X), permutedims(Z))
+    b = RW.BitBlock{L}(RW._stab_bit_blocks(n)..., n)
+    for j in 1:n, q in 1:n
+        RW._xset!(b, Int(X[q, j]), q, j)
+        RW._zset!(b, Int(Z[q, j]), q, j)
+    end
+    return u8, b
+end
+
+rw_pack_alloc(W, b, m, sites, N) = @allocated RW._pack_sites_gf2!(W, b, m, sites, N)
+rw_copy_alloc(ws, b, m, sites, N) = @allocated RW._copy_sites!(ws, b, m, sites, N, 64)
+rw_rows_alloc(ws, b, m) = @allocated RW._copy_generator_rows!(ws, b, m)
+
+@testset "packed copies match" begin
+    for L in (RW.GeneratorMajor, RW.QuditMajor), n in (5, 64, 65, 130, 300), dm in (0, 3)
+        m = n - dm
+        rng = Xoshiro(1000n + m + 7 * (L === RW.QuditMajor))
+        u8, b = rw_packed_pair(rng, L, n, m)
+        site_sets = Any[1:(n ÷ 2), n:-1:1, randperm(rng, n)[1:max(1, n ÷ 3)],
+                        5:min(n, 40), [1]]
+        n >= 96 && push!(site_sets, 33:96)
+        # unions of ranges (runs of consecutive sites, some words mixed), a run
+        # from an unaligned start, a gap inside a word, and a swap
+        h4 = max(1, n ÷ 4)
+        push!(site_sets, vcat(1:h4, (2h4 + 1):min(n, 3h4)), collect(3:min(n, 70)),
+              setdiff(1:n, [min(n, 40)]), [2; 1; 3:n])
+        for sites in site_sets
+            N = length(sites)
+            nw = cld(2N, 64)
+            W8 = rw_sentinel(UInt64, nw + 2, n + 1)
+            Wb = copy(W8)
+            r8 = RW._pack_sites_gf2!(W8, u8, m, sites, N)
+            rb = RW._pack_sites_gf2!(Wb, b, m, sites, N)
+            @test rb == r8
+            @test Wb == W8
+
+            ws8 = rw_sentinel(UInt64, nw + 4, n + 1)
+            wsb = copy(ws8)
+            @test RW._copy_sites!(wsb, b, m, sites, N, 64) == RW._copy_sites!(ws8, u8, m, sites, N, 64)
+            @test wsb == ws8
+
+            rw_pack_alloc(Wb, b, m, sites, N)
+            rw_copy_alloc(wsb, b, m, sites, N)
+            @test rw_pack_alloc(Wb, b, m, sites, N) == 0
+            @test rw_copy_alloc(wsb, b, m, sites, N) == 0
+        end
+
+        h = cld(m, 64) + 1
+        G8 = rw_sentinel(UInt64, 2h, n + 3)
+        Gb = copy(G8)
+        RW._copy_generator_rows!(G8, u8, m)
+        RW._copy_generator_rows!(Gb, b, m)
+        @test Gb == G8
+        rw_rows_alloc(Gb, b, m)
+        @test rw_rows_alloc(Gb, b, m) == 0
+    end
+
+    @testset "generator-major unions of ranges over more than 64 words" begin
+        n, m = 2200, 2197
+        u8, b = rw_packed_pair(Xoshiro(2200), RW.GeneratorMajor, n, m)
+        for sites in (vcat(1:1000, 1101:2200), vcat(1:2100, [2200]), vcat(5:1030, 1031:2199))
+            N = length(sites)
+            nw = cld(2N, 64)
+            W8 = rw_sentinel(UInt64, nw + 2, n + 1)
+            Wb = copy(W8)
+            @test RW._pack_sites_gf2!(Wb, b, m, sites, N) == RW._pack_sites_gf2!(W8, u8, m, sites, N)
+            @test Wb == W8
+            rw_pack_alloc(Wb, b, m, sites, N)
+            @test rw_pack_alloc(Wb, b, m, sites, N) == 0
+        end
+    end
+
+    @testset "methods are the packed ones" begin
+        for B in (RW._GMBits, RW._QMBits)
+            W = zeros(UInt64, 2, 2)
+            @test which(RW._pack_sites_gf2!, (typeof(W), B, Int, UnitRange{Int}, Int)).sig.parameters[3] === B
+            @test which(RW._pack_sites_gf2!, (typeof(W), B, Int, Vector{Int}, Int)).sig.parameters[3] === B
+            @test which(RW._copy_generator_rows!, (typeof(W), B, Int)).sig.parameters[3] === B
+        end
+    end
+end

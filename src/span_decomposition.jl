@@ -37,7 +37,6 @@ function coeffs_from_generators! end
 end
 
 @inline function coeffs_from_generators!(tab::DestabilizerTableau, L::TableauLayout, op)
-    n = tab.n
     m = tab.m
     d = tab.d
     destab = _destab(tab, L)
@@ -52,16 +51,7 @@ end
     set_operator!(opvec, tab, op)
 
     @inbounds for j in 1:m
-        dx = _xgen(destab, j)
-        dz = _zgen(destab, j)
-        coeff = 0
-        @turbo for q in 1:n
-            coeff += Int(dx[q]) * opvec[n + q]
-        end
-        @turbo for q in 1:n
-            coeff -= Int(dz[q]) * opvec[q]
-        end
-        cvec[j] = mod(coeff, d)
+        cvec[j] = mod(commutation_col(destab, j, opvec), d)
     end
 
     return cvec
@@ -213,10 +203,7 @@ where `g_j` are active stabilizer generators.
 
             kacc = mod(kacc + phase[j] + 2 * cross, d_phase)
 
-            zj = _zgen(stab, j)
-            @inbounds @simd for q in 1:n
-                zacc[q] = (zacc[q] + zj[q] % Int) & 1
-            end
+            _zacc_add_gf2!(zacc, stab, j)
         end
         return kacc
     else
@@ -245,6 +232,21 @@ where `g_j` are active stabilizer generators.
         end
         return kacc
     end
+end
+
+# zacc[1:n] += the Z half of generator j of `b`, mod 2.
+@inline function _zacc_add_gf2!(zacc::AbstractVector{Int}, b::XZBlock, j::Int)
+    zj = _zgen(b, j)
+    @inbounds @simd for q in 1:_nq(b)
+        zacc[q] = (zacc[q] + zj[q] % Int) & 1
+    end
+    return zacc
+end
+@inline function _zacc_add_gf2!(zacc::AbstractVector{Int}, b::BitBlock, j::Int)
+    @inbounds for q in 1:_nq(b)
+        zacc[q] ⊻= _zget(b, q, j)
+    end
+    return zacc
 end
 
 #############################################################

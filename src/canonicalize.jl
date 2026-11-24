@@ -28,14 +28,14 @@ end
 # `1:2n` in order, X rows first, so a column's pivot row decides whether its X
 # block is zero.
 @inline function _canonicalize_tableau!(
-    b::XZBlock,
+    b::_AnyBlock,
     phase::AbstractVector{Int},
     m::Int,
     d::Int,
     storephase::Bool,
     inv::InverseMod,
     pivcol_of_row::Vector{Int},
-    xdotz_cache::Vector{Int},
+    xdotz_cache::AbstractVector{Int},
 )
     @turbo for i in eachindex(pivcol_of_row)
         pivcol_of_row[i] = 0
@@ -130,15 +130,15 @@ end
 # `_canonicalize_tableau!` that also carries the destabilizer block `db` through
 # the same column operations, keeping `⟨D_j, S_k⟩ = δ_jk`.
 @inline function _canonicalize_tableau_with_destab!(
-    b::XZBlock,
+    b::_AnyBlock,
     phase::AbstractVector{Int},
-    db::XZBlock,
+    db::_AnyBlock,
     m::Int,
     d::Int,
     storephase::Bool,
     inv::InverseMod,
     pivcol_of_row::Vector{Int},
-    xdotz_cache::Vector{Int},
+    xdotz_cache::AbstractVector{Int},
 )
     @turbo for i in eachindex(pivcol_of_row)
         pivcol_of_row[i] = 0
@@ -284,7 +284,11 @@ function canonicalize!(tab::DestabilizerTableau)
     return nothing
 end
 
-function _canonicalize!(tab::StabilizerTableau, L::TableauLayout)
+_canonicalize!(tab::StabilizerTableau, L::TableauLayout) = _canonicalize_generic!(tab, L)
+_canonicalize!(tab::DestabilizerTableau, L::TableauLayout) = _canonicalize_generic!(tab, L)
+
+# The per-generator `canonicalize!`, for every layout and storage.
+function _canonicalize_generic!(tab::StabilizerTableau, L::TableauLayout)
     _canonicalize_tableau!(
         _stab(tab, L),
         _phase(tab),
@@ -299,7 +303,7 @@ function _canonicalize!(tab::StabilizerTableau, L::TableauLayout)
     return nothing
 end
 
-function _canonicalize!(tab::DestabilizerTableau, L::TableauLayout)
+function _canonicalize_generic!(tab::DestabilizerTableau, L::TableauLayout)
     _canonicalize_tableau_with_destab!(
         _stab(tab, L),
         _phase(tab),

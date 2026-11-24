@@ -21,6 +21,16 @@ using Random
                       entanglement_entropy(tab, [1, 2])
             end
         end
+        # The rank copies index `subsystem[1:N]`, so a subsystem with other
+        # axes is rejected, with or without the check.
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            tab = TT(d, 8; state=:product)
+            apply!(tab, Fourier(1)); apply!(tab, SUM(1, 2))
+            offset = view(collect(1:8), Base.IdentityUnitRange(3:3))
+            @test_throws ArgumentError entanglement_entropy(tab, offset)
+            @test_throws ArgumentError entanglement_entropy(tab, offset; check=false)
+            @test entanglement_entropy(tab, [3]) == 0
+        end
         tab = StabilizerTableau(3, 4; state=:ghz)
         sub = [1, 2]
         ee_allocs(t, s) = @allocated entanglement_entropy(t, s)
@@ -458,5 +468,24 @@ end
                 jj == c || @test stabilizer_matrix(st)[r, jj] == 0
             end
         end
+    end
+end
+
+@testset "Subsystem ranges whose length is not an Int" begin
+    rng = Random.MersenneTwister(2027)
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3), m in (8, 5)
+        tab = TT(d, 8)
+        random_state!(rng, tab; m=m)
+        A, B, C = big(1):big(3), big(4):big(5), big(6):big(8)
+        a, b, c = 1:3, 4:5, 6:8
+        @test entanglement_entropy(tab, A) == entanglement_entropy(tab, a)
+        @test entanglement_entropy(tab, big(1):big(6)) == entanglement_entropy(tab, 1:6)
+        @test mutual_information(tab, A, B) == mutual_information(tab, a, b)
+        @test mutual_information(tab, A) == mutual_information(tab, a)
+        @test conditional_mutual_information(tab, A, B, C) ==
+              conditional_mutual_information(tab, a, b, c)
+        @test tripartite_information(tab, A, B, C) == tripartite_information(tab, a, b, c)
+        @test entanglement_negativity(tab, A, B) == entanglement_negativity(tab, a, b)
+        @test entanglement_negativity(tab, A) == entanglement_negativity(tab, a)
     end
 end

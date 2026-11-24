@@ -342,7 +342,7 @@ end
 
 @testset "measure! allocates nothing in the noncommuting branch" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
-        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
         layout in (:generator, :qudit)
         n = 64
         tab = TT(d, n; state = :Z, eltype = E, layout)
@@ -363,8 +363,27 @@ end
     end
 end
 
+@testset "packed qudit-major measure! allocates nothing on the sparse path" begin
+    # At n = 384 the mask of generators 1:n has six words, so one nonzero word
+    # is below the default cutoff `(6 - 1) ÷ _BIT_QM_SPARSE_DIV`.
+    n = 384
+    @test (MK._nwords(n) - 1) ÷ MK._BIT_QM_SPARSE_DIV >= 1
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        # X5 X6 anticommutes with Z5 (the pivot) and Z6 only: one mask word.
+        tab = TT(2, n; state = :Z, eltype = Bits, layout = :qudit)
+        op = DoublePauli(5, 1, 0, 6, 1, 0)
+        @test mkref_measure_allocs(Xoshiro(1), tab, op) == 0
+        a, b = copy(tab), copy(tab)
+        L = MK.QuditMajor()
+        @test MK._measure_bits_qm!(Xoshiro(2), a, L, op, nothing, 1, MK._BIT_QM_SPARSE_DIV) ==
+              MK._measure_bits_qm!(Xoshiro(2), b, L, op, nothing, 1, typemax(Int))
+        @test a == b
+    end
+end
+
 @testset "measure! allocates nothing in the append branch of a DestabilizerTableau" begin
-    for d in (2, 3, 31), E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+    for d in (2, 3, 31),
+        E in filter(E -> QuditClifford._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
         layout in (:generator, :qudit)
         n = 64
         h = n ÷ 2
@@ -384,10 +403,11 @@ end
 end
 
 # Random-branch fixtures: brickwork circuits with Z measurements at rate `p`
-# on a pure state, and a random pure state.
-function mkqm_monitored(TT, d, n, p, storephase, seed)
+# on a pure state, and a random pure state, in the default element type for
+# `d` or in `eltype`.
+function mkqm_monitored(TT, d, n, p, storephase, seed; eltype = MK._default_eltype(d))
     rng = Xoshiro(seed)
-    tab = TT(d, n; state = :Z, storephase)
+    tab = TT(d, n; state = :Z, storephase, eltype)
     for l in 1:8
         for q in (isodd(l) ? 1 : 2):2:(n - 1)
             apply!(tab, random_clifford(rng, d, [q, q + 1]))
@@ -399,8 +419,8 @@ function mkqm_monitored(TT, d, n, p, storephase, seed)
     return tab
 end
 
-function mkqm_random(TT, d, n, storephase, seed)
-    tab = TT(d, n; state = :Z, storephase)
+function mkqm_random(TT, d, n, storephase, seed; eltype = MK._default_eltype(d))
+    tab = TT(d, n; state = :Z, storephase, eltype)
     random_state!(Xoshiro(seed), tab)
     return tab
 end
@@ -442,8 +462,10 @@ end
     L = MK.QuditMajor()
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31), storephase in (false, true)
         n = 48
-        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d),
-                                 mkqm_random(TT, d, n, storephase, 40d)))
+        # The qudit-major kernel takes unpacked storage.
+        E = d == 2 ? UInt8 : MK._default_eltype(d)
+        for (k, g) in enumerate((mkqm_monitored(TT, d, n, 0.15, storephase, 30d; eltype = E),
+                                 mkqm_random(TT, d, n, storephase, 40d; eltype = E)))
             a = qudit_major!(copy(g))
             b = copy(a)
             rng = Xoshiro(k)
@@ -454,6 +476,87 @@ end
                 ta = MK._measure_qm!(Xoshiro(step), a, L, op, nothing, 1, 1)
                 tb = MK._measure_qm!(Xoshiro(step), b, L, op, nothing, 1, typemax(Int))
                 ok &= ta == tb && mkref_same_state(a, b) && a.phase == b.phase
+                ok || break
+            end
+            @test ok
+        end
+    end
+end
+
+# `st_padding_zero` lives in test/storage_helpers.jl.
+isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
+
+# A random-branch fixture in `Bits` and in `UInt8`, both in `layout`; the
+# fixtures evolve through the same operations and must agree before the test.
+function mkbit_pair(fixture, layout)
+    t = fixture(Bits)
+    u = fixture(UInt8)
+    sw = layout === :qudit ? qudit_major! : generator_major!
+    return sw(t), sw(u)
+end
+
+# Measure Z, X and a two-qubit Pauli on random qudits of the packed `t` and the
+# `UInt8` `u`; compare after every measurement.
+function mkbit_compare(t, u, nsteps, seed)
+    mkref_same_state(t, u) && t.phase == u.phase || return false
+    rng = Xoshiro(seed)
+    rt = Xoshiro(seed + 1)
+    ru = Xoshiro(seed + 1)
+    n = t.n
+    for step in 1:nsteps
+        a, b = randperm(rng, n)[1:2]
+        r = rand(rng)
+        op = r < 0.6 ? SinglePauli(a, 0, 1) : r < 0.8 ? SinglePauli(a, 1, 0) :
+             DoublePauli(a, rand(rng, 0:1), 1, b, 1, rand(rng, 0:1))
+        tt = measure!(rt, t, op; phase_policy = 1)
+        tu = measure!(ru, u, op; phase_policy = 1)
+        same = tt == tu && mkref_same_state(t, u) && t.phase == u.phase && st_padding_zero(t)
+        same || (@info "Bits and UInt8 differ" typeof(t) tableau_layout(t) n step op; return false)
+    end
+    return rand(rt, UInt64) == rand(ru, UInt64)
+end
+
+@testset "bit random branch" begin
+    for TT in (StabilizerTableau, DestabilizerTableau), storephase in (false, true),
+        layout in (:generator, :qudit)
+        n = 96
+        for (k, p) in enumerate((0.05, 0.15))
+            t, u = mkbit_pair(E -> mkqm_monitored(TT, 2, n, p, storephase, 20 + k; eltype = E), layout)
+            @test mkbit_compare(t, u, 60, 2 + k)
+        end
+        t, u = mkbit_pair(E -> mkqm_random(TT, 2, n, storephase, 40; eltype = E), layout)
+        @test mkbit_compare(t, u, 60, 9)
+        for (TL, L) in ((:generator, MK.GeneratorMajor()), (:qudit, MK.QuditMajor()))
+            s = TT(2, n; storephase, eltype = Bits, layout = TL)
+            op = SinglePauli(1, 0, 1)
+            m = which(MK._measure!, (Xoshiro, typeof(s), typeof(L), typeof(op), Nothing, Int))
+            @test basename(String(m.file)) == "measure_bits.jl"
+            m = which(MK._dephase!, (typeof(s), typeof(L), typeof(op)))
+            @test basename(String(m.file)) == "measure_bits.jl"
+        end
+    end
+end
+
+@testset "bit qudit-major sparse and dense updates agree" begin
+    # Divisor 0 takes the sparse update whenever a generator anticommutes;
+    # `typemax(Int)` takes the dense one whenever one does.
+    L = MK.QuditMajor()
+    for TT in (StabilizerTableau, DestabilizerTableau), storephase in (false, true)
+        n = 200
+        for (k, fixture) in enumerate((E -> mkqm_monitored(TT, 2, n, 0.15, storephase, 60; eltype = E),
+                                       E -> mkqm_random(TT, 2, n, storephase, 61; eltype = E)))
+            a, u = mkbit_pair(fixture, :qudit)
+            b = copy(a)
+            rng = Xoshiro(k)
+            ok = true
+            for step in 1:40
+                q = rand(rng, 1:n)
+                op = rand(rng) < 0.6 ? SinglePauli(q, 0, 1) : SinglePauli(q, 1, rand(rng, 0:1))
+                ta = MK._measure_bits_qm!(Xoshiro(step), a, L, op, nothing, 1, 0)
+                tb = MK._measure_bits_qm!(Xoshiro(step), b, L, op, nothing, 1, typemax(Int))
+                tu = MK._measure_qm!(Xoshiro(step), u, L, op, nothing, 1, MK._QM_SPARSE_UPDATE_DIV)
+                ok &= ta == tb == tu && mkref_same_state(a, b) && mkref_same_state(a, u) &&
+                      a.phase == b.phase == u.phase
                 ok || break
             end
             @test ok

@@ -608,6 +608,42 @@ end
     nothing
 end
 
+# Packed storage: generator `i` is zeroed and the odd exponents set.
+@inline function set_operator!(tab::_BitTableau, L::TableauLayout, i::Int,
+                               op::AbstractVector{<:Integer})
+    n = tab.n
+    len_op = length(op)
+    len_op == 2n || len_op == 2n + 1 || throw(ArgumentError(
+        "Pauli vector has length $len_op, expected 2n = $(2n) or 2n + 1 = $(2n + 1)."))
+    _set_bit_generator!(_stab(tab, L), i, op, n)
+    if tab.storephase && (len_op == 2n + 1)
+        _phase(tab)[i] = mod(op[2n+1], phase_modulus(tab.d))
+    elseif tab.storephase
+        _phase(tab)[i] = 0
+    end
+    nothing
+end
+
+@inline function set_operator!(tab::_BitTableau, L::TableauLayout, i::Int, op::GeneralPauli)
+    n = tab.n
+    _check_pauli_support(op, n)
+    _set_bit_generator!(_stab(tab, L), i, op.xz, n)
+    if tab.storephase
+        _phase(tab)[i] = mod(op.phase, phase_modulus(tab.d))
+    end
+    nothing
+end
+
+# Overwrite generator `i` of `b` with the exponents `xz[1:2n]` mod 2.
+@inline function _set_bit_generator!(b::BitBlock, i::Int, xz::AbstractVector{<:Integer}, n::Int)
+    _zero_gen!(b, i)
+    @inbounds for q in 1:n
+        isodd(xz[q]) && _xflip!(b, UInt64(1), q, i)
+        isodd(xz[n+q]) && _zflip!(b, UInt64(1), q, i)
+    end
+    return b
+end
+
 @inline function set_operator!(tab::AbstractTableau, L::TableauLayout, i::Int, op::GeneralPauli)
     n = tab.n
     d = tab.d

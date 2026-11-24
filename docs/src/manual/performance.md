@@ -19,9 +19,9 @@ Composite dimensions such as `d = 4` or `d = 6` are not supported.
 
 ### Supported arithmetic envelope
 
-Tableau entries, phases and dot products are all `Int`. Every phase and
-symplectic dot product sums `n` terms of size up to ``(d-1)^2``, and the
-odd-`d` phase update adds two such terms, so results are exact only while
+Phases and dot products are computed in `Int`, whatever type the entries are
+stored in. Every phase and symplectic dot product sums `n` terms of size up to
+``(d-1)^2``, and the odd-`d` phase update adds two such terms, so results are exact only while
 
 ```math
 \max(n, 2)\,(d-1)^2 \le \texttt{typemax(Int)}
@@ -124,6 +124,16 @@ generator structure, and every entanglement measure. For a pure
 [`StabilizerTableau`](@ref), deterministic measurements and expectation values
 then need only a commutation check (see [Choosing a tableau type](@ref)).
 
+### Packed storage for qubits
+
+At `d = 2`, `eltype = Bits` packs the generators of a tableau into bits (see
+[Packed qubit storage](@ref)). The tableau is about 4 to 6 times smaller
+from `n = 1024` on, and gates, measurements, [`canonicalize!`](@ref) and the
+entanglement measures are mostly faster, qudit-major gates by an order of
+magnitude. A few paths, such as `stabilizer_matrix`, are slower. `UInt8` is
+still the default. The benchmark that compares the storage types on a given
+machine is in `benchmark/storage/README.md`.
+
 ### First-call latency
 
 Julia compiles each method on its first call. The package ships a precompile
@@ -131,6 +141,6 @@ workload that runs construction, gates, random sampling, measurements,
 channels, expectation values and the common entanglement measures for both
 tableau types at `d = 2` and `d = 3`, so these first calls are fast in a new
 session. The workload uses PrecompileTools and can be switched off through its
-preferences. Other argument types, such as a
-different integer type or an unusual Pauli representation, compile on first
-use as usual.
+preferences. Other argument types, such as a tableau built with
+`eltype = Int` or `eltype = Bits`, a different integer type or an unusual
+Pauli representation, compile on first use as usual.

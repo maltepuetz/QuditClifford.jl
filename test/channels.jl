@@ -246,6 +246,22 @@ chan_allocs_dephase(t, op) = @allocated dephase!(t, op)
                     @test fresh.m == t.m - 1
                 end
             end
+
+            @testset "allocates nothing, $E $layout" for E in (UInt8, Bits),
+                                                         layout in (:generator, :qudit)
+                n = 70
+                t = TT(2, n; eltype=E, layout)
+                random_state!(Xoshiro(18), t; m=n - 2)
+                xz = zeros(Int, 2n)
+                xz[[3, 65, 70, n + 1, n + 66]] .= 1
+                for op in (SinglePauli(65, 1, 0), DoublePauli(2, 0, 1, 66, 1, 1),
+                           GeneralPauli(xz, 0))
+                    chan_allocs_dephase(copy(t), op)
+                    fresh = copy(t)
+                    @test chan_allocs_dephase(fresh, op) == 0
+                    @test fresh.m == t.m - 1
+                end
+            end
         end
     end
 end

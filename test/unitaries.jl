@@ -861,7 +861,7 @@ end
 @testset "Named apply! is allocation-free after warm-up" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5, 67, 101, 23189),
         storephase in (false, true), inversemod in (QC.PrecomputedInvMod(d), QC.JustInTimeInvMod()),
-        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int)),
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
         layout in (:generator, :qudit)
         tab = TT(d, 12; state = :ghz, storephase = storephase, inversemod = inversemod,
                  eltype = E, layout = layout)

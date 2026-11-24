@@ -75,7 +75,7 @@ function conditional_mutual_information(
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
     _mark_subsystem!(tab, C, 3, "subsystem C")
-    NA, NB, NC = length(A), length(B), length(C)
+    NA, NB, NC = Int(length(A)), Int(length(B)), Int(length(C))
     (NA == 0 || NB == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)

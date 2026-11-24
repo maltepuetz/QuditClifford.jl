@@ -127,7 +127,7 @@ end
 # starts on a fresh word. The bits in between are zero.
 function _copy_sites!(
     ws::AbstractMatrix{UInt64},
-    b::XZBlock,
+    b::_AnyBlock,
     m::Int,
     sites::AbstractVector,
     N::Int,

@@ -317,13 +317,20 @@ end
             @test state_vector(q) == state_vector(g)
         end
         @test tableau_layout(q) === :qudit && !q.iscanonical
-        # Both layouts allocate only the result. Windows reports the same
-        # allocations a few bytes apart from call to call, so the counts
-        # agree within 64 bytes, far less than any extra n × n buffer at
-        # n ≥ 31.
-        @test abs(ly_stabilizer_matrix_allocs(q) - ly_stabilizer_matrix_allocs(g)) <= 64
+        # Both layouts allocate only the result. Julia counts a malloc'd
+        # buffer by its usable size, so the two counts differ by what the
+        # allocator hands out for the same request. Windows reports a few
+        # bytes' difference from call to call. glibc serves a result of
+        # 128 KiB or more (n = 257) from a free heap chunk of the exact size
+        # when it has one and from `mmap`, rounded up to a page, when it has
+        # not, and which of the two depends on the heap at that moment. The
+        # tolerance is therefore 64 bytes for a small result and one 16 KiB
+        # page for a large one, a quarter of the smallest extra n × n buffer
+        # at n = 257.
+        tol = sizeof(Int) * 2n * n < 2^17 ? 64 : 2^14
+        @test abs(ly_stabilizer_matrix_allocs(q) - ly_stabilizer_matrix_allocs(g)) <= tol
         if TT === DestabilizerTableau
-            @test abs(ly_destabilizer_matrix_allocs(q) - ly_destabilizer_matrix_allocs(g)) <= 64
+            @test abs(ly_destabilizer_matrix_allocs(q) - ly_destabilizer_matrix_allocs(g)) <= tol
         end
         qq = copy(q)
         @test ly_equal_allocs(q, qq) == 0
@@ -469,8 +476,14 @@ function ly_check_gate_stream(TT, d, E, n, storephase, seed)
             apply!(g, gate)
             apply!(q, gate)
         end
-        ok &= ly_same_state(g, q)
-        ok || (@error "layouts differ" TT d E n storephase i gate; break)
+        # The entry-wise comparison costs far more than the gate at large `n`,
+        # so there it runs on every twentieth gate. Gates are bijections on
+        # tableaux, so a difference persists until the next comparison; only
+        # the index of the offending gate is lost.
+        if n <= 64 || i % 20 == 0
+            ok &= ly_same_state(g, q)
+            ok || (@error "layouts differ" TT d E n storephase i gate; break)
+        end
     end
     ok &= ly_matrices(g) == ly_matrices(q)
     return ok

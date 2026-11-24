@@ -23,6 +23,8 @@ destabilizer_matrix
 qudit_major!
 generator_major!
 tableau_layout
+tableau_eltype
+Bits
 Base.copy(::StabilizerTableau)
 Base.copy!(::StabilizerTableau, ::StabilizerTableau)
 Base.:(==)(::AbstractTableau, ::AbstractTableau)

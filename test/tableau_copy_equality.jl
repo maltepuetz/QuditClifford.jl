@@ -100,7 +100,8 @@ end
                             dst = TT(d, n, :ghz; storephase = storephase)
                             before = tce_snapshot(src)
                             arrays = [f => getfield(dst, f) for f in fieldnames(typeof(dst))
-                                      if getfield(dst, f) isa Union{Array, SubArray}]
+                                      if getfield(dst, f) isa
+                                         Union{Array, SubArray, QuditClifford._BitPlanes}]
                             storage = TT === DestabilizerTableau ?
                                 (:stab_x, :stab_z, :phase, :destab_x, :destab_z) :
                                 (:stab_x, :stab_z, :phase)

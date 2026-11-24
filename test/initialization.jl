@@ -175,6 +175,16 @@ end
         end
     end
 
+    for TT in (StabilizerTableau, DestabilizerTableau)
+        for (d, kw) in ((2, (;)), (2, (; eltype=Bits)), (3, (;)), (3, (; eltype=Int)))
+            err = try TT(d, -1; kw...) catch e; e end
+            @test err isa ArgumentError
+            @test occursin("n must be nonnegative", sprint(showerror, err))
+            @test_throws ArgumentError TT(d, -1; state=:product, kw...)
+        end
+        @test TT(2, 0; eltype=Bits).n == 0
+    end
+
     # The preset builder has its own defensive contract in addition to the
     # public normalization layer.
     block = QuditClifford.XZBlock{QuditClifford.GeneratorMajor}(zeros(Int, 1, 1), zeros(Int, 1, 1))
@@ -424,7 +434,7 @@ end
 
 @testset "Default storage element type" begin
     for TT in (StabilizerTableau, DestabilizerTableau)
-        for (d, E) in ((2, UInt8), (3, UInt8), (251, UInt8), (257, UInt16),
+        for (d, E) in ((2, QuditClifford._default_qubit_eltype()), (3, UInt8), (251, UInt8), (257, UInt16),
                        (65521, UInt16), (65537, Int))
             @test QuditClifford._storage_eltype(TT(d, 1)) === E
             @test QuditClifford._storage_eltype(TT(d, 1; state=:product)) === E

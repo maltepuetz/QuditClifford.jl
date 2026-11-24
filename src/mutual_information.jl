@@ -58,13 +58,15 @@ function mutual_information(tab::AbstractTableau, A::AbstractVector, B::Abstract
     fill!(tab.c_workspace, 0)
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
-    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), length(B))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), Int(length(A)),
+                                          Int(length(B)))
 end
 
 function mutual_information(tab::AbstractTableau, A::AbstractVector)
     A = Base.unalias(tab.c_workspace, A)
     _mark_with_complement!(tab, A)
-    return _mutual_information_from_mask!(tab, _layout_marker(tab), length(A), tab.n - length(A))
+    NA = Int(length(A))
+    return _mutual_information_from_mask!(tab, _layout_marker(tab), NA, tab.n - NA)
 end
 
 """
@@ -140,7 +142,7 @@ function tripartite_information(
     _mark_subsystem!(tab, A, 1, "subsystem A")
     _mark_subsystem!(tab, B, 2, "subsystem B")
     _mark_subsystem!(tab, C, 3, "subsystem C")
-    NA, NB, NC = length(A), length(B), length(C)
+    NA, NB, NC = Int(length(A)), Int(length(B)), Int(length(C))
     (NA == 0 || NB == 0 || NC == 0 || tab.m == 0) && return 0
     counts = (tab.n - NA - NB - NC, NA, NB, NC)
     first = _group_sites_by_label!(tab, counts)
@@ -229,9 +231,10 @@ end
 # `_group_sites_by_label!`, and `ws` is the rank workspace.
 #
 # The rows are stacked as [D; X; Y] (see `_copy_sites!` for the layout) and
-# eliminated in that order. Each call to `rank_fp_cols!` leaves its remaining columns zero on the rows it pivoted
-# on, so the next call continues on those columns and the rows below, and the
-# pivot counts add up to the ranks of the leading row blocks.
+# eliminated in that order. Each call to `_block_rank!` leaves its remaining
+# columns zero on the rows it pivoted on, so the next call continues on those
+# columns and the rows below, and the pivot counts add up to the ranks of the
+# leading row blocks.
 function _traced_rank_pair!(
     tab::AbstractTableau,
     L::TableauLayout,

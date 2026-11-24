@@ -711,20 +711,29 @@ end
 # switched to qudit-major, checked through the layout-independent matrices,
 # and switched back.
 @testset "duality after every switch" begin
-    for d in (2, 3)
-        n = 7
-        rng = Xoshiro(20261121 + d)
-        tab = DestabilizerTableau(d, n; state = :Z)
+    for (d, n, T) in ((2, 7, UInt8), (3, 7, UInt8), (2, 7, Bits), (2, 70, UInt8), (2, 70, Bits))
+        rng = Xoshiro(20261121 + d + n)
+        # The tableau under test and a `UInt8` one take the same operations,
+        # each with its own copy of the measurement RNG.
+        tab = DestabilizerTableau(d, n; state = :Z, eltype = T)
+        ref = DestabilizerTableau(d, n; state = :Z, eltype = UInt8)
+        rt, rr = Xoshiro(d + n), Xoshiro(d + n)
         for step in 1:10
             if isodd(step)
                 q = rand(rng, 1:(n - 1))
-                apply!(tab, random_clifford(rng, d, [q, q + 1]))
+                C = random_clifford(rng, d, [q, q + 1])
+                apply!(tab, C)
+                apply!(ref, C)
             else
                 q = rand(rng, 1:n)
                 x = rand(rng, 0:(d - 1))
                 z = x == 0 ? rand(rng, 1:(d - 1)) : rand(rng, 0:(d - 1))
-                measure!(rng, tab, SinglePauli(q, x, z, d == 2 ? x * z : 0))
+                P = SinglePauli(q, x, z, d == 2 ? x * z : 0)
+                @test measure!(rt, tab, P) == measure!(rr, ref, P)
             end
+            @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
+            @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
+            @test tableau_eltype(tab) === T
             qudit_major!(tab)
             @test tableau_layout(tab) === :qudit
             S, D = stabilizer_matrix(tab), destabilizer_matrix(tab)
@@ -736,5 +745,46 @@ end
             generator_major!(tab)
             @test tableau_layout(tab) === :generator
         end
+    end
+end
+
+# The packed measurement kernels and their destabilizer hooks, in both
+# layouts: the append branch from a mixed start, the random branch with sparse
+# and dense operators, and `dephase!`, each checked against duality and the
+# cache, and against a `UInt8` tableau taking the same operations.
+@testset "packed duality through measure! and dephase!" begin
+    n = 70
+    for layout in (:generator, :qudit)
+        rng = Xoshiro(20261122)
+        tab = DestabilizerTableau(2, n; state = :mixed, eltype = Bits, layout)
+        ref = DestabilizerTableau(2, n; state = :mixed, eltype = UInt8, layout)
+        rt, rr = Xoshiro(5), Xoshiro(5)
+        ok = true
+        for step in 1:200
+            r = rand(rng)
+            q, s = randperm(rng, n)[1:2]
+            if r < 0.1
+                C = random_clifford(rng, 2, [q, s])
+                apply!(tab, C)
+                apply!(ref, C)
+            elseif r < 0.2
+                P = DoublePauli(q, rand(rng, 0:1), 1, s, 1, 0)
+                dephase!(tab, P)
+                dephase!(ref, P)
+            else
+                P = r < 0.8 ? SinglePauli(q, rand(rng, 0:1), 1) :
+                    _hermitian_pauli(rand(rng, 0:1, 2n), 2)
+                ok &= measure!(rt, tab, P; phase_policy = 1) == measure!(rr, ref, P; phase_policy = 1)
+            end
+            S, D = stabilizer_matrix(tab), destabilizer_matrix(tab)
+            m = tab.m
+            ok &= S == stabilizer_matrix(ref) && D == destabilizer_matrix(ref) && m == ref.m
+            ok &= [mod(_symp(D, i, S, j, n), 2) for i in 1:m, j in 1:m] ==
+                  [Int(i == j) for i in 1:m, j in 1:m]
+            ok &= tab.xdotz_cache == [j <= m ? mod(sum(S[k, j] * S[n + k, j] for k in 1:n), 2) : 0
+                                      for j in 1:n]
+            ok || (@error "packed duality" layout step; break)
+        end
+        @test ok
     end
 end

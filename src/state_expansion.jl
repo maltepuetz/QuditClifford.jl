@@ -47,6 +47,15 @@ end
     return acc
 end
 
+@inline function _dot_zws_xcol(xz::Vector{Int}, G::BitBlock, j::Int)
+    n = _nq(G)
+    acc = 0
+    @inbounds for q in 1:n
+        acc += xz[n+q] * _xget(G, q, j)
+    end
+    return acc
+end
+
 # Right-multiply the running product P(xz[1:n], xz[n+1:2n], a) by generator
 # `j` of `G` with phase `Gphase[j]`, returning the new phase exponent.
 #
@@ -56,7 +65,7 @@ end
 # z_P · x_g ≡ x_P · z_g (mod d). What pins the X-before-Z convention here is the
 # matrix element ⟨c + x| P |c⟩ = ζ^(a + s z·c) in `_emit_support` and
 # `_add_pauli!`, and the tests break both on purpose.
-@inline function _mul_generator!(xz::Vector{Int}, a::Int, G::XZBlock,
+@inline function _mul_generator!(xz::Vector{Int}, a::Int, G::_AnyBlock,
                                  Gphase::AbstractVector{Int},
                                  j::Int, d::Int, p::Int, s::Int)
     cross = _dot_zws_xcol(xz, G, j)    # read z before it changes
@@ -79,7 +88,7 @@ end
 # never emitted, and a carry off the most significant digit means every element
 # has been visited. The generators commute, so right-multiplying in this order
 # always yields the element whose exponents are `u`.
-function _walk_group(f, G::XZBlock, Gphase::AbstractVector{Int}, ngens::Int, d::Int,
+function _walk_group(f, G::_AnyBlock, Gphase::AbstractVector{Int}, ngens::Int, d::Int,
                      xz::Vector{Int}, u::Vector{Int})
     p = phase_modulus(d)
     s = p ÷ d

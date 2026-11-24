@@ -1,239 +1,14 @@
 using QuditClifford, Test, Random, LinearAlgebra
 
-const st_QC = QuditClifford
-
-st_types(d) = filter(E -> st_QC._eltype_admissible(E, d), (UInt8, UInt16, Int))
-
-# A signed integer type wider than one machine word on neither platform, so
-# never `Int` itself.
-const st_OtherSigned = Int === Int64 ? Int32 : Int64
-
-# ---- differential driver: every operation on every element type ----
-
-# A random Pauli in reduced form, Hermitian at d = 2: `kind` 1 gives a
-# `SinglePauli`, 2 a `DoublePauli`, 3 a `GeneralPauli` on a random support.
-function st_rand_pauli(rng, d, n, kind)
-    k = kind == 1 ? 1 : kind == 2 ? 2 : rand(rng, 1:n)
-    qs = randperm(rng, n)[1:k]
-    xs = [rand(rng, 0:d-1) for _ in 1:k]
-    zs = [rand(rng, 0:d-1) for _ in 1:k]
-    ph = d == 2 ? mod(sum(xs .* zs), 2) + 2 * rand(rng, 0:1) : rand(rng, 0:d-1)
-    kind == 1 && return SinglePauli(qs[1], xs[1], zs[1], ph)
-    kind == 2 && return DoublePauli(qs[1], xs[1], zs[1], qs[2], xs[2], zs[2], ph)
-    v = zeros(Int, 2n)
-    for (q, x, z) in zip(qs, xs, zs)
-        v[q] = x
-        v[n+q] = z
-    end
-    return GeneralPauli(v, ph)
-end
-
-# Generator `j` of `ref` as a `GeneralPauli`: in the stabilizer group, so a
-# measurement of it is deterministic and its expectation value is nonzero.
-function st_generator_pauli(ref, j)
-    S = stabilizer_matrix(ref)
-    n = ref.n
-    return GeneralPauli(S[1:2n, j], ref.storephase ? S[2n+1, j] : 0)
-end
-
-function st_rand_gate(rng, d, n)
-    q, q2 = randperm(rng, n)[1:2]
-    c = rand(rng, 1:7)
-    c == 1 && return Fourier(q)
-    c == 2 && return Phase(q)
-    c == 3 && return Multiplier(q, rand(rng, 1:d-1))
-    c == 4 && return PauliGate(q, rand(rng, 0:d-1), rand(rng, 0:d-1))
-    c == 5 && return SUM(q, q2, rand(rng, 1:d-1))
-    c == 6 && return CPhase(q, q2, rand(rng, 1:d-1))
-    return SWAP(q, q2)
-end
-
-# Three disjoint random subsystems, each possibly empty.
-function st_rand_parts(rng, n)
-    p = randperm(rng, n)
-    a = rand(rng, 0:n)
-    b = rand(rng, 0:n-a)
-    c = rand(rng, 0:n-a-b)
-    return p[1:a], p[a+1:a+b], p[a+b+1:a+b+c]
-end
-
-# The next operation, drawn from `rng` and the current state of `ref`. It is a
-# function of a tableau and that tableau's own RNG, applied to every tableau of
-# the run.
-function st_rand_op(rng, ref)
-    d, n, m = ref.d, ref.n, ref.m
-    c = rand(rng, 1:24)
-    if c <= 4
-        g = st_rand_gate(rng, d, n)
-        return (tab, r) -> apply!(tab, g)
-    elseif c == 5
-        k = rand(rng, (1, 2, 3, 4))
-        C = random_clifford(rng, d, randperm(rng, n)[1:k])
-        return (tab, r) -> apply!(tab, C)
-    elseif c <= 9
-        op = (m > 0 && rand(rng, 1:3) == 1) ? st_generator_pauli(ref, rand(rng, 1:m)) :
-             st_rand_pauli(rng, d, n, rand(rng, 1:3))
-        return rand(rng, Bool) ? ((tab, r) -> measure!(r, tab, op)) :
-                                 ((tab, r) -> measure!(tab, op; outcome = 0))
-    elseif c <= 11
-        op = (m > 0 && rand(rng, Bool)) ? st_generator_pauli(ref, rand(rng, 1:m)) :
-             st_rand_pauli(rng, d, n, rand(rng, 1:3))
-        return c == 10 ? ((tab, r) -> expect!(tab, op)) : ((tab, r) -> expect_int!(tab, op))
-    elseif c == 12
-        op = st_rand_pauli(rng, d, n, rand(rng, (1, 3)))
-        return (tab, r) -> dephase!(tab, op)
-    elseif c == 13
-        sites = randperm(rng, n)[1:rand(rng, 1:min(n, 3))]
-        return (tab, r) -> traceout!(tab, sites)
-    elseif c == 14
-        sites = randperm(rng, n)[1:rand(rng, 1:min(n, 3))]
-        basis = rand(rng, (:Z, :X, :Y))
-        return basis === :Z ? ((tab, r) -> reset!(tab, sites)) :
-                              ((tab, r) -> reset!(tab, sites; basis))
-    elseif c == 15
-        return (tab, r) -> canonicalize!(tab)
-    elseif c == 16
-        mm = rand(rng, (n, n, rand(rng, 0:n)))
-        return (tab, r) -> random_state!(r, tab; m = mm)
-    elseif c == 17
-        A, _, _ = st_rand_parts(rng, n)
-        return (tab, r) -> entanglement_entropy(tab, A)
-    elseif c == 18
-        return (tab, r) -> entanglement_profile(tab)
-    elseif c == 19
-        A, B, _ = st_rand_parts(rng, n)
-        return (tab, r) -> mutual_information(tab, A, B)
-    elseif c == 20
-        A, B, C = st_rand_parts(rng, n)
-        return (tab, r) -> conditional_mutual_information(tab, A, B, C)
-    elseif c == 21
-        A, B, C = st_rand_parts(rng, n)
-        return (tab, r) -> tripartite_information(tab, A, B, C)
-    elseif c == 22
-        A, B, _ = st_rand_parts(rng, n)
-        return (tab, r) -> entanglement_negativity(tab, A, B)
-    elseif c == 23
-        return (tab, r) -> is_pure(tab; verify = true)
-    end
-    # A further gate, so that two-qudit gates make up a good share.
-    g = st_rand_gate(rng, d, n)
-    return (tab, r) -> apply!(tab, g)
-end
-
-# What an operation returned: a tableau stands for itself, and a thrown
-# exception is compared by type and message.
-function st_call(op, tab, r)
-    v = try
-        op(tab, r)
-    catch e
-        return (:error, typeof(e), sprint(showerror, e))
-    end
-    return v isa AbstractTableau ? (v === tab ? :self : :other) : v
-end
-
-# The symplectic products of destabilizer `i` with stabilizer `j` over `1:m`,
-# in `Int64` so that no `d` here overflows them.
-function st_duality(tab)
-    n, m, d = tab.n, tab.m, tab.d
-    S = Int64.(stabilizer_matrix(tab)[1:2n, 1:m])
-    D = Int64.(destabilizer_matrix(tab)[:, 1:m])
-    return mod.(transpose(D[1:n, :]) * S[n+1:2n, :] - transpose(D[n+1:2n, :]) * S[1:n, :], d)
-end
-
-function st_xdotz(tab)
-    n, d = tab.n, tab.d
-    S = Int64.(stabilizer_matrix(tab))
-    return [Int(mod(sum(S[q, j] * S[n+q, j] for q in 1:n), d)) for j in 1:tab.m]
-end
-
-# Whether the capacity generators `m+1:n` of `tab` are all zero, phases and
-# destabilizers included.
-function st_capacity_zero(tab)
-    m = tab.m
-    ok = all(iszero, stabilizer_matrix(tab)[:, m+1:end])
-    tab isa DestabilizerTableau && (ok &= all(iszero, destabilizer_matrix(tab)[:, m+1:end]))
-    return ok
-end
-
-# A layout change of `tab` drawn from `rng`: `qudit_major!`, `generator_major!`,
-# or `copy!` into a fresh tableau of the other layout, which then takes the
-# place of `tab`. Returns the tableau to continue with.
-function st_switch!(rng, tab)
-    c = rand(rng, 1:3)
-    c == 1 && return qudit_major!(tab)
-    c == 2 && return generator_major!(tab)
-    other = tableau_layout(tab) === :qudit ? :generator : :qudit
-    dst = typeof(tab).name.wrapper(tab.d, tab.n; storephase = tab.storephase,
-                                   eltype = Base.eltype(tab.pivot_workspace), layout = other)
-    return copy!(dst, tab)
-end
-
-# Apply `nops` operations drawn from `oprng` to every tableau in `tabs`, the
-# first being the `eltype = Int`, generator-major reference, each with its own
-# copy of `seed` as RNG, and compare every tableau with the reference after
-# every operation. Before each operation every other tableau changes its layout
-# with probability 1/8 (`st_switch!`, drawn from an RNG of its own), so `tabs`
-# is updated in place. Returns the number of comparisons that failed.
-function st_run!(tabs, seed, oprng, nops)
-    ref = tabs[1]
-    rngs = [Xoshiro(seed) for _ in tabs]
-    swrng = Xoshiro(20_000 + seed)
-    layouts = [tableau_layout(tab) for tab in tabs]
-    d, n = ref.d, ref.n
-    bad = 0
-    for i in 1:nops
-        for k in 2:length(tabs)
-            rand(swrng, 1:8) == 1 || continue
-            tabs[k] = st_switch!(swrng, tabs[k])
-            layouts[k] = tableau_layout(tabs[k])
-        end
-        op = st_rand_op(oprng, ref)
-        vals = [st_call(op, tab, r) for (tab, r) in zip(tabs, rngs)]
-        Sref = stabilizer_matrix(ref)
-        Dref = ref isa DestabilizerTableau ? destabilizer_matrix(ref) : nothing
-        ok = true
-        for (k, tab) in enumerate(tabs)
-            same = stabilizer_matrix(tab) == Sref && tab.m == ref.m &&
-                   tab.iscanonical == ref.iscanonical && isequal(vals[k], vals[1])
-            Dref === nothing || (same &= destabilizer_matrix(tab) == Dref)
-            tab isa DestabilizerTableau && (same &= tab.xdotz_cache[1:tab.m] == st_xdotz(tab))
-            same &= tableau_layout(tab) === layouts[k]
-            same &= st_capacity_zero(tab)
-            if !same
-                ok = false
-                @error "differs from the Int reference" i eltype = Base.eltype(tab.pivot_workspace) layout = tableau_layout(tab) vals[k] vals[1]
-            end
-        end
-        if ref isa DestabilizerTableau && st_duality(ref) != Matrix{Int64}(I, ref.m, ref.m)
-            ok = false
-            @error "the Int reference breaks destabilizer duality" i
-        end
-        if d == 2 && ref.storephase &&
-           !all(mod(Sref[2n+1, j], 2) ==
-                mod(sum(Sref[q, j] * Sref[n+q, j] for q in 1:n), 2) for j in 1:ref.m)
-            ok = false
-            @error "the Int reference has a non-Hermitian qubit generator" i
-        end
-        ok || (bad += 1)
-        ok || break
-    end
-    return bad
-end
-
-# Constructor calls with a literal `eltype`, wrapped so that `@inferred` sees the
-# constant the way a caller's compiled code does.
-st_new_u8(::Type{TT}, n) where {TT} = TT(3, n; eltype = UInt8)
-st_new_u16(::Type{TT}, n) where {TT} = TT(257, n; eltype = UInt16)
-st_new_int(::Type{TT}, d, n) where {TT} = TT(d, n; eltype = Int)
-st_new_state_u8(::Type{TT}, n) where {TT} = TT(3, n, :product; eltype = UInt8)
-st_new_raw_u8(::Type{TT}, M) where {TT} = TT(3, M; eltype = UInt8)
-st_new_raw_int(::Type{TT}, d, M) where {TT} = TT(d, M; eltype = Int)
+isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
 
 @testset "storage element types" begin
 
 @testset "admissible element types" begin
-    @test st_QC._default_eltype.((2, 3, 251, 257, 65521, 65537)) ==
-          (UInt8, UInt8, UInt8, UInt16, UInt16, Int)
+    # d = 2 follows the qubit default, which test/runtests.jl checks.
+    @test st_QC._default_eltype(2) === st_QC._default_qubit_eltype()
+    @test st_QC._default_eltype.((3, 251, 257, 65521, 65537)) ==
+          (UInt8, UInt8, UInt16, UInt16, Int)
     for TT in (StabilizerTableau, DestabilizerTableau)
         @test_throws ArgumentError TT(257, 2; eltype = UInt8)
         @test_throws ArgumentError TT(3, 2; eltype = st_OtherSigned)
@@ -251,13 +26,21 @@ end
 
 @testset "explicit element type is inferred" begin
     M = [1 0 2 0 0; 0 1 0 0 0]
+    IM = st_QC.PrecomputedInvMod
     for TT in (StabilizerTableau, DestabilizerTableau)
-        @test typeof(@inferred st_new_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_u16(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt16}
-        @test typeof(@inferred st_new_int(TT, 3, 4)) === TT{st_QC.PrecomputedInvMod, Int}
-        @test typeof(@inferred st_new_state_u8(TT, 4)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_raw_u8(TT, M)) === TT{st_QC.PrecomputedInvMod, UInt8}
-        @test typeof(@inferred st_new_raw_int(TT, 3, M)) === TT{st_QC.PrecomputedInvMod, Int}
+        @test typeof(@inferred st_new_u8(TT, 4)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_u16(TT, 4)) === TT{IM, UInt16, UInt16, Vector{Int}}
+        @test typeof(@inferred st_new_int(TT, 3, 4)) === TT{IM, Int, Int, Vector{Int}}
+        @test typeof(@inferred st_new_state_u8(TT, 4)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_raw_u8(TT, M)) === TT{IM, UInt8, UInt8, Vector{Int}}
+        @test typeof(@inferred st_new_raw_int(TT, 3, M)) === TT{IM, Int, Int, Vector{Int}}
+        @test typeof(@inferred st_new_bits(TT, 4)) === TT{IM, UInt8, UInt64, st_QC._BitPlanes}
+        @test typeof(@inferred st_new_raw_bits(TT, [1 0; 0 1; 0 0; 0 0; 0 0])) ===
+              TT{IM, UInt8, UInt64, st_QC._BitPlanes}
+        @test fieldtype(TT{IM, UInt8, UInt64, st_QC._BitPlanes}, :stab_x) ===
+              st_QC._BlockMatrix{UInt64}
+        @test fieldtype(TT{IM, UInt8, UInt64, st_QC._BitPlanes}, :phase) === st_QC._BitPlanes
+        @test fieldtype(TT{IM, UInt8, UInt8, Vector{Int}}, :stab_x) === st_QC._BlockMatrix{UInt8}
     end
 end
 
@@ -271,12 +54,14 @@ end
         ref = TT(d, n; state, basis, storephase, eltype = Int)
         @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
         @test eltype(stabilizer_matrix(tab)) === Int
-        @test size(tab.stab_x) == (n, n)
-        @test Base.eltype(tab.stab_x) === E && Base.eltype(tab.stab_z) === E
+        @test tableau_eltype(tab) === E
+        @test size(tab.stab_x) == (E === Bits ? (1, 64) : (n, n))
+        W = st_block_eltype(E)
+        @test Base.eltype(tab.stab_x) === W && Base.eltype(tab.stab_z) === W
         if TT === DestabilizerTableau
             @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
             @test eltype(destabilizer_matrix(tab)) === Int
-            @test Base.eltype(tab.destab_x) === E && Base.eltype(tab.destab_z) === E
+            @test Base.eltype(tab.destab_x) === W && Base.eltype(tab.destab_z) === W
         end
     end
 end
@@ -334,14 +119,16 @@ end
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d),
         storephase in (true, false)
         n = 5
+        # Packed storage keeps an unpacked `UInt8` pivot.
+        P = E === Bits ? UInt8 : E
         tab = TT(d, n; storephase, eltype = E)
-        @test Base.eltype(tab.pivot_workspace) === E
+        @test Base.eltype(tab.pivot_workspace) === P
         @test length(tab.pivot_workspace) == 2n
         c = copy(tab)
-        @test Base.eltype(c.pivot_workspace) === E && length(c.pivot_workspace) == 2n
+        @test Base.eltype(c.pivot_workspace) === P && length(c.pivot_workspace) == 2n
         @test c.pivot_workspace !== tab.pivot_workspace
         raw = TT(d, stabilizer_matrix(TT(d, n; state = :ghz, storephase)); eltype = E)
-        @test Base.eltype(raw.pivot_workspace) === E && length(raw.pivot_workspace) == 2n
+        @test Base.eltype(raw.pivot_workspace) === P && length(raw.pivot_workspace) == 2n
     end
 end
 
@@ -360,7 +147,9 @@ end
 @testset "generator operations on every element-type pair" begin
     rng = Xoshiro(7)
     n, ncap = 37, 6
+    # Packed blocks have their own test ("Bits composites" in test/bits.jl).
     for d in (2, 3, 251, 257), Eb in st_types(d), Ev in st_types(d)
+        (Eb === Bits || Ev === Bits) && continue
         X0 = rand(rng, 0:d-1, n, ncap)
         Z0 = rand(rng, 0:d-1, n, ncap)
         v0 = rand(rng, 0:d-1, 2n)
@@ -410,6 +199,10 @@ end
         @test Base.summarysize(S) <= 2.25 * 2n^2 + slack
         @test Base.summarysize(D) <= 2.25 * 4n^2 + slack
     end
+    # A packed block takes about an eighth of the bytes of a `UInt8` one; with
+    # its padding and the unpacked workspaces a packed tableau stays below half.
+    @test Base.summarysize(StabilizerTableau(2, 2048; eltype = Bits)) <
+          Base.summarysize(StabilizerTableau(2, 2048; eltype = UInt8)) ÷ 2
     st_int_matrix_fields(tab) =
         [f for f in fieldnames(typeof(tab)) if getfield(tab, f) isa Matrix{Int}]
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 257), E in st_types(d)
@@ -519,6 +312,8 @@ end
 @testset "differential across layouts and element types" begin
     ds = Sys.WORD_SIZE == 64 ? (2, 3, 251, 257, 65521) : (2, 3, 251, 257)
     cases = [(d, n) for d in ds for n in (5, 33)]
+    # Packed qubits at word boundaries.
+    append!(cases, [(2, 63), (2, 65), (2, 130)])
     append!(cases, [(3, 300), (251, 300)])
     seed = 0
     for (d, n) in cases, TT in (DestabilizerTableau, StabilizerTableau),

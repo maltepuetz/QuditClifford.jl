@@ -81,7 +81,11 @@ end
 
 dephase!(tab::AbstractTableau, op::AbstractPauli) = _dephase!(tab, _layout_marker(tab), op)
 
-function _dephase!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
+_dephase!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli) =
+    _dephase_generic!(tab, L, op)
+
+# The per-generator `dephase!`, for every layout and storage.
+function _dephase_generic!(tab::AbstractTableau, L::TableauLayout, op::AbstractPauli)
     _check_pauli_support(tab, op)
     d = tab.d
     m = tab.m

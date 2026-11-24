@@ -15,8 +15,9 @@ that the rest of the documentation relies on: the Weyl operators ``X`` and
 act. Read it before building raw tableaux or interpreting phase exponents.
 
 [**Tableaux**](tableaux.md) covers the two tableau types and when to use each,
-preset and raw construction, the contract the generators satisfy, and
-copying, comparing and resetting a tableau.
+preset and raw construction, the contract the generators satisfy,
+copying, comparing and resetting a tableau, the storage element types,
+packed qubit storage and the two storage layouts.
 
 [**Measurements, Expectations and Channels**](measurements.md) covers
 projective Pauli measurements and their outcomes, expectation values, and the

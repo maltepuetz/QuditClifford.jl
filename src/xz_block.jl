@@ -83,19 +83,24 @@ end
 
 # A zeroed `n × n` block of element type `T` in a parent of its own, starting in
 # line `slot ÷ _LINE_BYTES` modulo `_SET_SPAN_BYTES` (see above).
-function _padded_block(::Type{T}, n::Int, slot::Int) where {T}
+_padded_block(::Type{T}, n::Int, slot::Int) where {T} = _padded_view(T, n, n, slot)
+
+# A zeroed `nr × nc` view of element type `T` in a parent of its own, with
+# `_padded_rows(nr, sizeof(T))` parent rows and its first entry in line
+# `slot ÷ _LINE_BYTES` modulo `_SET_SPAN_BYTES`.
+function _padded_view(::Type{T}, nr::Int, nc::Int, slot::Int) where {T}
     sz = sizeof(T)
-    L = _padded_rows(n, sz)
-    L == n && return view(zeros(T, n, n), Base.OneTo(n), 1:n)
+    L = _padded_rows(nr, sz)
+    L == nr && return view(zeros(T, nr, nc), Base.OneTo(nr), 1:nc)
     nshift = _SET_SPAN_BYTES ÷ _LINE_BYTES    # 32: the stride steps through every line
-    P = zeros(T, L, n + nshift - 1)
+    P = zeros(T, L, nc + nshift - 1)
     base = UInt(pointer(P))
     want = mod(slot, _SET_SPAN_BYTES) ÷ _LINE_BYTES
     c = 0
     while (base + c * L * sz) % _SET_SPAN_BYTES ÷ _LINE_BYTES != want
         c += 1
     end
-    return view(P, Base.OneTo(n), c+1:c+n)
+    return view(P, Base.OneTo(nr), c+1:c+nc)
 end
 
 # The line slot a block's first entry sits in, as `_padded_block` takes it.

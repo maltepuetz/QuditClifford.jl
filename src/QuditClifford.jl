@@ -23,7 +23,8 @@ export AbstractTableau, StabilizerTableau, DestabilizerTableau,
     random_clifford, random_clifford!, random_state!,
     StabilizerKet, ket, state_vector, density_matrix,
     stabilizer_matrix, destabilizer_matrix,
-    qudit_major!, generator_major!, tableau_layout
+    qudit_major!, generator_major!, tableau_layout,
+    Bits, tableau_eltype
 
 import Random, Primes
 import Random.rand!
@@ -36,6 +37,7 @@ import PrecompileTools
 include("modular.jl")
 include("helper.jl")
 include("xz_block.jl")
+include("bit_block.jl")
 include("clifford_arithmetic.jl")
 include("inversemod.jl")
 include("rank_workspaces.jl")
@@ -48,9 +50,12 @@ include("canonicalize.jl")
 include("tableau_equality.jl")
 include("operator.jl")
 include("span_decomposition.jl")
+include("rank_copies_bits.jl")
 include("projective_measurement.jl")
 include("measure_qudit_major.jl")
+include("measure_bits.jl")
 include("canonicalize_qudit_major.jl")
+include("canonicalize_bits.jl")
 include("entanglement_entropy.jl")
 include("channels.jl")
 include("entanglement_negativity.jl")
@@ -61,6 +66,7 @@ include("expectation_value.jl")
 include("clifford_gates.jl")
 include("apply_clifford.jl")
 include("apply_qudit_major.jl")
+include("apply_bits.jl")
 include("clifford_operator.jl")
 include("random_clifford.jl")
 include("state_expansion.jl")

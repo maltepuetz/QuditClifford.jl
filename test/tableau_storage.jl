@@ -244,7 +244,7 @@ end
 
 @testset "split storage" begin
     for (label, TT) in ts_TYPES, d in (2, 3), sp in (true, false), n in (1, 4)
-        tab = TT(d, n; state = :ghz, storephase = sp, layout = :generator)
+        tab = TT(d, n; state = :ghz, storephase = sp, layout = :generator, eltype = UInt8)
         @test size(tab.stab_x) == size(tab.stab_z) == (n, n)
         @test length(tab.phase) == (sp ? n : 0)
         @test tab.phase isa Vector{Int}
@@ -254,7 +254,7 @@ end
         S = stabilizer_matrix(tab)
         @test tab.stab_x == S[1:n, :] && tab.stab_z == S[n+1:2n, :]
         sp && @test tab.phase == S[2n+1, :]
-        raw = TT(d, S; storephase = sp)
+        raw = TT(d, S; storephase = sp, eltype = UInt8)
         @test size(raw.stab_x) == (n, n) && length(raw.phase) == (sp ? n : 0)
         @test stabilizer_matrix(raw) == S
     end
@@ -417,7 +417,7 @@ end
 
 @testset "layout marker" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
-        tab = TT(d, 5; state = :ghz, layout = :generator)
+        tab = TT(d, 5; state = :ghz, layout = :generator, eltype = UInt8)
         @test tab.layout === QuditClifford.GeneratorMajor()
         @test fieldtype(TT, :layout) === Union{QuditClifford.GeneratorMajor, QuditClifford.QuditMajor}
         @test QuditClifford._layout_marker(tab) === QuditClifford.GeneratorMajor()
@@ -441,15 +441,24 @@ end
 
 @testset "no raw block access outside the block and kernel files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
-    # Explicit layout construction: the block file, the storage files and the
-    # constructors (which build generator-major and then switch).
-    construct_ok = ("xz_block.jl", "tableau_storage.jl", "layout.jl", "stabilizer_tableau.jl")
+    # Explicit layout construction: the block files (bit_block.jl for its
+    # unpacked copies), the storage files and the constructors (which build
+    # generator-major and then switch). `BitBlock`s are built only in the bit
+    # block file and the storage file.
+    construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl", "layout.jl",
+                    "stabilizer_tableau.jl")
     # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
-    # the layout-specific kernels, and the storage files that build tableaux
-    # from blocks. Kernel files that do not exist count as zero matches.
+    # the layout-specific kernels, the packed block file and its kernel files,
+    # and the storage files that build tableaux from blocks. Kernel files that
+    # do not exist count as zero matches.
     raw_ok = Dict(
+        "bit_block.jl" => 60,
         "rank_workspaces.jl" => 14,
         "span_decomposition.jl" => 9,
+        "rank_copies_bits.jl" => 8,
+        "apply_bits.jl" => 4,
+        "measure_bits.jl" => 10,
+        "canonicalize_bits.jl" => 4,
         "entanglement_entropy.jl" => 6,
         "check_purity.jl" => 4,
         "apply_qudit_major.jl" => 2,
@@ -465,7 +474,21 @@ end
         text = read(joinpath(srcdir, f), String)
         f in construct_ok ||
             @test !occursin(r"XZBlock\{(GeneratorMajor|QuditMajor)\}\(", text)
+        f in ("bit_block.jl", "tableau_storage.jl") ||
+            @test !occursin(r"BitBlock\{\w+\}\(", text)
         f == "xz_block.jl" && continue
         @test (f => count(raw, text)) == (f => get(raw_ok, f, 0))
+    end
+end
+
+@testset "no 32-bit-unsafe shifts in bit code" begin
+    srcdir = joinpath(pkgdir(QuditClifford), "src")
+    # `1 << b` shifts an `Int`, which drops bits 32-63 under `Int32`.
+    for f in ("bit_block.jl", "rank_copies_bits.jl", "apply_bits.jl", "measure_bits.jl", "canonicalize_bits.jl")
+        path = joinpath(srcdir, f)
+        isfile(path) || continue
+        for (i, line) in enumerate(eachline(path))
+            @test (f, i, occursin(r"(?<![\w)])1\s*<<", line)) == (f, i, false)
+        end
     end
 end

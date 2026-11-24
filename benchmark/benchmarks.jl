@@ -21,7 +21,7 @@ include(joinpath(@__DIR__, "workloads.jl"))
 const PROFILE = get(ENV, "QC_BENCH_PROFILE", "ci")
 
 #   smoke  n = 8               correctness only; seconds to run
-#   ci     n in (64, 256)      the PR job; ~170 s per revision
+#   ci     n in (64, 256)      the PR job; ~205 s per revision
 #   full   n up to 512         workflow_dispatch; adds d = 7 and the circuits
 #
 # d = 5 is in `ci` because it is the smallest prime whose dense leaves take a

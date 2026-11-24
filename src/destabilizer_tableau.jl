@@ -47,11 +47,12 @@ without first canonicalizing the stabilizer generators.
   tableau pure; `is_pure(tab; verify=true)` is what sees through it.
 - `eltype::Type`: Element type of the stored X and Z exponents of the
   stabilizers and destabilizers: `UInt8` for `d ≤ 251`, `UInt16` for
-  `d ≤ 65521`, or `Int` for every `d`. The default is the narrowest of these
-  that holds `d`. Another type, or one too narrow for `d`, throws an
-  `ArgumentError`. The choice affects memory and speed only:
-  every result, and every matrix the tableau returns, is the same `Int` value
-  in each element type. Phases are always stored as `Int`.
+  `d ≤ 65521`, `Int` for every `d`, or [`Bits`](@ref) for packed storage at
+  `d = 2` only. The default is the narrowest of these that holds `d`. Another
+  type, or one too narrow for `d`, throws an `ArgumentError`. The choice
+  affects memory and speed only: every result, and every matrix the tableau
+  returns, is the same `Int` value in each element type. Phases are stored as
+  `Int`, or as two bit planes with `eltype = Bits`.
 - `layout::Symbol=:generator`: Storage layout of the X and Z blocks of the
   stabilizers and destabilizers: `:generator` (generator `j` in column `j`) or
   `:qudit` (generator `j` in row `j`); any other symbol throws an
@@ -111,15 +112,16 @@ If `storephase=true`, the phase vector stores the phase exponent `k` of each sta
 Use [`StabilizerTableau`](@ref) instead when compact storage is more important
 than maintaining the dual basis. See also [`reset!`](@ref).
 """
-mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: AbstractTableau
+mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype, W<:Union{E, UInt64},
+                                    V<:AbstractVector{Int}} <: AbstractTableau
     d::Int                             # qudit dimension
     n::Int                             # number of qudits
     m::Int                             # number of active generator columns (0 ≤ m ≤ n)
-    stab_x::_BlockMatrix{E}            # n×n X exponents, one generator per column or row (see layout, _padded_block)
-    stab_z::_BlockMatrix{E}            # n×n Z exponents, laid out as stab_x
-    phase::Vector{Int}                 # phase exponent of generator j; length n, or 0 without storephase
-    destab_x::_BlockMatrix{E}          # n×n X exponents of the destabilizers (no phases), laid out as stab_x
-    destab_z::_BlockMatrix{E}          # n×n Z exponents of the destabilizers, laid out as stab_x
+    stab_x::_BlockMatrix{W}            # n×n X exponents, one generator per column or row (see layout, _padded_block); packed with Bits (_padded_bit_block)
+    stab_z::_BlockMatrix{W}            # n×n Z exponents, laid out as stab_x
+    phase::V                           # phase exponent of generator j; length n, or 0 without storephase
+    destab_x::_BlockMatrix{W}          # n×n X exponents of the destabilizers (no phases), laid out as stab_x
+    destab_z::_BlockMatrix{W}          # n×n Z exponents of the destabilizers, laid out as stab_x
     storephase::Bool                   # whether phase information is stored
     iscanonical::Bool                  # true if the tableau is in canonical (RCEF) form
     layout::Union{GeneratorMajor, QuditMajor}  # GeneratorMajor: generator j in column j; QuditMajor: in row j
@@ -129,10 +131,11 @@ mutable struct DestabilizerTableau{IM<:InverseMod, E<:_StorageEltype} <: Abstrac
     generator_workspace::Vector{Int}   # length 2n + storephase
     pivot_workspace::Vector{E}         # length 2n, [x; z] of a pivot or new destabilizer (no phase)
     coeff_workspace::Matrix{E}         # n×3, per-generator coefficients of apply! (phase and cache deltas) and the measure! random branch
+    word_workspace::Matrix{UInt64}     # max(_nwords(n), 32)×4 packed scratch with Bits storage, else 0×0
 
     # workspace for canonicalize!
     pivcol_of_row::Vector{Int}         # length 2n (pivot column for each row if canonical)
-    xdotz_cache::Vector{Int}           # length n (stores x·z values for each generator)
+    xdotz_cache::V                     # length n (stores x·z values for each generator)
 
     # workspace for expectation value calculations
     res_workspace::Vector{Int}         # length 2n
@@ -155,9 +158,12 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
     eltype::Type{E}=_default_eltype(d),
     layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
+    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
     _check_eltype(eltype, d)
     _check_layout(layout)
     state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
+    eltype === Bits && return _packed_preset_tableau(DestabilizerTableau, n, state_norm, basis_spec,
+                                                     storephase, inversemod, layout)
     b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
     tab = _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
                                       preset_state=state_norm, preset_basis=basis_spec)
@@ -185,6 +191,8 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     # The build step copies the generators into the tableau's own arrays and
     # never writes to its input.
     tab_in = shape.transpose ? permutedims(tableau) : tableau
+    eltype === Bits && return _packed_matrix_tableau(DestabilizerTableau, d, shape, tab_in,
+                                                     inversemod, check, layout)
 
     tab = _build_destabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
                                       inversemod; check=check)
@@ -210,7 +218,7 @@ function _build_destabilizer_tableau(
 
     b, phase = _generator_storage(stab_in, E, d, n, m, storephase)
 
-    tab = DestabilizerTableau{T, E}(
+    tab = DestabilizerTableau{T, E, E, Vector{Int}}(
         d,
         n,
         m,
@@ -225,6 +233,7 @@ function _build_destabilizer_tableau(
         zeros(Int, 2n + (storephase ? 1 : 0)),
         zeros(E, 2n),
         zeros(E, n, 3),
+        zeros(UInt64, 0, 0),
         zeros(Int, 2n),
         zeros(Int, n),
         zeros(Int, 2n),
@@ -531,7 +540,7 @@ Every term of a symplectic pairing against that column carries a factor from
 one of those two halves, so all terms outside this index set vanish and a
 pairing restricted to `supp[1:nsupp]` equals the full `2n`-term sum exactly.
 """
-@inline function _column_support!(supp::Vector{Int}, b::XZBlock, col::Int)
+@inline function _column_support!(supp::Vector{Int}, b::_AnyBlock, col::Int)
     nsupp = 0
     # Loop-carried counter, so neither @turbo nor @simd applies here.
     @inbounds for q in 1:_nq(b)
@@ -555,8 +564,8 @@ is a cache miss while generator `colB` of `b` stays cached: an entry of `a` is
 loaded only when the entry of `b` it pairs with is nonzero.
 """
 @inline function _symplectic_col_col_support(
-    a::XZBlock, colA::Int,
-    b::XZBlock, colB::Int,
+    a::_AnyBlock, colA::Int,
+    b::_AnyBlock, colB::Int,
     supp::Vector{Int}, nsupp::Int,
 )
     s = 0
@@ -577,7 +586,7 @@ multiplies; `supp[1:nsupp]` must cover the support of generator `colB` of `b`.
 """
 @inline function _symplectic_vec_col_support(
     vec::AbstractVector{<:Integer},
-    b::XZBlock, colB::Int,
+    b::_AnyBlock, colB::Int,
     supp::Vector{Int}, nsupp::Int,
 )
     n = _nq(b)
@@ -611,16 +620,16 @@ function reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
 end
 
 # Documented together with the `StabilizerTableau` methods.
-function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
-    return DestabilizerTableau{IM, E}(
+function Base.copy(tab::DestabilizerTableau{IM, E, W, V}) where {IM, E, W, V}
+    return DestabilizerTableau{IM, E, W, V}(
         tab.d,
         tab.n,
         tab.m,
-        _copy_block(tab.stab_x),
-        _copy_block(tab.stab_z),
+        _copy_gen_block(tab.stab_x, tab.n),
+        _copy_gen_block(tab.stab_z, tab.n),
         copy(tab.phase),
-        _copy_block(tab.destab_x),
-        _copy_block(tab.destab_z),
+        _copy_gen_block(tab.destab_x, tab.n),
+        _copy_gen_block(tab.destab_z, tab.n),
         tab.storephase,
         tab.iscanonical,
         tab.layout,
@@ -628,6 +637,7 @@ function Base.copy(tab::DestabilizerTableau{IM, E}) where {IM, E}
         zero(tab.generator_workspace),
         zero(tab.pivot_workspace),
         zero(tab.coeff_workspace),
+        zero(tab.word_workspace),
         copy(tab.pivcol_of_row),
         copy(tab.xdotz_cache),
         zero(tab.res_workspace),
@@ -661,7 +671,7 @@ function Base.show(io::IO, tab::DestabilizerTableau)
     println(io, "    Qudit dimension:  d = ", tab.d)
     println(io, "    Number of Qudits: n = ", tab.n)
     println(io, "    Generators:       m = ", tab.m)
-    println(io, "    Storage:          ", _layout_name(tab), ", ", _storage_eltype(tab))
+    println(io, "    Storage:          ", _layout_name(tab), ", ", nameof(_storage_eltype(tab)))
 
     tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
 

@@ -36,7 +36,7 @@ const _StorageEltype = Union{UInt8, UInt16, Int}
 
 # For 0 <= x <= (d-1)^2, `(x*M) >> K == div(x, d)` whenever `_barrett_ok`.
 # K = 20 keeps the largest accepted intermediate (d-1)^2 * M below 4.7e8, i.e.
-# inside Int32 -- forward compatibility with a narrowed element type.
+# inside Int32.
 # K = 12 would suffice only up to d = 19 and is NOT enough.
 const _BARRETT_K = 20
 

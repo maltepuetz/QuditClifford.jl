@@ -304,7 +304,7 @@ end
 ########################################
 
 # Target coordinates in all-X-then-all-Z order, matching the generator order.
-@inline function _gather(b::XZBlock, targets::NTuple{K,Int}, j::Int) where {K}
+@inline function _gather(b::_AnyBlock, targets::NTuple{K,Int}, j::Int) where {K}
     return ntuple(Val(2K)) do i
         @inline
         i <= K ? _xget(b, targets[i], j) : _zget(b, targets[i - K], j)
@@ -312,7 +312,7 @@ end
 end
 
 @inline function _scatter!(
-    b::XZBlock,
+    b::_AnyBlock,
     targets::NTuple{K,Int},
     j::Int,
     vout::NTuple{S,Int},
@@ -334,13 +334,13 @@ end
 # bang marks that a backing MAY mutate borrowed scratch -- the tuple backing
 # does not need to.
 
-@inline _gather_prepared!(prep::PreparedClifford{K,S}, b::XZBlock,
+@inline _gather_prepared!(prep::PreparedClifford{K,S}, b::_AnyBlock,
                           j::Int) where {K,S} = _gather(b, prep.targets, j)
 
 @inline _matvec_prepared!(prep::PreparedClifford{K,S},
                           v::NTuple{S,Int}) where {K,S} = _matvec(prep, v)
 
-@inline _scatter_prepared!(prep::PreparedClifford{K,S}, b::XZBlock,
+@inline _scatter_prepared!(prep::PreparedClifford{K,S}, b::_AnyBlock,
                            j::Int, vout::NTuple{S,Int}) where {K,S} =
     _scatter!(b, prep.targets, j, vout)
 
@@ -476,7 +476,7 @@ struct PreparedDenseClifford <: AbstractPreparedClifford
 end
 
 @inline function _gather_prepared!(prep::PreparedDenseClifford,
-                                   b::XZBlock, j::Int)
+                                   b::_AnyBlock, j::Int)
     t = prep.targets; k = prep.k; v = prep.v
     @inbounds for i in 1:k
         v[i] = _xget(b, t[i], j)
@@ -486,7 +486,7 @@ end
 end
 
 @inline function _scatter_prepared!(prep::PreparedDenseClifford,
-                                    b::XZBlock, j::Int,
+                                    b::_AnyBlock, j::Int,
                                     vout::Vector{Int})
     t = prep.targets; k = prep.k
     @inbounds for i in 1:k
