@@ -1,0 +1,16 @@
+codecov:
+  notify:
+    # Six CI jobs upload a report (the `coverage: true` entries of the test
+    # matrix in .github/workflows/CI.yml). Wait for all of them before
+    # reporting a status.
+    after_n_builds: 6
+comment:
+  after_n_builds: 6
+coverage:
+  status:
+    project:
+      default:
+        # Which lines count as code varies a little with how the suite is
+        # split over processes (function headers and `end` lines appear with
+        # zero hits), so allow that much before failing.
+        threshold: 0.5%

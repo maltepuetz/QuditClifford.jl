@@ -315,10 +315,12 @@ function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
     end
 
     # x·z of every generator, accumulated column by column. `Int` sums wrap the
-    # same way in any order, so the reduction equals `dot_xz_col`'s.
+    # same way in any order, so the reduction equals `dot_xz_col`'s. The loop
+    # is `@simd`, not `@turbo`: with narrow entries and `Int` sums, the code
+    # `@turbo` generates for 512-bit registers corrupts memory on Julia 1.10.
     fill!(xdotz_cache, 0)
     @inbounds for q in 1:n
-        @turbo for jj in 1:m
+        @simd for jj in 1:m
             xdotz_cache[jj] += Int(x[jj, q]) * Int(z[jj, q])
         end
     end
