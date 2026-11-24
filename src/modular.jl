@@ -92,15 +92,15 @@ end
 end
 
 ##############################################
-# dst .= mod.(dst .- a .* src, d)            #
+# dst .= mod.(dst .+ a .* src, d)            #
 ##############################################
 #
 # Tiers, resolved once per call:
 #   a == 0    nothing to do
-#   a == 1    subtract, then one conditional add        (no multiply)
-#   a == d-1  -(d-1) == +1 (mod d): add, then one conditional subtract
-#   Barrett   multiply, shift-reduce, then conditional add
-#   otherwise one `mod` per entry of `dst + (d - a)*src`
+#   a == 1    add, then one conditional subtract        (no multiply)
+#   a == d-1  +(d-1) == -1 (mod d): subtract, then one conditional add
+#   Barrett   multiply, shift-reduce, then conditional subtract
+#   otherwise one `mod` per entry of `dst + a*src`
 #
 # The two multiply-free tiers cover every multiplier that occurs at d = 2 and
 # d = 3: in `canonicalize!` the multiplier is a nonzero tableau entry, and in
@@ -109,51 +109,11 @@ end
 # its constructor-based leaves still do not, because a `:ghz` or `:product`
 # tableau only ever holds 0, 1 and d-1.
 #
-# The `a == d-1` body adds two stored values, so it is exact for d <= 2^62 and
+# The `a == 1` body adds two stored values, so it is exact for d <= 2^62 and
 # wraps above that. That ceiling never binds in practice: the package-wide
 # envelope (`max(n, 2) * (d-1)^2 <= typemax(Int)`, see `_warn_if_dimension_unsafe`
-# in helper.jl and the conventions page) caps d near 2^31 already. The `a == 1`
-# body subtracts, so it is exact for every d.
-@inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
-    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
-    a == 0 && return dst
-    if a == 1
-        @turbo for i in eachindex(dst)
-            r = dst[i] - src[i]
-            dst[i] = r + ifelse(r < 0, d, 0)
-        end
-    elseif a == d - 1
-        @turbo for i in eachindex(dst)
-            r = dst[i] + src[i]
-            dst[i] = r - ifelse(r >= d, d, 0)
-        end
-    else
-        if _barrett_valid(d)
-            M = _barrett_mul(d)
-            @turbo for i in eachindex(dst)
-                t = a * src[i]
-                t = t - ((t * M) >> _BARRETT_K) * d
-                r = dst[i] - t
-                dst[i] = r + ifelse(r < 0, d, 0)
-            end
-        else
-            # dst - a*src == dst + (d - a)*src (mod d). The sum lies in
-            # [0, (d-1) + (d-1)^2], inside `Int` under the envelope above, so
-            # one `mod` is exact.
-            b = d - a
-            @inbounds @simd for i in eachindex(dst)
-                dst[i] = mod(dst[i] + b * src[i], d)
-            end
-        end
-    end
-    return dst
-end
-
-##############################################
-# dst .= mod.(dst .+ a .* src, d)            #
-##############################################
-# Mirror of `submul_mod!` with the signs exchanged, so here `a == 1` is the add
-# form (ceiling d <= 2^62) and `a == d-1` is the subtract form (exact always).
+# in helper.jl and the conventions page) caps d near 2^31 already. The
+# `a == d-1` body subtracts, so it is exact for every d.
 @inline function addmul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
     @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("addmul_mod!", dst, src)
     a == 0 && return dst
@@ -185,6 +145,19 @@ end
         end
     end
     return dst
+end
+
+##############################################
+# dst .= mod.(dst .- a .* src, d)            #
+##############################################
+# dst - a*src == dst + (d - a)*src (mod d), and d - a is reduced for 0 < a < d,
+# so `addmul_mod!` with d - a serves every tier: a == 1 here is its a == d-1
+# tier and a == d-1 its a == 1 tier. The narrow and mixed methods below forward
+# the same way.
+@inline function submul_mod!(dst::AbstractVector{Int}, src::AbstractVector{Int}, a::Int, d::Int)
+    @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
+    a == 0 && return dst
+    return @inbounds addmul_mod!(dst, src, d - a, d)
 end
 
 ##################################################################
@@ -369,17 +342,6 @@ end
     return min(p, p - dL)
 end
 
-@inline function _submul_shoup!(dst::AbstractVector{E}, src::AbstractVector{E},
-                                a::Int, d::Int, ::Type{L}) where {E<:_NarrowEltype, L}
-    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
-    @inbounds @simd for i in eachindex(dst)
-        p = _shoup_mod(src[i], aL, q, dL)       # in [0, d)
-        t = L(dst[i]) - p                       # x - p, wrapped around when x < p
-        dst[i] = min(t, t + dL) % E
-    end
-    return dst
-end
-
 @inline function _addmul_shoup!(dst::AbstractVector{E}, src::AbstractVector{E},
                                 a::Int, d::Int, ::Type{L}) where {E<:_NarrowEltype, L}
     aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
@@ -400,42 +362,11 @@ end
     return dst
 end
 
-@inline function _scale_shoup!(dst::AbstractVector{E}, a::Int, d::Int,
-                               ::Type{L}) where {E<:_NarrowEltype, L}
-    aL = a % L; dL = d % L; q = _shoup_q(E, a, d)
-    @inbounds @simd for i in eachindex(dst)
-        dst[i] = _shoup_mod(dst[i], aL, q, dL) % E
-    end
-    return dst
-end
-
 @inline function submul_mod!(dst::AbstractVector{E}, src::AbstractVector{E},
                              a::Int, d::Int) where {E<:_NarrowEltype}
     @boundscheck axes(dst) == axes(src) || _throw_axes_mismatch("submul_mod!", dst, src)
     a == 0 && return dst
-    dd = d % E
-    if d == 2
-        @inbounds @simd for i in eachindex(dst)
-            dst[i] = xor(dst[i], src[i])
-        end
-    elseif a == 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            s = src[i]
-            dst[i] = (x - s) + ifelse(x < s, dd, zero(E))
-        end
-    elseif a == d - 1
-        @inbounds @simd for i in eachindex(dst)
-            x = dst[i]
-            t = dd - src[i]                     # in [1, d]
-            dst[i] = (x - t) + ifelse(x < t, dd, zero(E))
-        end
-    elseif _shoup_in_eltype(E, d)
-        _submul_shoup!(dst, src, a, d, E)
-    else
-        _submul_shoup!(dst, src, a, d, widen(E))
-    end
-    return dst
+    return @inbounds addmul_mod!(dst, src, d - a, d)
 end
 
 @inline function addmul_mod!(dst::AbstractVector{E}, src::AbstractVector{E},
@@ -499,9 +430,12 @@ end
             dst[i] = ifelse(s == zero(E), zero(E), dd - s)
         end
     elseif _shoup_in_eltype(E, d)
-        _scale_shoup!(dst, a, d, E)
+        # `dst` is passed as its own `src`, the one exception to the
+        # no-aliasing rule: the loop reads and writes entry i in the same
+        # iteration and touches no other entry.
+        _mulcopy_shoup!(dst, dst, a, d, E)
     else
-        _scale_shoup!(dst, a, d, widen(E))
+        _mulcopy_shoup!(dst, dst, a, d, widen(E))
     end
     return dst
 end
