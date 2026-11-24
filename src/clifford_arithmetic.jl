@@ -86,42 +86,78 @@ end
     return (M, s)
 end
 
+# Barrett constant `(M, s)` of the unsigned type `U ∈ (UInt16, UInt32)` for the
+# lane `T = signed(U)`, or `(0, 0)` when there is none: `div(x, d) ==
+# (x * M) >> s` for every `0 <= x <= X = 2S·d·(d-1)`, with `M <= typemax(U)`
+# and the product formed in `widen(U)`. `X <= typemax(T)` is required
+# (`_lane_holds`), so with `W = 8·sizeof(U)`, `X < 2^L` for an `L <= W-1`, and
+# `2^lg <= d < 2^(lg+1)` with `lg <= W-2`. The shift is `s = L + lg + 1`:
+# `M = cld(2^s, d)` leaves `e = M·d - 2^s < d < 2^(lg+1)`, so
+# `e·X < 2^(lg+1+L) = 2^s`, which is the exactness criterion of
+# `_clifford_barrett`; and `M <= 2^(s-lg) = 2^(L+1) <= 2^W`, with equality only
+# when `d` is a power of two. So every odd `d` whose `X` the lane holds has a
+# constant, unlike the signed constants, and `x * M < 2^(2W-1)` fits
+# `widen(U)`. Both conditions are still tested (exactness by division, as in
+# `_clifford_barrett`), so a power of two is rejected or exact. `s <= 2W-2`
+# fits the `UInt64` the derivation runs in on every host. One division pair,
+# once per gate.
+@inline function _clifford_barrett_unsigned(::Type{U}, S::Int,
+                                            d::Int) where {U<:Union{UInt16,UInt32}}
+    _lane_holds(signed(U), S, d) || return (zero(U), 0)
+    W = 8 * sizeof(U)
+    du = UInt64(d)
+    X = UInt64(2S) * du * (du - one(UInt64))
+    L = 8 * sizeof(UInt64) - leading_zeros(X)
+    lg = 8 * sizeof(UInt64) - 1 - leading_zeros(du)
+    s = L + lg + 1
+    p2 = one(UInt64) << s
+    M = cld(p2, du)
+    M <= typemax(U) || return (zero(U), 0)
+    e = M * du - p2
+    (e == 0 || X <= (p2 - one(UInt64)) ÷ e) || return (zero(U), 0)
+    return (M % U, s)
+end
+
 # The lane of the qudit-major gate kernel for a support of `S` coordinates at
 # dimension `d`, as `(bytes, M, s, wide)`: `bytes` is the `sizeof` of the lane
 # type `T`, or 0 when there is no lane; `(M, s)` is its Barrett constant as an
-# `Int64`, derived in `widen(T)` when `wide` and in `T` otherwise. Every
+# `Int64`: the signed constant `_clifford_barrett(T, S, d)` when `wide` is
+# false, and the unsigned constant `_clifford_barrett_unsigned(unsigned(T), S,
+# d)`, whose product is formed in `widen(unsigned(T))`, when it is true. Every
 # unreduced value the kernel forms is at most `X = 2S·d·(d-1)` (each site
 # states its bound), and every entry is below `d <= X`.
 #
 # `Int16` and `Int32` lanes are chosen by that value bound: `T` is the narrowest
-# with `X <= typemax(T)` that has a constant. Its own constant,
-# `_clifford_barrett(T, S, d)`, is preferred; it exists only for small `d`.
-# Otherwise the reduction forms only the product `x * M` in `widen(T)`, under
-# `(M, s) = _clifford_barrett(widen(T), S, d)`, whose derivation makes `x * M`
-# fit `widen(T)` and the quotient exact for every `0 <= x <= X`; the quotient
-# is at most `x ÷ d`, so it and `x - q·d` fit `T`. Measured per two-qudit gate
-# (Stab, `UInt8`, n = 2048, M3 Pro), the widened product cost 1.37x at d = 3
-# (1842 ns against 1345 ns with Int16's own constant) and 2.0x in the Int32 lane
-# at d = 71, 101, 109 (about 4660 ns against 2310 ns), while the widened Int16
-# lane beat the Int32 lane with its own constant 1.24x at d = 5-61 (about 1960
-# ns against 2430 ns) and the widened Int32 lane beat the scalar Int64 lane
-# 3.3-3.5x at d = 67, 97, 251 (about 4800 ns against 16500 ns). An `Int64` lane
-# reduces in `Int64` itself, under `_clifford_barrett(Int64, S, d)`. Each test
-# falls through to the next when its constant is missing (acceptance is not
-# monotonic in `d`). The lanes are named explicitly, never `Int`, so a 32-bit
-# host chooses the same lane as a 64-bit one.
+# with `X <= typemax(T)`. Its own signed constant is preferred; it exists only
+# for small `d` (acceptance is not monotonic in `d`, so it is tested, never
+# bounded), and reduces without leaving `T`. Otherwise the reduction multiplies
+# two zero-extended `unsigned(T)` values in `widen(unsigned(T))`, a product
+# NEON and AVX2 have a vector instruction for (neither has one for a full
+# 64-bit product). That constant
+# exists for every odd `d` the lane holds, so no odd `d` falls through to a
+# wider lane. An `Int64` lane reduces in `Int64` itself, under
+# `_clifford_barrett(Int64, S, d)`. The lanes are named explicitly, never
+# `Int`, so a 32-bit host chooses the same lane as a 64-bit one.
+#
+# Measured per gate on one to three qudits (Stab, n = 2048, M3 Pro): where a
+# lane has both constants (d = 3, 5, 61, 71, 101), the signed one takes
+# 0.75-0.81 of the unsigned one's time, so it comes first. With the unsigned
+# constant a two-qudit gate takes about 1650 ns in the Int16 lane (d = 31)
+# and 2800 ns in the Int32 lane (d = 127, 251), against 2290 ns in the Int32
+# lane with its own signed constant (d = 71, 101), so the narrower lane comes
+# before the wider one's signed constant.
 @inline function _clifford_lane(S::Int, d::Int)
     if _lane_holds(Int16, S, d)
         M, s = _clifford_barrett(Int16, S, d)
         M != 0 && return (2, Int64(M), s, false)
-        M, s = _clifford_barrett(Int32, S, d)
-        M != 0 && return (2, Int64(M), s, true)
+        Mu, su = _clifford_barrett_unsigned(UInt16, S, d)
+        Mu != 0 && return (2, Int64(Mu), su, true)
     end
     if _lane_holds(Int32, S, d)
         M, s = _clifford_barrett(Int32, S, d)
         M != 0 && return (4, Int64(M), s, false)
-        M, s = _clifford_barrett(Int64, S, d)
-        M != 0 && return (4, M, s, true)
+        Mu, su = _clifford_barrett_unsigned(UInt32, S, d)
+        Mu != 0 && return (4, Int64(Mu), su, true)
     end
     M, s = _clifford_barrett(Int64, S, d)
     M != 0 && return (8, M, s, false)
@@ -147,5 +183,17 @@ end
 # keeps the SIMD loops lean.
 @inline function _barrett_reduce(x::T, d::T, M::W, s::Int) where {T<:Signed,W<:Signed}
     q = ((x % W) * M) >> ((s % UInt) & UInt(8 * sizeof(W) - 1))
+    return x - (q % T) * d
+end
+
+# `x mod d` for `0 <= x <= X` under a constant `(M, s)` from
+# `_clifford_barrett_unsigned(U, S, d)`, with `x` and `d` in the lane type
+# `T = signed(U)` of `W` bits: `0 <= x <= X <= typemax(T)`, so `x % U` is `x`,
+# and `x * M < 2^(W-1) · 2^W` is formed in `widen(U)` from two zero-extended
+# `U` values. The quotient is exact and at most `x ÷ d`, so it and the result
+# fit `T`. `1 <= s <= 2W-2`, so masking the shift to `2W-1` changes nothing.
+@inline function _barrett_reduce(x::T, d::T, M::U, s::Int) where {T<:Signed,U<:Unsigned}
+    V = widen(U)
+    q = ((x % U % V) * (M % V)) >> ((s % UInt) & UInt(8 * sizeof(V) - 1))
     return x - (q % T) * d
 end

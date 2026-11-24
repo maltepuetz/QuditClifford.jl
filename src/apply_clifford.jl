@@ -790,7 +790,8 @@ end
 # A qudit-major tableau runs the tuple backing's `fast` tier through the
 # kernel of src/apply_qudit_major.jl, one SIMD loop over the generators in the
 # lane `_clifford_lane` chooses, derived once per gate; each branch names its
-# lane type and constant type, so the kernel is compiled for it. The kernel
+# lane type and constant type, so the kernel is compiled for it (the instances
+# with an unsigned constant behind `_qm_apply_unsigned!`). The kernel
 # derives its own constant, so `bm` (an `Int` constant) is needed only at
 # `d = 2`, where it gates `prep.Q`. The overflow-safe tier, and a `(S, d)`
 # without a lane, take the per-generator path.
@@ -805,10 +806,10 @@ end
     else
         lane, M, s, wide = _clifford_lane(S, d)
         if lane == 2
-            wide ? _qm_apply!(tab, prep, L, Int16, M % Int32, s) :
+            wide ? _qm_apply_unsigned!(tab, prep, L, Int16, M % UInt16, s) :
                    _qm_apply!(tab, prep, L, Int16, M % Int16, s)
         elseif lane == 4
-            wide ? _qm_apply!(tab, prep, L, Int32, M, s) :
+            wide ? _qm_apply_unsigned!(tab, prep, L, Int32, M % UInt32, s) :
                    _qm_apply!(tab, prep, L, Int32, M % Int32, s)
         elseif lane == 8
             _qm_apply!(tab, prep, L, Int64, M, s)
@@ -875,11 +876,11 @@ end
 # The qudit-major kernel's destabilizer pass: the same kernel on the
 # destabilizer block, with neither phase nor cache.
 @inline _after_clifford!(::AbstractTableau, ::QuditMajor, ::PreparedClifford,
-                         ::Type{T}, M::Union{Nothing,Signed}, s::Int) where {T<:Signed} = nothing
+                         ::Type{T}, M::Union{Nothing,Signed,Unsigned}, s::Int) where {T<:Signed} = nothing
 
 @inline function _after_clifford!(tab::DestabilizerTableau, L::QuditMajor,
                                   prep::PreparedClifford, ::Type{T},
-                                  M::Union{Nothing,Signed}, s::Int) where {T<:Signed}
+                                  M::Union{Nothing,Signed,Unsigned}, s::Int) where {T<:Signed}
     _qm_tuple_kernel!(_destab(tab, L), nothing, nothing, tab.coeff_workspace, tab.m,
                       prep, T, M, s)
     return nothing
