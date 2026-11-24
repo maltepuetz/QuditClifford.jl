@@ -251,6 +251,17 @@ function _load_gen!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype})
     return b
 end
 
+# The X exponents of the GHZ duals `D_j = X_1 ... X_{j-1}` (`j ≥ 2`) in a zero
+# qudit-major block: column `q` is one on the contiguous rows `q+1:n`. The
+# generator-major blocks take the generic method in src/destabilizer_tableau.jl.
+function _ghz_duals_x!(b::_QMBlock, n::Int)
+    E = eltype(b.x)
+    for q in 1:(n - 1)
+        fill!(view(b.x, (q + 1):n, q), one(E))
+    end
+    return b
+end
+
 function _zero_gen!(b::XZBlock, j::Int)
     fill!(_xgen(b, j), 0)
     fill!(_zgen(b, j), 0)

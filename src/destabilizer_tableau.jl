@@ -161,16 +161,8 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, n::Int;
     eltype::Type{E}=_default_eltype(d),
     layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
-    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
-    _check_eltype(eltype, d)
-    _check_layout(layout)
-    state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
-    eltype === Bits && return _packed_preset_tableau(DestabilizerTableau, n, state_norm, basis_spec,
-                                                     storephase, inversemod, layout)
-    b, phase, m = _preset_tableau(eltype, d, n, state_norm, basis_spec, storephase)
-    tab = _build_destabilizer_tableau(eltype, d, n, m, (b, phase), storephase, inversemod;
-                                      preset_state=state_norm, preset_basis=basis_spec)
-    return _apply_layout!(tab, layout)
+    return _preset_tableau(DestabilizerTableau, eltype, d, n, state, basis, storephase, inversemod,
+                           layout)
 end
 
 DestabilizerTableau(d::Int, n::Int, state::Symbol; kwargs...) = DestabilizerTableau(d, n; state=state, kwargs...)
@@ -183,90 +175,18 @@ Base.@constprop :aggressive function DestabilizerTableau(d::Int, tableau::Abstra
     eltype::Type{E}=_default_eltype(d),
     layout::Symbol=_DEFAULT_LAYOUT[],
 ) where {T<:InverseMod, E}
-    _check_eltype(eltype, d)
-    _check_layout(layout)
-    m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
-    # The input is read entry by entry with 1-based indices.
-    Base.require_one_based_indexing(tableau)
-    shape = _infer_tableau_shape(size(tableau, 1), size(tableau, 2), m, storephase)
-    shape === nothing && throw(ArgumentError(
-        "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
-    ))
-
-    # The build step copies the generators into the tableau's own arrays and
-    # never writes to its input. A transposed input is read through a lazy
-    # `transpose`, entry by entry, with no copy.
-    tab_in = shape.transpose ? transpose(tableau) : tableau
-    eltype === Bits && return _packed_matrix_tableau(DestabilizerTableau, d, shape, tab_in,
-                                                     inversemod, check, layout)
-
-    tab = _build_destabilizer_tableau(eltype, d, shape.n, shape.m, tab_in, shape.storephase,
-                                      inversemod; check=check)
-    return _apply_layout!(tab, layout)
+    return _matrix_tableau(DestabilizerTableau, eltype, d, tableau, m, storephase, inversemod, check,
+                           layout)
 end
 
-function _build_destabilizer_tableau(
-    ::Type{E},
-    d::Int,
-    n::Int,
-    m::Int,
-    stab_in,
-    storephase::Bool,
-    inversemod::T;
-    preset_state::Union{Symbol,Nothing}=nothing,
-    preset_basis=nothing,
-    check::Bool=true,
-) where {E<:_StorageEltype, T<:InverseMod}
-    !Primes.isprime(d) && throw(ArgumentError("Qudit dimension d must be a prime number."))
-    _check_inversemod(inversemod, d)
-    _warn_if_dimension_unsafe(d, n)
-
-    b, phase = _generator_storage(stab_in, E, d, n, m, storephase)
-
-    tab = DestabilizerTableau{T, E, E, Vector{Int}}(
-        d,
-        n,
-        m,
-        b.x,
-        b.z,
-        phase,
-        _destab_blocks(E, n)...,
-        storephase,
-        false,
-        GeneratorMajor(),
-        inversemod,
-        zeros(Int, 2n + (storephase ? 1 : 0)),
-        zeros(E, 2n),
-        zeros(E, n, 3),
-        zeros(UInt64, 0, 0),
-        zeros(Int, 2n),
-        zeros(Int, n),
-        zeros(Int, 2n),
-        zeros(Int, n),
-        zeros(Int, n),
-        zeros(Int, n),
-        _storage_rank_workspace(E, d, n),
-        _bit_rank_workspace(d, n),
-    )
-
-    return _init_destabilizers!(tab, _layout_marker(tab), preset_state, preset_basis, check)
-end
-
-# Fill the destabilizers and `xdotz_cache` of a new tableau: the closed-form
-# duals of a preset, or the duals of validated raw generators.
-function _init_destabilizers!(tab::DestabilizerTableau, L::TableauLayout,
-                              preset_state::Union{Symbol,Nothing}, preset_basis, check::Bool)
-    if preset_state === nothing
-        # Before the rebuild, not after: an invalid generator set would
-        # otherwise produce a dual basis that cannot satisfy duality, and the
-        # failure would surface somewhere far from its cause.
-        check && _validate_generators!(tab, L)
-        rebuild_destabilizers!(tab, L)
-        _recompute_xdotz_cache!(tab, L)
-    else
-        _preset_destabilizers!(tab, L, preset_state, preset_basis, true)
-    end
-
+# The destabilizers and `xdotz_cache` of a tableau built from raw generators:
+# the generators are validated first (with `check`), since invalid ones would
+# give a dual basis that cannot satisfy duality and a failure far from its
+# cause, then the duals are rebuilt.
+function _init_from_generators!(tab::DestabilizerTableau, L::TableauLayout, check::Bool)
+    check && _validate_generators!(tab, L)
+    rebuild_destabilizers!(tab, L)
+    _recompute_xdotz_cache!(tab, L)
     return tab
 end
 
@@ -543,7 +463,8 @@ function _preset_destabilizers!(tab::DestabilizerTableau, L::TableauLayout, stat
 end
 
 # The X exponents of the GHZ duals `D_j = X_1 ... X_{j-1}` (`j ≥ 2`) in a
-# zero block; a packed block takes whole words (src/bit_block.jl).
+# zero block; a packed block takes whole words (src/bit_block.jl), a
+# qudit-major one whole columns (src/xz_block.jl).
 function _ghz_duals_x!(b, n::Int)
     @inbounds for j in 2:n, q in 1:(j-1)
         _xset!(b, 1, q, j)
@@ -654,88 +575,24 @@ end
 # Destabilizer-specific API #
 #############################
 
-function reset!(tab::DestabilizerTableau; state::Symbol=:mixed, basis=:Z)
-    state_norm, basis_spec = _normalize_state_and_basis(state, basis, tab.n)
-    return _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec)
-end
-
-# `zeroed`: the blocks, the phase and the cache are already zero, as in a
-# tableau just allocated, so they are not cleared again.
-function _reset_preset!(tab::DestabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec,
-                        zeroed::Bool = false)
-    m = zeroed ? _fill_preset!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase) :
-                 _preset_tableau!(_stab(tab, L), _phase(tab), tab.d, tab.n, state_norm, basis_spec, tab.storephase)
-    tab.m = m
-    tab.iscanonical = false
-    _preset_destabilizers!(tab, L, state_norm, basis_spec, zeroed)
-    return tab
-end
-
-function reset!(tab::DestabilizerTableau, state::Symbol; basis=:Z)
-    return reset!(tab; state=state, basis=basis)
-end
+_preset_duals!(tab::DestabilizerTableau, L::TableauLayout, state_norm::Symbol, basis_spec,
+               zeroed::Bool) = _preset_destabilizers!(tab, L, state_norm, basis_spec, zeroed)
 
 # Documented together with the `StabilizerTableau` methods.
-function Base.copy(tab::DestabilizerTableau{IM, E, W, V}) where {IM, E, W, V}
-    return DestabilizerTableau{IM, E, W, V}(
-        tab.d,
-        tab.n,
-        tab.m,
-        _copy_gen_block(tab.stab_x, tab.n),
-        _copy_gen_block(tab.stab_z, tab.n),
-        copy(tab.phase),
-        _copy_gen_block(tab.destab_x, tab.n),
-        _copy_gen_block(tab.destab_z, tab.n),
-        tab.storephase,
-        tab.iscanonical,
-        tab.layout,
-        tab.inversemod,
-        zero(tab.generator_workspace),
-        zero(tab.pivot_workspace),
-        zero(tab.coeff_workspace),
-        zero(tab.word_workspace),
-        copy(tab.pivcol_of_row),
-        copy(tab.xdotz_cache),
-        zero(tab.res_workspace),
-        zero(tab.c_workspace),
-        zero(tab.zacc_workspace),
-        zero(tab.support_workspace),
-        zero(tab.rank_workspace),
-        zero(tab.bit_workspace),
-    )
-end
+Base.copy(tab::DestabilizerTableau) =
+    DestabilizerTableau(tab.d, tab.n, tab.m, _copied_stab(tab)...,
+                        _copy_gen_block(tab.destab_x, tab.n), _copy_gen_block(tab.destab_z, tab.n),
+                        tab.storephase, tab.iscanonical, tab.layout, tab.inversemod,
+                        _copied_workspaces(tab)..., zero(tab.support_workspace),
+                        _copied_rank_workspaces(tab)...)
 
 function Base.copy!(dst::DestabilizerTableau, src::DestabilizerTableau)
-    _check_copy_compatible(dst, src)
-    dst === src && return dst
-    _copy_block!(dst.stab_x, src.stab_x)
-    _copy_block!(dst.stab_z, src.stab_z)
-    copyto!(dst.phase, src.phase)
-    _copy_block!(dst.destab_x, src.destab_x)
-    _copy_block!(dst.destab_z, src.destab_z)
-    copyto!(dst.pivcol_of_row, src.pivcol_of_row)
-    copyto!(dst.xdotz_cache, src.xdotz_cache)
-    dst.m = src.m
-    dst.iscanonical = src.iscanonical
-    dst.layout = src.layout
-    return dst
+    return _copy_tableau!(dst, src)
 end
 
 # give the struct a nice standard presentation (stabilizers + destabilizers)
 function Base.show(io::IO, tab::DestabilizerTableau)
-    println(io, "Destabilizer Tableau:")
-    println(io, "    Qudit dimension:  d = ", tab.d)
-    println(io, "    Number of Qudits: n = ", tab.n)
-    println(io, "    Generators:       m = ", tab.m)
-    println(io, "    Storage:          ", _layout_name(tab), ", ", nameof(_storage_eltype(tab)))
-
-    tab.n >= max_qudits_display[] && (println(io, "    Tableau is too large to display."); return)
-
-    if tab.m < tab.n
-        println(io, "    Mixed tableau (m < n generators):")
-    else
-        println(io, "    Tableau:")
-    end
+    _show_header(io, tab, "Destabilizer Tableau:") || return
 
     if tab.m == 0
         println(io, "    (no generators; maximally mixed on the full space)")

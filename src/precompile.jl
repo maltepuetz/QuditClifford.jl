@@ -50,8 +50,16 @@ PrecompileTools.@setup_workload begin
     # from this block with `eltype` (or with `storephase`), it made loading the
     # package about 1.1 s slower on Julia 1.13, spent verifying a method call
     # edge; with `state` alone it does not.
-    packed(TT, state, layout) = _packed_preset_tableau(TT, 4, state, state === :product ? :Z : nothing,
-                                                       true, PrecomputedInvMod(2), layout)
+    packed(TT, state, layout) = _preset_tableau(TT, Bits, 2, 4, state, :Z, true,
+                                                PrecomputedInvMod(2), layout)
+    # The raw-matrix constructors, also positional for the same reason. The
+    # storage type `_default_eltype(d)` is inferred as a `Union`, as in the
+    # constructors' own default, so the construction and validation are
+    # compiled for every type the default can return, `Int` included; only
+    # the `UInt8` path runs. Without it the first raw-matrix call compiled
+    # for 0.8-2.6 s (Julia 1.13), and with it loading is unchanged.
+    raw(TT, d, M) = _matrix_tableau(TT, _default_eltype(d), d, M, nothing, nothing,
+                                    PrecomputedInvMod(d), true, :generator)
     PrecompileTools.@compile_workload begin
         for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
             workload(rng, TT(d, 4; state=:ghz), TT(d, 4; state=:product),
@@ -62,6 +70,9 @@ PrecompileTools.@setup_workload begin
             tab = workload(rng, packed(TT, :ghz, layout), packed(TT, :product, layout),
                            packed(TT, :mixed, layout))
             qudit_major!(tab); generator_major!(tab)
+        end
+        for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3)
+            raw(TT, d, stabilizer_matrix(TT(d, 4; state=:ghz)))
         end
         # The loops above store UInt8 and Bits; d = 257 stores UInt16. Int
         # storage (`eltype = Int`) is left out: caching it beside UInt8

@@ -2,9 +2,9 @@
 #
 # Every routine in this file assumes its inputs are ALREADY REDUCED into
 # [0, d).  Tableau entries, destabilizer entries and the operator workspaces
-# all satisfy that: `_build_stabilizer_tableau` and `_build_destabilizer_tableau`
-# both reduce raw input (the latter also builds the destabilizers, which these
-# primitives also write), the preset fillers write reduced values, and every
+# all satisfy that: the raw-matrix constructors (`_matrix_tableau`) reduce raw
+# input and build the destabilizers from it (which these primitives also
+# write), the preset fillers write reduced values, and every
 # `set_operator!` method reduces each exponent on write.  That invariant is what turns the outer
 # reduction into a single conditional add or subtract instead of a division.
 # Handing one of these functions an unreduced value gives a WRONG answer, not a
