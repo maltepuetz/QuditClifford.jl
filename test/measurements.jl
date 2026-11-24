@@ -215,14 +215,45 @@ end
     operators = (
         xz,
         GeneralPauli(xz, 0),
-        TriplePauli(1, 2, 1, 2, 0, 2, 3, 1, 2),
-        NPauli((1, 2, 3), (2, 0, 1), (1, 2, 2)),
+        TriplePauli(1, 2, 1, 2, 0, 2, 3, 1, 2),        NPauli((1, 2, 3), (2, 0, 1), (1, 2, 2)),
     )
 
     # Sparse specializations must preserve the dense symplectic convention.
     for op in operators
         @test QuditClifford.commutation_vec_op(v, op) == expected
         @test QuditClifford.commutation_col(block, 1, op) == expected
+    end
+end
+
+@testset "Sparse commutators agree with the dense one on tableau blocks" begin
+    n = 5
+    configs = [(2, (eltype = UInt8,)), (2, (eltype = Bits,)), (3, NamedTuple())]
+    for (label, TT) in [("StabilizerTableau", StabilizerTableau), ("DestabilizerTableau", DestabilizerTableau)],
+        (d, kw) in configs, layout in (:generator, :qudit)
+
+        @testset "$label d=$d $(get(kw, :eltype, "default")) $layout" begin
+            rng = Xoshiro(20 + d)
+            tab = random_state!(rng, TT(d, n; layout, kw...))
+            block = QuditClifford._stab(tab, QuditClifford._layout_marker(tab))
+            for _ in 1:20
+                q1, q2, q3 = randperm(rng, n)[1:3]
+                e = rand(rng, 0:d-1, 6)
+                dense = zeros(Int, 2n)
+                operators = (
+                    SinglePauli(q1, e[1], e[2]),
+                    DoublePauli(q1, e[1], e[2], q2, e[3], e[4]),
+                    TriplePauli(q1, e[1], e[2], q2, e[3], e[4], q3, e[5], e[6]),
+                )
+                for (k, q) in enumerate((q1, q2, q3))
+                    dense[q] = e[2k-1]
+                    dense[n+q] = e[2k]
+                    for i in 1:tab.m
+                        @test QuditClifford.commutation_col(block, i, operators[k]) ==
+                              QuditClifford.commutation_col(block, i, dense)
+                    end
+                end
+            end
+        end
     end
 end
 
