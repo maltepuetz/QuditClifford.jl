@@ -457,7 +457,7 @@ end
         "span_decomposition.jl" => 9,
         "rank_copies_bits.jl" => 8,
         "apply_bits.jl" => 4,
-        "measure_bits.jl" => 10,
+        "measure_bits.jl" => 12,
         "span_decomposition_bits.jl" => 6,
         "canonicalize_bits.jl" => 4,
         "entanglement_entropy.jl" => 6,

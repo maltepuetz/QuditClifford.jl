@@ -15,7 +15,8 @@
 #   `word_workspace`, and each later anticommuting generator takes one pass
 #   over its words: the cross-term parities and the XOR of the pivot words.
 #   A dense operand is packed into columns 3 (X) and 4 (Z), so a commutator is
-#   the `count_ones` parity of word ANDs.
+#   the `count_ones` parity of word ANDs, and the measured generator, its x·z
+#   parity and its support are read from there.
 # - Qudit-major, column 1 of `word_workspace` holds the commutator mask over
 #   generators, the XOR of the operand's support columns. The pivot is its
 #   lowest set bit. The pivot generator is gathered along qudits into columns
@@ -103,21 +104,14 @@ end
     end
     return b
 end
-@inline function _bit_set_operand!(b::BitBlock, j::Int, op::Vector{Int})
-    n = length(op) ÷ 2
-    @inbounds for q in 1:n
-        isodd(op[q]) && _xflip!(b, UInt64(1), q, j)
-        isodd(op[n + q]) && _zflip!(b, UInt64(1), q, j)
-    end
-    return b
-end
+@inline _bit_set_operand!(b::BitBlock, j::Int, op::Vector{Int}) =
+    _set_bit_exponents!(b, j, op, length(op) ÷ 2)
 
 # The phase of the measured generator and, for a `DestabilizerTableau`, its
-# cache entry, the parity of the operand's x·z.
-@inline function _bit_measured_scalars!(tab::_BitTableau, pivot::Int, t::Int, kop::Int,
-                                        op::_BitOperand)
+# cache entry `xz`, the parity of the operand's x·z.
+@inline function _bit_measured_scalars!(tab::_BitTableau, pivot::Int, t::Int, kop::Int, xz::Int)
     tab.storephase && (_phase(tab)[pivot] = _measured_generator_phase(t, kop, 2))
-    tab isa DestabilizerTableau && (tab.xdotz_cache[pivot] = _bit_operand_xz(op))
+    tab isa DestabilizerTableau && (tab.xdotz_cache[pivot] = xz)
     return nothing
 end
 
@@ -134,6 +128,43 @@ end
         ws[w, 4] = _pack_word(op, n, w, n)
     end
     return nothing
+end
+
+# Overwrite generator `pivot` with the operand and return the parity of its
+# x·z. A dense operand is copied from its packed form in columns 3-4 of `ws`.
+@inline function _gm_bit_set_pivot!(b::_GMBits, pivot::Int, op::NPauli, ::Matrix{UInt64})
+    _zero_gen!(b, pivot)
+    _bit_set_operand!(b, pivot, op)
+    return _bit_operand_xz(op)
+end
+@inline function _gm_bit_set_pivot!(b::_GMBits, pivot::Int, ::Vector{Int}, ws::Matrix{UInt64})
+    x, z = b.x, b.z
+    s = UInt64(0)
+    @inbounds @simd for w in axes(x, 1)
+        xw = ws[w, 3]
+        zw = ws[w, 4]
+        x[w, pivot] = xw
+        z[w, pivot] = zw
+        s ⊻= xw & zw
+    end
+    return count_ones(s) & 1
+end
+
+# The qudits of the operand with an odd exponent, into `supp`; returns how
+# many. A dense operand is read from its packed form in columns 3-4 of `ws`.
+@inline _gm_bit_operand_support!(supp::Vector{Int}, op::NPauli, ::Matrix{UInt64}, ::Int) =
+    _bit_operand_support!(supp, op)
+@inline function _gm_bit_operand_support!(supp::Vector{Int}, ::Vector{Int}, ws::Matrix{UInt64}, n::Int)
+    k = 0
+    @inbounds for w in 1:_nwords(n)
+        u = ws[w, 3] | ws[w, 4]
+        while u != 0
+            k += 1
+            supp[k] = (w - 1) << _WORD_SHIFT + trailing_zeros(u) + 1
+            u &= u - UInt64(1)
+        end
+    end
+    return k
 end
 
 # The commutator parity of generator `j` with the operand, 0 or 1.
@@ -225,9 +256,8 @@ function _measure!(rng::Random.AbstractRNG, tab::_BitTableau, L::GeneratorMajor,
     t = _random_outcome(rng, outcome, 2)
     kws = tab.storephase ? _phase(tab)[pivot] : 0
     _gm_bit_absorb!(stab, _bit_phase_planes(tab), _bit_cache(tab), ws, opc, pivot, m, kws)
-    _zero_gen!(stab, pivot)
-    _bit_set_operand!(stab, pivot, opc)
-    _bit_measured_scalars!(tab, pivot, t, kop, opc)
+    xz = _gm_bit_set_pivot!(stab, pivot, opc, ws)
+    _bit_measured_scalars!(tab, pivot, t, kop, xz)
     _after_bit_noncommuting_measurement!(tab, L, pivot, m, opc, 0)
     tab.iscanonical = false
     return t
@@ -262,7 +292,7 @@ function _after_bit_noncommuting_measurement!(tab::_BitDestab, L::GeneratorMajor
         dz[w, pivot] = ws[w, 2]
     end
     supp = tab.support_workspace
-    nsupp = _bit_operand_support!(supp, op)
+    nsupp = _gm_bit_operand_support!(supp, op, ws, tab.n)
     _orthogonalize_duals!(tab, L, pivot, m, supp, nsupp, tab.zacc_workspace, 0, false)
     return nothing
 end
@@ -313,7 +343,11 @@ end
 
 # Visit only the nonzero mask words when at most `(nw - 1) ÷ _BIT_QM_SPARSE_DIV`
 # of the `nw` words of generators `1:m` are nonzero, i.e. when
-# `4·(nonzero words) < nw`.
+# `4·(nonzero words) < nw`. Random-branch Z measurements, n = 1024 and 4096,
+# both tableau types (Apple silicon): on brickwork states of depth 2-32 this
+# cutoff is up to 1.10-1.16 times faster than always visiting every word
+# (depth 32) and within 5% of always visiting only the nonzero ones; on random
+# states it takes the dense path, while always-sparse is 1.8-4.3 times slower.
 const _BIT_QM_SPARSE_DIV = 4
 
 # The commutator mask of generators `1:m` with the operand into column 1 of
@@ -542,7 +576,7 @@ function _measure_bits_qm!(rng::Random.AbstractRNG, tab::_BitTableau, L::QuditMa
         z[wp, k] &= clr
     end
     _bit_set_operand!(stab, pivot, opc)
-    _bit_measured_scalars!(tab, pivot, t, kop, opc)
+    _bit_measured_scalars!(tab, pivot, t, kop, _bit_operand_xz(opc))
     _after_bit_noncommuting_measurement!(tab, L, pivot, m, opc, np)
     tab.iscanonical = false
     return t

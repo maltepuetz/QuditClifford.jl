@@ -38,6 +38,20 @@ dependency bump — carries the `skip-changelog` label instead.
   38 MiB (12 MiB packed), and takes 19 instead of 32 ms. Entries outside the
   range of `Int`, such as a `BigInt` or a `UInt64` above `typemax(Int)`, are
   now reduced mod `d` instead of throwing an `InexactError`.
+- Packed generator-major gates write back only the coordinates a gate
+  changes: Pauli gates 1.6–1.8, phase gates 1.2 and CNOT/CZ 1.25–1.35 times
+  faster, the Fourier gate and random two-qubit Cliffords unchanged
+  (`n = 1024, 1025`, both tableau types, M3 Pro). The random branch of
+  `measure!` with a dense operand on a packed generator-major tableau writes
+  the measured generator from the operand's packed words, 1.23–1.32 times
+  faster at `n = 1024, 1025`.
+- The rank-based quantities (entropies, mutual informations, negativity,
+  `is_independent`) normalize each pivot column once instead of dividing
+  once per eliminated column: the half-chain entropy at `n = 1024` is 8–11%
+  faster at `d = 3, 31, 251` (M3 Pro). Results are identical.
+- With `eltype = Int`, the modular primitives reduce once instead of twice
+  per entry for multipliers and dimensions outside their fast tiers
+  (1.6–1.7 times faster at `d = 131, 65537, 1000003`).
 - `measure!` with an outcome fixed by the state, the append of a new
   generator, and `expect!`/`expect_int!` are faster on packed storage
   (`eltype = Bits`), with identical results, random draws and tableaux

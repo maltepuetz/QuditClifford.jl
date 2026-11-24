@@ -1,7 +1,7 @@
 ##### overflow-safe scalar arithmetic for Clifford data #####
 #
 # `src/modular.jl`'s vector primitives are NOT a general fallback here. Both
-# of their multiplying tiers -- Barrett and divide-twice -- form `a * src[i]`
+# of their multiplying tiers -- Barrett and the one-`mod` fallback -- form `a * src[i]`
 # as an unguarded `Int` product, so they are exact only inside the package's
 # documented envelope `max(n, 2)(d-1)^2 <= typemax(Int)`. (The multiply-free
 # tiers are not the problem: the add-two-residues form is exact to

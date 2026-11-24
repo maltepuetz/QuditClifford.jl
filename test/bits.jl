@@ -646,7 +646,7 @@ end
     for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false)
         t = TT(2, 130; state = :ghz, storephase, eltype = Bits, layout)
         for g in (Fourier(64), SUM(1, 130), random_clifford(Xoshiro(3), 2, [1, 65, 130]),
-                  CliffordOperator(CPhase(64, 65), 2))
+                  CliffordOperator(CPhase(64, 65), 2), PauliGate(64, 1, 0), Phase(64))
             bt_apply_allocations(t, g)
             @test bt_apply_allocations(t, g) == 0
         end
@@ -1204,6 +1204,42 @@ end
         for op in (SinglePauli(64, 0, 1), SinglePauli(65, 1, 0, 0), DoublePauli(1, 0, 1, 130, 0, 1))
             @test bt_span_allocations(x -> (copy!(x, b); measure!(rng, x, op)), w) == 0
         end
+    end
+end
+
+
+# Generator-major, a gate writes back only the target coordinates some
+# generator of a batch changes (one pass each when any is unchanged, a fused
+# pass otherwise), and a dense operand of the random branch of `measure!` is
+# written, and its x·z parity and support read, from its packed form. Both
+# against `UInt8` on random states over one, two and three words, with every
+# named one- and two-qubit gate and dense operands.
+@testset "packed generator-major gate write-back and dense pivots" begin
+    for TT in bt_TYPES, n in (5, 63, 64, 65, 130), storephase in (true, false)
+        rng = Xoshiro(n)
+        r0 = TT(2, n; storephase, eltype = UInt8)
+        random_state!(rng, r0; m = n - 1)
+        S = stabilizer_matrix(r0)
+        t = TT(2, S; m = r0.m, eltype = Bits, layout = :generator)
+        u = TT(2, S; m = r0.m, eltype = UInt8, layout = :generator)
+        @test bt_same(t, u)
+        for k in 1:40
+            q, r = rand(rng, 1:n), rand(rng, 1:n)
+            for g in (Fourier(q), Phase(q), PauliGate(q, 1, 1), Multiplier(q, 1))
+                apply!(t, g); apply!(u, g)
+            end
+            if q != r
+                for g in (SUM(q, r), CPhase(q, r), SWAP(q, r), random_clifford(rng, 2, [q, r]))
+                    apply!(t, g); apply!(u, g)
+                end
+            end
+            v = rand(rng, 0:1, 2n)
+            op = GeneralPauli(v, isodd(sum(v[i] * v[n + i] for i in 1:n)) ? 1 : 0)
+            s = rand(rng, UInt64)
+            @test measure!(Xoshiro(s), t, op) == measure!(Xoshiro(s), u, op)
+            @test bt_same(t, u)
+        end
+        TT === DestabilizerTableau && @test st_duality(t) == [Int(i == j) for i in 1:t.m, j in 1:t.m]
     end
 end
 
