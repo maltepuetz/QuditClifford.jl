@@ -667,6 +667,9 @@ function bt_stream_pauli(rng, n)
     return GeneralPauli(v, mod(sum(v[1:n] .* v[n+1:2n]), 2) + 2 * rand(rng, 0:1))
 end
 
+# The reference is the per-generator `_measure_generic!` on `UInt8` storage in
+# the same layout, so qudit-major the packed kernel is not compared with
+# another kernel.
 @testset "same rng stream, Bits vs UInt8" begin
     for TT in bt_TYPES, layout in (:generator, :qudit)
         n = 70
@@ -685,7 +688,7 @@ end
             end
             op = bt_stream_pauli(oprng, n)
             push!(outs_t, measure!(rt, t, op))
-            push!(outs_u, measure!(ru, u, op))
+            push!(outs_u, bt_QC._measure_generic!(ru, u, bt_QC._layout_marker(u), op, nothing, 0))
             ok &= outs_t[end] == outs_u[end] && stabilizer_matrix(t) == stabilizer_matrix(u) &&
                   st_padding_zero(t)
             ok || (@error "Bits outcome stream differs" TT layout i op; break)
@@ -694,6 +697,84 @@ end
         @test outs_t == outs_u
         @test bt_same(t, u)
         @test rand(rt) == rand(ru)
+    end
+end
+
+@testset "bit measurement kernels against the generic functions" begin
+    # measure! and dephase! on packed storage (`t`) against `_measure_generic!`
+    # and `_dephase_generic!` on `UInt8` storage in the same layout (`u`), and
+    # against `_dephase_generic!` on packed storage (`g`), after every call.
+    seed = 0
+    for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false),
+        n in (5, 64, 65, 130)
+
+        seed += 1
+        t = TT(2, n; storephase, eltype = Bits, layout)
+        g = TT(2, n; storephase, eltype = Bits, layout)
+        u = TT(2, n; storephase, eltype = UInt8, layout)
+        mm = isodd(seed) ? n : n - 3
+        foreach(x -> random_state!(Xoshiro(seed), x; m = mm), (t, g, u))
+        L = bt_QC._layout_marker(t)
+        rt, rg, ru = Xoshiro(seed), Xoshiro(seed), Xoshiro(seed)
+        rng = Xoshiro(80_000 + seed)
+        bad = 0
+        for i in 1:150
+            c = rand(rng, 1:10)
+            vt = vg = vu = nothing
+            if c <= 2
+                f = bt_rand_gate(rng, n)
+                foreach(f, (t, g, u))
+            elseif c <= 7
+                op = bt_stream_pauli(rng, n)
+                vt = measure!(rt, t, op)
+                vg = measure!(rg, g, op)
+                vu = bt_QC._measure_generic!(ru, u, L, op, nothing, 0)
+            else
+                op = bt_stream_pauli(rng, n)
+                dephase!(t, op)
+                bt_QC._dephase_generic!(g, L, op)
+                bt_QC._dephase_generic!(u, L, op)
+            end
+            ok = vt == vg == vu && bt_same(t, g) && bt_same(t, u) && rt == rg == ru &&
+                 st_padding_zero(t) && st_padding_zero(g)
+            if !ok
+                bad += 1
+                @error "packed kernel differs from the generic function" TT layout storephase n i
+                break
+            end
+        end
+        @test bad == 0
+    end
+
+    # The packed dual update against `_orthogonalize_duals_generic!` on the
+    # same packed tableau, on its site-restricted and its dense path: generator
+    # `col` is overwritten with an operand, as measure! does, and the other
+    # duals are made orthogonal to it.
+    for layout in (:generator, :qudit), n in (5, 64, 65, 130)
+        t = DestabilizerTableau(2, n; eltype = Bits, layout)
+        random_state!(Xoshiro(n), t; m = n - 2)
+        L = bt_QC._layout_marker(t)
+        rng = Xoshiro(90_000 + n)
+        changed = 0
+        for trial in 1:12
+            col = rand(rng, 1:t.m)
+            op = bt_stream_pauli(rng, n)
+            kernel, sparse, dense = copy(t), copy(t), copy(t)
+            for (x, f!, sp) in ((kernel, bt_QC._orthogonalize_duals!, true),
+                                (sparse, bt_QC._orthogonalize_duals_generic!, true),
+                                (dense, bt_QC._orthogonalize_duals_generic!, false))
+                bt_QC.set_operator!(x, L, col, op)
+                nsupp = bt_QC._column_support!(x.support_workspace, bt_QC._stab(x, L), col)
+                nsites = bt_QC._column_support!(x.zacc_workspace, bt_QC._destab(x, L), col)
+                f!(x, L, col, x.m, x.support_workspace, nsupp, x.zacc_workspace, nsites, sp)
+            end
+            @test destabilizer_matrix(kernel) == destabilizer_matrix(sparse) ==
+                  destabilizer_matrix(dense)
+            @test stabilizer_matrix(kernel) == stabilizer_matrix(sparse)
+            @test st_padding_zero(kernel) && st_padding_zero(sparse) && st_padding_zero(dense)
+            changed += destabilizer_matrix(kernel) != destabilizer_matrix(t)
+        end
+        @test changed > 0
     end
 end
 

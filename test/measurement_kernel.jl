@@ -295,7 +295,8 @@ end
         storephase in (true, false)
         rng = Xoshiro(d + 7)
         n = 16
-        tab = TT(d, n; state = :Z, storephase = storephase)
+        # Unpacked storage: a packed tableau never reaches this function.
+        tab = TT(d, n; state = :Z, storephase = storephase, eltype = UInt8)
         random_state!(rng, tab)
         # A pivot with a local support, so both paths are valid.
         piv = 1

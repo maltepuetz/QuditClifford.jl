@@ -349,36 +349,6 @@ end
     return nothing
 end
 
-# Packed storage: the same cross terms through the leaves, and the update
-# through the bit composites.
-@inline function _absorb_pivot_power!(tab::_BitTableau, L::TableauLayout, col::Int, a::Int,
-                                      pu::_PivotUpdate)
-    a == 0 && return nothing
-    stab = _stab(tab, L)
-    genws = tab.pivot_workspace
-    n = tab.n
-    d = tab.d
-    track = tab isa DestabilizerTableau
-    sites = tab.zacc_workspace
-    cb = 0
-    cz = 0
-    if track || tab.storephase
-        nq = pu.sparse ? pu.nsupp : n
-        @inbounds for k in 1:nq
-            q = pu.sparse ? sites[k] : k
-            cb += Int(genws[q]) * _zget(stab, q, col)
-            track && (cz += _xget(stab, q, col) * Int(genws[n+q]))
-        end
-    end
-    _absorb_pivot_scalars!(tab, col, a, mod(cb, d), cz, pu)
-    if pu.sparse
-        _gen_addmul_sites!(stab, col, genws, sites, pu.nsupp, a, d)
-    else
-        _gen_addmul!(stab, col, genws, a, d)
-    end
-    return nothing
-end
-
 ############################################
 # Projective measurement (mixed-state)     #
 ############################################
@@ -734,7 +704,9 @@ _measure!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout, op::A
           outcome::Union{Int,Nothing}, phase_policy::Int) =
     _measure_generic!(rng, tab, L, op, outcome, phase_policy)
 
-# The per-generator `measure!`, for every layout and storage.
+# The per-generator `measure!`, for every layout of unpacked storage. A packed
+# tableau has its own `_measure!` methods; of this function only the commuting
+# branch (`_measure_commuting!`) runs on packed storage, through the leaves.
 function _measure_generic!(rng::Random.AbstractRNG, tab::AbstractTableau, L::TableauLayout,
                            op::AbstractPauli, outcome::Union{Int,Nothing}, phase_policy::Int)
     kop = _measurement_phase(tab, op, outcome, phase_policy)
