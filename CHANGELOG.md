@@ -8,6 +8,8 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+## 0.5.1 - 2026-11-25
+
 ### Changed
 
 - A `CliffordOperator` on four or five qudits runs on the same unrolled
@@ -21,57 +23,24 @@ dependency bump — carries the `skip-changelog` label instead.
   qudits, the dense backing stays. The package image takes about 7 s
   (Julia 1.13) to 10 s (Julia 1.10) longer to build; loading takes as long
   as before. For a tableau type outside the precompile workload (such as
-  `eltype = Int`) the first stored `apply!` compiles for about 3 s longer.
-- The preset constructors with `layout = :qudit` fill the tableau in its own
-  layout instead of building it generator-major and transposing it
-  (`n = 4096`, `UInt8`: `StabilizerTableau` 6.9 to 0.27 ms,
-  `DestabilizerTableau` 13.8 to 0.51 ms; with `state = :ghz` the qudit-major
-  destabilizers are written a column at a time, 14 to 0.9 ms). The first
-  raw-matrix constructor call in a session no longer compiles for 0.8–2.4 s
-  (about 45 ms now); loading the package takes as long as before. Apple
-  silicon, Julia 1.13.
-- The precompile workload covers packed storage (`eltype = Bits`) in both
-  layouts, the layout switch, and `stabilizer_matrix`/`destabilizer_matrix`.
-  The first calls on a packed tableau in a new session no longer compile
-  (Julia 1.13, M3 Pro: first `measure!` 1.4 s, first `==` 0.4 s, first
-  gate 70–90 ms, each now under 0.1 ms; the first keyword constructor call
-  still compiles its keyword wrapper, about 10–15 ms), and neither does the
-  first `stabilizer_matrix` (about 0.2 s, now 1 ms). Loading the package
-  takes as long as before (0.25 s on Julia 1.13, 0.38–0.39 s on Julia 1.10);
-  generating the package image takes about 8–10 s longer.
-- Building a `DestabilizerTableau` from a raw matrix is faster, with
-  identical destabilizers: at `d = 2` every storage type eliminates over
-  GF(2) on packed rows, as packed storage already did (`n = 512`: 255 to
-  4.8 ms for `UInt8`; `n = 1024`: 4.5 s to 24 ms), and at odd `d` the
-  elimination runs along contiguous columns (`n = 512`, `d = 3`: 341 to
-  82 ms for `UInt8`, 1.1 s to 48 ms for `Int`; `n = 1024`, `d = 5`: 6.3 to
-  1.1 s). M3 Pro.
-- The preset constructors no longer zero storage that is already zero
-  (`DestabilizerTableau(2, 4096)`: 1.9 to 0.6 ms for `UInt8`, 0.34 to
-  0.13 ms packed), and packed GHZ destabilizers are written a word at a time
-  (`DestabilizerTableau(2, 4096; state = :ghz, eltype = Bits)` and its
-  `reset!`: 6–16 to 0.2 ms).
-- The raw-matrix constructors read their input entry by entry in its own
-  integer type, and a transposed input through a lazy `transpose`, instead
-  of converting it to a `Matrix{Int}` (and transposing it) first. A `UInt8`
-  input of `n = 4096` qudits allocated about 550 MiB and now allocates
-  38 MiB (12 MiB packed), and takes 19 instead of 32 ms. Entries outside the
-  range of `Int`, such as a `BigInt` or a `UInt64` above `typemax(Int)`, are
-  now reduced mod `d` instead of throwing an `InexactError`.
+  `eltype = Int` or `UInt16`) the first stored `apply!` of any number of
+  qudits compiles for about 3 s longer, 4–5 s for a `DestabilizerTableau`.
+- One-, two- and three-qudit gates on a qudit-major tableau are faster at
+  the dimensions whose reduction multiplies in a wider type than the
+  kernel's lane, with identical results: 1.5–1.8 times at
+  `d = 127, 251, 257, 4099` and 1.03–1.19 times at `d = 5, 31, 61`
+  (`n = 2048`, both tableau types, M3 Pro; `d = 5` on one qudit and `d = 61`
+  on three keep their reduction and their speed, as do `d = 2` and `d = 3`).
+  Dimensions stored in 32-bit lanes that took the slower per-generator path
+  (the smallest is 11777, on three qudits) run in the kernel too. At
+  `n ≤ 16` a gate at `d = 31` takes about 4 ns (up to 8%) longer. Not
+  measured on x86 or on 32-bit hosts.
 - Packed generator-major gates write back only the coordinates a gate
   changes: Pauli gates 1.6–1.8, phase gates 1.2 and CNOT/CZ 1.25–1.35 times
   faster, the Fourier gate and random two-qubit Cliffords unchanged
   (`n = 1024, 1025`, both tableau types, M3 Pro). The random branch of
-  `measure!` with a dense operand on a packed generator-major tableau writes
-  the measured generator from the operand's packed words, 1.23–1.32 times
-  faster at `n = 1024, 1025`.
-- The rank-based quantities (entropies, mutual informations, negativity,
-  `is_independent`) normalize each pivot column once instead of dividing
-  once per eliminated column: the half-chain entropy at `n = 1024` is 8–11%
-  faster at `d = 3, 31, 251` (M3 Pro). Results are identical.
-- With `eltype = Int`, the modular primitives reduce once instead of twice
-  per entry for multipliers and dimensions outside their fast tiers
-  (1.6–1.7 times faster at `d = 131, 65537, 1000003`).
+  `measure!` with a dense operand on a packed generator-major tableau is
+  1.23–1.32 times faster at `n = 1024, 1025`.
 - `measure!` with an outcome fixed by the state, the append of a new
   generator, and `expect!`/`expect_int!` are faster on packed storage
   (`eltype = Bits`), with identical results, random draws and tableaux
@@ -100,44 +69,64 @@ dependency bump — carries the `skip-changelog` label instead.
   without phases; results differ only for a tableau built with
   `check = false` whose `n` generators are not independent and commuting.
   Not measured on x86 or on 32-bit hosts.
-- One-, two- and three-qudit gates on a qudit-major tableau are faster at
-  the dimensions whose reduction multiplies in a wider type than the
-  kernel's lane, with identical results: 1.5–1.8 times at
-  `d = 127, 251, 257, 4099` and 1.03–1.19 times at `d = 5, 31, 61`
-  (`n = 2048`, both tableau types, M3 Pro; `d = 5` on one qudit and `d = 61`
-  on three keep their reduction and their speed, as do `d = 2` and `d = 3`).
-  The reduction there uses an unsigned constant of the lane's width, with a
-  product that NEON and AVX2 have a vector instruction for. Such a constant
-  exists for every odd dimension a lane holds, so the dimensions of the
-  32-bit lane that had no constant and took the per-generator path (the
-  smallest is 11777, on three qudits) run in the kernel too. At `n ≤ 16` a
-  gate at `d = 31` takes about 4 ns (up to 8%) longer. Not measured on x86
-  or on 32-bit hosts.
 - `==` and `hash` on a tableau that is not canonical are faster on packed
-  and on qudit-major storage, with identical results: the canonical copy
-  they compare is now made by the storage's own `canonicalize!` kernel.
-  Packed (`eltype = Bits`) tableaux: `hash` 11–18 times and `==` 17–30
-  times faster, with a seventh to an eighth of the allocation; unpacked
+  and on qudit-major storage, with identical results. Packed
+  (`eltype = Bits`) tableaux: `hash` 11–18 times and `==` 17–30 times
+  faster, with a seventh to an eighth of the allocation; unpacked
   qudit-major tableaux: `hash` 4.1–5.5 times and `==` 4.5–6.1 times faster,
   allocating 17–37% more for the padded copies (random states, d = 2 and 3,
   n = 512 and 1024, both tableau types, M3 Pro). Generator-major unpacked
   tableaux and canonical tableaux are unchanged. Not measured on x86 or on
   32-bit hosts.
 - `entanglement_negativity` is 3.8–7.9 times faster on `UInt8` storage
-  (the default for `3 ≤ d ≤ 251`), with identical results: the symplectic
-  products between the basis elements now vectorize (d = 3, 31 and 251,
-  n = 512 and 1024, half cut, both layouts, M3 Pro; 7.3–7.9 times at d = 3,
-  3.8 times at d = 251). `UInt16` storage keeps its speed (d = 257). The
-  products of both narrow types are now summed in unsigned integers wide
-  enough to stay exact on 32-bit hosts, where an `Int` sum could wrap at
-  large `n` and `d`.
-  Not measured on x86 or on 32-bit hosts.
+  (the default for `3 ≤ d ≤ 251`), with identical results (d = 3, 31 and
+  251, n = 512 and 1024, half cut, both layouts, M3 Pro; 7.3–7.9 times at
+  d = 3, 3.8 times at d = 251). `UInt16` storage keeps its speed
+  (d = 257). Not measured on x86 or on 32-bit hosts.
+- The rank-based quantities (entropies, mutual informations, negativity,
+  `is_independent`) are faster, with identical results: the half-chain
+  entropy at `n = 1024` is 8–11% faster at `d = 3, 31, 251` (M3 Pro).
 - `is_pure(tab; verify = true)` and the commutation check of the raw-matrix
   constructors (`check = true`) are 4.9–7.9 times faster on generator-major
   `UInt8` storage, with identical results, including which pair of
-  generators an error names (d = 3 and 31, n = 512 and 1024, M3 Pro). The
-  products of the commutation check now vectorize. Qudit-major and `UInt16`
-  storage are unchanged. Not measured on x86 or on 32-bit hosts.
+  generators an error names (d = 3 and 31, n = 512 and 1024, M3 Pro).
+  Qudit-major and `UInt16` storage are unchanged. Not measured on x86 or on
+  32-bit hosts.
+- With `eltype = Int`, the modular arithmetic is 1.6–1.7 times faster for
+  dimensions outside its fast tiers (`d = 131, 65537, 1000003`).
+- Building a `DestabilizerTableau` from a raw matrix is faster, with
+  identical destabilizers: at `d = 2` every storage type eliminates over
+  GF(2) on packed rows, as packed storage already did (`n = 512`: 255 to
+  4.8 ms for `UInt8`; `n = 1024`: 4.5 s to 24 ms), and at odd `d` the
+  elimination runs along contiguous columns (`n = 512`, `d = 3`: 341 to
+  82 ms for `UInt8`, 1.1 s to 48 ms for `Int`; `n = 1024`, `d = 5`: 6.3 to
+  1.1 s). M3 Pro.
+- The raw-matrix constructors read their input in its own integer type, and
+  a transposed input without copying it, instead of converting it to a
+  `Matrix{Int}` first. A `UInt8` input of `n = 4096` qudits allocated about
+  550 MiB and now allocates 38 MiB (12 MiB packed), and takes 19 instead of
+  32 ms. Entries outside the range of `Int`, such as a `BigInt` or a
+  `UInt64` above `typemax(Int)`, are reduced mod `d` instead of throwing an
+  `InexactError`.
+- The preset constructors are faster. With `layout = :qudit` they fill the
+  tableau in its own layout instead of building it generator-major and
+  transposing it (`n = 4096`, `UInt8`: `StabilizerTableau` 6.9 to 0.27 ms,
+  `DestabilizerTableau` 13.8 to 0.51 ms; `state = :ghz` 14 to 0.9 ms). They
+  no longer zero storage that is already zero (`DestabilizerTableau(2,
+  4096)`: 1.9 to 0.6 ms for `UInt8`, 0.34 to 0.13 ms packed), and packed GHZ
+  destabilizers are written a word at a time
+  (`DestabilizerTableau(2, 4096; state = :ghz, eltype = Bits)` and its
+  `reset!`: 6–16 to 0.2 ms). Apple silicon, Julia 1.13.
+- The precompile workload covers packed storage (`eltype = Bits`) in both
+  layouts, the layout switch, and `stabilizer_matrix`/`destabilizer_matrix`.
+  The first calls on a packed tableau in a new session no longer compile
+  (Julia 1.13, M3 Pro: first `measure!` 1.4 s, first `==` 0.4 s, first
+  gate 70–90 ms, each now under 0.1 ms; the first keyword constructor call
+  still compiles its keyword wrapper, about 10–15 ms), and neither does the
+  first `stabilizer_matrix` (about 0.2 s, now 1 ms) or the first raw-matrix
+  constructor call (0.8–2.4 s, now about 45 ms). Loading the package takes
+  as long as before (0.25 s on Julia 1.13, 0.38–0.39 s on Julia 1.10);
+  generating the package image takes about 8–10 s longer.
 
 ### Fixed
 
@@ -148,6 +137,12 @@ dependency bump — carries the `skip-changelog` label instead.
   and 5 µs per call (four qudits; M3 Pro). It now allocates nothing there,
   as on Julia 1.10 and 1.13, where timings are unchanged; results are
   identical.
+- On 32-bit hosts, `entanglement_negativity` on `UInt8` or `UInt16` storage
+  summed symplectic products in `Int`, which can wrap once the smaller of
+  the two subsystems holds more than about `2^31 / (d - 1)^2` qudits (about
+  34 000 at `d = 251`). The sums are now exact for every size.
+- The raw-matrix constructors throw an `ArgumentError` for an
+  offset-indexed input matrix, in place of a `DimensionMismatch`.
 
 ## 0.5.0 - 2026-11-24
 
