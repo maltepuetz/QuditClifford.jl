@@ -139,6 +139,16 @@ dependency bump — carries the `skip-changelog` label instead.
   products of the commutation check now vectorize. Qudit-major and `UInt16`
   storage are unchanged. Not measured on x86 or on 32-bit hosts.
 
+### Fixed
+
+- `apply!` of a `CliffordOperator` on up to three qudits (up to five on at
+  least 8 active generators) allocated on every call on Julia 1.12 (208 bytes
+  for a one-qudit operator, 1.7 kB for two qudits, 4.6 kB for five), on
+  every element type and in both layouts, which cost about 0.13 µs, 2.1 µs
+  and 5 µs per call (four qudits; M3 Pro). It now allocates nothing there,
+  as on Julia 1.10 and 1.13, where timings are unchanged; results are
+  identical.
+
 ## 0.5.0 - 2026-11-24
 
 ### Breaking

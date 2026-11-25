@@ -416,11 +416,15 @@ end
     d = U.d
     # The closures carry `@inline` in their bodies: from K = 4 on, Julia
     # otherwise compiles the column closure as a call returning a boxed tuple,
-    # one heap allocation per column of `F`.
+    # one heap allocation per column of `F`. The column closure sizes its
+    # tuple with `Val(2K)`, a constant of the method: the local `S` would be
+    # captured as an `Int` field, and Julia 1.12 then dispatches the inner
+    # `ntuple` at run time and allocates on every call (1.7 kB at K = 2,
+    # 4.6 kB at K = 5).
     targets = ntuple(i -> (@inline; U.targets[i]), Val(K))
     F = ntuple(Val(S)) do j
         @inline
-        ntuple(i -> (@inline; U.F[i, j]), Val(S))
+        ntuple(i -> (@inline; U.F[i, j]), Val(2K))
     end
     a = ntuple(i -> (@inline; U.a[i]), Val(S))
     storephase && d == 2 && _check_qubit_bitmask_bound(K)
