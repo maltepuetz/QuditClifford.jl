@@ -14,19 +14,23 @@ println("Testing with default qubit element type ",
         Base.invokelatest(QuditClifford._default_qubit_eltype))
 
 # The part of the suite to run, so CI can split it over parallel jobs:
-# "all" (the default), "kernel", "functional", or one half of the functional
-# files, "functional-1" and "functional-2".
+# "all" (the default), "kernel", "functional", or one half of either,
+# "kernel-1" and "kernel-2", "functional-1" and "functional-2". The kernel
+# halves take about equal time with coverage on: layout.jl alone is nearly
+# half of the kernel files.
 #
 # The kernel files compare storage types, layouts and packed storage with each
 # other and build most of their tableaux explicitly; a default enters only on
 # the axis a test does not vary. CI runs them with the shipped defaults and
 # once with both switched. The functional files take both defaults throughout
 # and run in all four configurations.
-const KERNEL_FILES = [
+const KERNEL_FILES_1 = [
     "modular.jl",
+    "layout.jl",
+]
+const KERNEL_FILES_2 = [
     "tableau_storage.jl",
     "storage_types.jl",
-    "layout.jl",
     "bits.jl",
 ]
 const FUNCTIONAL_FILES_1 = [
@@ -55,8 +59,10 @@ const FUNCTIONAL_FILES_2 = [
     "differential.jl",
 ]
 const SHARDS = Dict(
-    "all" => vcat(KERNEL_FILES, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
-    "kernel" => KERNEL_FILES,
+    "all" => vcat(KERNEL_FILES_1, KERNEL_FILES_2, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
+    "kernel" => vcat(KERNEL_FILES_1, KERNEL_FILES_2),
+    "kernel-1" => KERNEL_FILES_1,
+    "kernel-2" => KERNEL_FILES_2,
     "functional" => vcat(FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
     "functional-1" => FUNCTIONAL_FILES_1,
     "functional-2" => FUNCTIONAL_FILES_2,
@@ -66,9 +72,9 @@ haskey(SHARDS, SHARD) ||
     error("QC_TEST_SHARD must be one of $(join(sort!(collect(keys(SHARDS))), ", ")), got \"$SHARD\"")
 println("Testing shard ", SHARD)
 
-# Every test file is in exactly one of the three lists; the other files in
+# Every test file is in exactly one of the four lists; the other files in
 # test/ are this runner and the helpers the test files include.
-@test sort!(vcat(KERNEL_FILES, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2)) ==
+@test sort!(vcat(KERNEL_FILES_1, KERNEL_FILES_2, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2)) ==
       sort!(filter(f -> endswith(f, ".jl") &&
                         !(f in ("runtests.jl", "env_switch.jl", "storage_helpers.jl")),
                    readdir(@__DIR__)))
@@ -76,8 +82,9 @@ println("Testing shard ", SHARD)
 @testset "QuditClifford.jl" begin
     # Aqua checks (skip piracy on Julia ≥ 1.12 because Aqua's piracy
     # checker currently fails there due to an upstream API change). They do
-    # not depend on the test configuration, so the functional shards skip them.
-    if SHARD in ("all", "kernel")
+    # not depend on the test configuration, so only the shards that include
+    # kernel-1 run them.
+    if SHARD in ("all", "kernel", "kernel-1")
         @testset "Code quality (Aqua.jl)" begin
             Aqua.test_all(QuditClifford; piracies = VERSION < v"1.12.0")
         end
