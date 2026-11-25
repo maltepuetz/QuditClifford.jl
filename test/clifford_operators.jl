@@ -1162,6 +1162,55 @@ end
     end
 end
 
+# Four- and five-qudit operators take the tuple backing from
+# `_TUPLE_K45_MIN_M` active generators on. Just below and at the cutoff, in
+# both layouts, the result is that of the dense backing.
+@testset "Stored k = 4, 5 apply! on both sides of the m cutoff" begin
+    cut = QC._TUPLE_K45_MIN_M
+    n = cut + 6
+    seed = 20261125
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
+        layout in (:generator, :qudit), sp in (false, true), k in (4, 5), m in (cut - 1, cut)
+        seed += 1
+        rng = Random.Xoshiro(seed)
+        tab = TT(d, n; storephase = sp, eltype = E, layout)
+        random_state!(rng, tab; m)
+        @test tab.m == m
+        U = random_clifford(rng, d, randperm(rng, n)[1:k])
+        @test QC._stored_tuple_backing(tab, k) == (m >= cut)
+        ref = copy(tab)
+        QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, sp))
+        @test apply!(tab, U) === tab
+        @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
+        @test !tab.iscanonical
+        if TT === DestabilizerTableau
+            @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
+            @test tab.xdotz_cache == ref.xdotz_cache
+        end
+        @test_throws ArgumentError apply!(tab, random_clifford(rng, d == 2 ? 3 : 2, collect(1:k)))
+    end
+    for k in (1, 2, 3, 6)
+        @test QC._stored_tuple_backing(StabilizerTableau(3, 8), k) == (k <= 3)
+    end
+end
+
+@testset "Stored k = 4, 5 apply! on the tuple backing allocates nothing" begin
+    # Lanes at S = 8, 10: Int16 for d <= 31, Int32 for d = 61, Int32 and Int64
+    # for d = 10369, none for d = 11587 (the per-generator path).
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31, 61, 10369, 11587),
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
+        layout in (:generator, :qudit), sp in (false, true)
+        tab = TT(d, 40; state = :ghz, storephase = sp, eltype = E, layout)
+        for k in (4, 5)
+            U = random_clifford(Xoshiro(d + k), d, [1, 9, 17, 33, 40][1:k])
+            @test QC._stored_tuple_backing(tab, k)
+            stored_apply_allocations(tab, U)
+            @test stored_apply_allocations(tab, U) == 0
+        end
+    end
+end
+
 @testset "Tuple preparation of a stored operator carries its data" begin
     for d in (2, 3), sp in (false, true), k in 1:5
         U = random_clifford(Random.Xoshiro(7 + k), d, collect(16:-3:(19 - 3k)))

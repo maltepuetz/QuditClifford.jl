@@ -518,8 +518,9 @@ function ly_same_state(g, q)
     return true
 end
 
-# Gate `i` of a seeded stream on `n` qudits at dimension `d`. Gate 8 is a dense
-# 4-qudit operator when `n ≥ 4`.
+# Gate `i` of a seeded stream on `n` qudits at dimension `d`. Gates 8, 26, 44, …
+# are stored operators on four qudits when `n ≥ 4`, gates 17, 35, 53, … on five
+# when `n ≥ 5`, and gates 9, 27, 45, … on six (the dense backing) when `n ≥ 6`.
 function ly_stream_gate(rng, d, n, i)
     kmax = min(n, 3)
     tg = randperm(rng, n)
@@ -535,7 +536,9 @@ function ly_stream_gate(rng, d, n, i)
     kind == 5 && return Phase(tg[1])
     kind == 6 && return Multiplier(tg[1], r)
     kind == 7 && return PauliGate(tg[1], rand(rng, 0:d - 1), rand(rng, 0:d - 1))
-    k = i == 8 && n >= 4 ? 4 : rand(rng, 1:kmax)
+    k = i % 18 == 9 && n >= 6 ? 6 :
+        i % 18 == 17 && n >= 5 ? 5 :
+        i % 18 == 8 && n >= 4 ? 4 : rand(rng, 1:kmax)
     return random_clifford(rng, d, tg[1:k])
 end
 
@@ -574,8 +577,14 @@ end
     # storage (4093) and Int64 lanes (13399 for S = 6, 23189 for S = 2). Each
     # lane runs with its own signed constant (d = 3; 101 and 61 at S = 6 in
     # Int32) and with the unsigned one (d = 5 at S = 4, 6; 43-97, 251, 4093,
-    # and 11777, which has no signed constant at S = 6).
-    ds = [2, 3, 5, 43, 47, 53, 61, 67, 89, 97, 101, 251, 257, 4093, 11777, 13399, 23189]
+    # and 11777, which has no signed constant at S = 6). For the stored
+    # operators on four and five qudits (S = 8, 10; qudit-major tuple backing
+    # at n = 64 and 300, dense backing at n = 5): the largest Int16 d at S = 10
+    # (37) and the first Int32 d (41), Int32 lanes with their own signed
+    # constant (43 at S = 10, 61 and 109 at S = 8), an Int64 lane at S = 10
+    # (10369, Int32 at S = 8) and a d without a lane at S = 8 (11587).
+    ds = [2, 3, 5, 37, 41, 43, 47, 53, 61, 67, 89, 97, 101, 109, 251, 257, 4093,
+          10369, 11587, 11777, 13399, 23189]
     Sys.WORD_SIZE == 64 && push!(ds, 65521)
     seed = 1
     for TT in (StabilizerTableau, DestabilizerTableau), storephase in (true, false),

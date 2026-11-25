@@ -10,6 +10,18 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- A `CliffordOperator` on four or five qudits runs on the same unrolled
+  kernel as the named gates when the tableau has at least 8 active
+  generators, in both layouts and on packed storage (`eltype = Bits`).
+  Per gate at `m = n = 2048` (M3 Pro, Julia 1.13): qudit-major 21–69×
+  faster with `UInt8` and 177–418× with `Bits` (e.g. `StabilizerTableau`,
+  `d = 2`, four qudits: 151 to 2.2 µs; `d = 3`: 86 to 3.1 µs);
+  generator-major 2.4–3.7× at `d = 2`, 6–8× with `Bits` and 1.2–1.6× at
+  odd `d`. Below 8 active generators, and for supports of six or more
+  qudits, the dense backing stays. The package image takes about 7 s
+  (Julia 1.13) to 10 s (Julia 1.10) longer to build; loading takes as long
+  as before. For a tableau type outside the precompile workload (such as
+  `eltype = Int`) the first stored `apply!` compiles for about 3 s longer.
 - The preset constructors with `layout = :qudit` fill the tableau in its own
   layout instead of building it generator-major and transposing it
   (`n = 4096`, `UInt8`: `StabilizerTableau` 6.9 to 0.27 ms,

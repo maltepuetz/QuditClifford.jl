@@ -121,7 +121,8 @@ end
 # The prefix is a bitmask rather than a vector: at d = 2 every coordinate is a
 # bit, so no heap scratch is needed and `apply!` stays allocation-free. This is
 # the tuple backing's evaluator (named gates, and stored operators on up to
-# three qudits), with an enforced K ≤ 64 bound.
+# three qudits, or on four or five with at least `_TUPLE_K45_MIN_M` active
+# generators), with an enforced K ≤ 64 bound.
 # `_phase_qubit_dense` is the vector-prefix evaluator used for arbitrary dense
 # supports; the bitmask bound is therefore internal to this path and is not a
 # public Clifford arity restriction. Note `UInt64(1) << 64 == 0` in Julia, so a

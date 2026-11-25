@@ -322,8 +322,9 @@ A third sibling, `stored/random/...`, applies a uniformly random operator from
 tableau, on targets spread over the register. These are the operators random
 monitored circuits draw: a dense `F` and generic phases, where the fixture
 above is built from a short sequence of named gates. Supports of up to three
-qudits take the unrolled tuple kernel; `k = 8` in the base leaf keeps the
-dense backing under coverage.
+qudits take the unrolled tuple kernel, as do four and five once the tableau has
+at least 8 active generators; `k = 8` in the base leaf keeps the dense backing
+under coverage.
 
 `CliffordOperator` construction, checked and unchecked, is timed separately
 again: it takes no tableau, so it depends only on `d` and `k`, never on the
