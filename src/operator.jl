@@ -657,12 +657,15 @@ end
     zg = _zgen(stab, i)
     _check_pauli_support(op, n)
 
+    # `@simd`, not `@turbo`: `Int` loads with stores of the narrower `E`. A
+    # residue mod `d` fits `E`, so `% E` is exact.
     E = eltype(xg)
-    @turbo for q in 1:n
-        xg[q] = E(mod(op.xz[q], d))
+    xz = op.xz
+    @inbounds @simd for q in 1:n
+        xg[q] = mod(xz[q], d) % E
     end
-    @turbo for q in 1:n
-        zg[q] = E(mod(op.xz[n+q], d))
+    @inbounds @simd for q in 1:n
+        zg[q] = mod(xz[n+q], d) % E
     end
     if tab.storephase
         _phase(tab)[i] = mod(op.phase, phase_modulus(d))

@@ -89,6 +89,29 @@ end
     end
 end
 
+@testset "long unreduced generators reduced before narrowing" begin
+    # 37 sites: several SIMD vectors and a remainder in every element type.
+    n = 37
+    rng = Xoshiro(0x57a1)
+    for d in (2, 3, 251, 257), TT in (StabilizerTableau, DestabilizerTableau)
+        ref = random_state!(Xoshiro(d), TT(d, n; eltype = Int))
+        S = stabilizer_matrix(ref)
+        shifted = S .+ d .* rand(rng, -10^6:10^6, size(S))
+        shifted[end, :] .= S[end, :]
+        xz = rand(rng, 0:(d - 1), 2n)
+        op = GeneralPauli(xz .+ d .* rand(rng, -10^6:10^6, 2n), 0)
+        want = measure!(Xoshiro(1), ref, op; outcome = 1, phase_policy = 2)
+        for E in st_types(d)
+            tab = TT(d, shifted; eltype = E)
+            @test stabilizer_matrix(tab) == S
+            @test measure!(Xoshiro(1), tab, op; outcome = 1, phase_policy = 2) == want
+            @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
+            col = findfirst(j -> stabilizer_matrix(tab)[1:2n, j] == xz, 1:n)
+            @test col !== nothing
+        end
+    end
+end
+
 @testset "copy and copy! keep the element type" begin
     for TT in (StabilizerTableau, DestabilizerTableau), E in (UInt8, UInt16)
         tab = TT(3, 4; state = :ghz, eltype = E)

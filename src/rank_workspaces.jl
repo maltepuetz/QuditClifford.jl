@@ -57,6 +57,9 @@ function _copy_sites!(
     N::Int,
     offset::Int,
 )
+    # `@turbo` assumes that every loop runs at least once; an information
+    # measure with no traced-out site calls this with `N == 0`.
+    (m == 0 || N == 0) && return offset + 2N
     X, Z = b.x, b.z
     @turbo for j in 1:m, r in 1:N
         q = sites[r]
