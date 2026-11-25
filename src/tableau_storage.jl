@@ -55,6 +55,12 @@ tableau_eltype(tab::AbstractTableau) = _storage_eltype(tab)
 # `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`,
 # `Bits` at d = 2, any other type never, `Union{UInt8, UInt16}` and `Union{}`
 # included.
+#
+# The narrow modular primitives need `d <= typemax(E)`, one more than the
+# residues need; the two differ only at d = 256 and 65536, which are not
+# prime, so a tableau never reaches the primitives with them. The phase
+# clause is implied by the first one for d >= 3 (`phase_modulus(d) == d`) and
+# for d = 2 (4 - 1 <= typemax(E)).
 function _eltype_admissible(E::Type, d::Int)
     E === Int && return true
     E === Bits && return d == 2
@@ -211,7 +217,10 @@ end
 # Overwrite the generators of a tableau with a generator-major matrix of exactly
 # the shape `stabilizer_matrix` or `destabilizer_matrix` returns, reducing its
 # entries mod `d` and its phases mod `phase_modulus(d)`, in the tableau's
-# storage layout. `m`, `iscanonical` and the caches are left alone.
+# storage layout. `m`, `iscanonical` and the caches are left alone. The package
+# itself never calls these two loaders: the tests and the benchmark workloads
+# (benchmark/workloads.jl) build tableaux in arbitrary states with them, so
+# they stay next to the storage they write.
 _load_stabilizer_matrix!(tab::AbstractTableau, S::AbstractMatrix{<:Integer}) =
     _load_stabilizer_matrix!(tab, _layout_marker(tab), S)
 
@@ -274,80 +283,173 @@ function _load_bit_block!(b::BitBlock, S::AbstractMatrix{<:Integer}, d::Int, nco
     return b
 end
 
-##### packed construction #####
+##### construction #####
 
-# The packed constructors build every array of the tableau at its final size
-# and fill the packed blocks in place, without an unpacked copy of the blocks.
+# Both tableau types are built the same way: every array at its final size,
+# zeroed, with the layout field set (`_new_tableau`), then filled in place. A
+# preset is written by `reset!`'s preset path in the requested layout. Raw
+# generators are loaded generator-major into an unpacked tableau, by a loop that
+# vectorizes for a `Matrix{Int}`, which is switched to the requested layout
+# after validation (and, for a `DestabilizerTableau`, the rebuild of the
+# duals); a packed tableau is loaded in its own layout through the bit leaves.
 
-# A packed tableau of type `T` for `n` qubits in the layout `layout` (already
-# checked by `_check_layout`), with `m = 0`, zero blocks, planes and
-# workspaces, `iscanonical` false.
-function _zero_packed_tableau(::Type{StabilizerTableau}, n::Int, storephase::Bool,
-                              inversemod::IM, layout::Symbol) where {IM<:InverseMod}
-    return StabilizerTableau{IM, UInt8, UInt64, _BitPlanes}(
-        2, n, 0, _stab_bit_blocks(n)..., _BitPlanes(storephase ? n : 0, 2),
-        storephase, false, _layout_of(layout), inversemod,
-        zeros(Int, 2n + (storephase ? 1 : 0)), zeros(UInt8, 2n), zeros(UInt8, n, 3),
-        _word_workspace(n),
-        zeros(Int, 2n), _BitPlanes(n, 1),
-        zeros(Int, 2n), zeros(Int, n), zeros(Int, n),
-        _storage_rank_workspace(UInt8, 2, n), _bit_rank_workspace(2, n),
-    )
+# The arrays of a new tableau for the storage type `E` the user chose (`Bits`
+# or an element type), all zero: the stabilizer and destabilizer blocks at
+# their slots, the phase, the workspaces in field order from
+# `generator_workspace` to `zacc_workspace`, and the two rank workspaces.
+# `_copied_*` give the same tuples for `copy`.
+_new_stab_blocks(::Type{E}, n::Int) where {E<:_StorageEltype} = _stab_blocks(E, n)
+_new_stab_blocks(::Type{Bits}, n::Int) = _stab_bit_blocks(n)
+_new_destab_blocks(::Type{E}, n::Int) where {E<:_StorageEltype} = _destab_blocks(E, n)
+_new_destab_blocks(::Type{Bits}, n::Int) = _destab_bit_blocks(n)
+_new_phase(::Type{<:_StorageEltype}, n::Int) = zeros(Int, n)
+_new_phase(::Type{Bits}, n::Int) = _BitPlanes(n, 2)
+_new_cache(::Type{<:_StorageEltype}, n::Int) = zeros(Int, n)
+_new_cache(::Type{Bits}, n::Int) = _BitPlanes(n, 1)
+_new_word_workspace(::Type{<:_StorageEltype}, ::Int) = zeros(UInt64, 0, 0)
+_new_word_workspace(::Type{Bits}, n::Int) = _word_workspace(n)
+# The element type of the unpacked workspaces: `UInt8` for a packed tableau.
+_workspace_eltype(::Type{E}) where {E<:_StorageEltype} = E
+_workspace_eltype(::Type{Bits}) = UInt8
+
+function _new_workspaces(::Type{E}, n::Int, storephase::Bool) where {E}
+    U = _workspace_eltype(E)
+    return (zeros(Int, 2n + (storephase ? 1 : 0)), zeros(U, 2n), zeros(U, n, 3),
+            _new_word_workspace(E, n), zeros(Int, 2n), _new_cache(E, n),
+            zeros(Int, 2n), zeros(Int, n), zeros(Int, n))
+end
+_new_rank_workspaces(::Type{E}, d::Int, n::Int) where {E} =
+    (_storage_rank_workspace(_workspace_eltype(E), d, n), _bit_rank_workspace(d, n))
+
+_copied_stab(tab::AbstractTableau) =
+    (_copy_gen_block(tab.stab_x, tab.n), _copy_gen_block(tab.stab_z, tab.n), copy(tab.phase))
+_copied_workspaces(tab::AbstractTableau) =
+    (zero(tab.generator_workspace), zero(tab.pivot_workspace), zero(tab.coeff_workspace),
+     zero(tab.word_workspace), copy(tab.pivcol_of_row), copy(tab.xdotz_cache),
+     zero(tab.res_workspace), zero(tab.c_workspace), zero(tab.zacc_workspace))
+_copied_rank_workspaces(tab::AbstractTableau) = (zero(tab.rank_workspace), zero(tab.bit_workspace))
+
+# A tableau of type `T` with storage `E` for `n` qudits in layout `L`: `m = 0`,
+# zero blocks, phase, cache and workspaces, `iscanonical` false.
+function _new_tableau(::Type{StabilizerTableau}, ::Type{E}, d::Int, n::Int, storephase::Bool,
+                      inversemod::InverseMod, L::TableauLayout) where {E}
+    return StabilizerTableau(d, n, 0, _new_stab_blocks(E, n)...,
+                             _new_phase(E, storephase ? n : 0), storephase, false, L, inversemod,
+                             _new_workspaces(E, n, storephase)..., _new_rank_workspaces(E, d, n)...)
 end
 
-function _zero_packed_tableau(::Type{DestabilizerTableau}, n::Int, storephase::Bool,
-                              inversemod::IM, layout::Symbol) where {IM<:InverseMod}
-    return DestabilizerTableau{IM, UInt8, UInt64, _BitPlanes}(
-        2, n, 0, _stab_bit_blocks(n)..., _BitPlanes(storephase ? n : 0, 2),
-        _destab_bit_blocks(n)...,
-        storephase, false, _layout_of(layout), inversemod,
-        zeros(Int, 2n + (storephase ? 1 : 0)), zeros(UInt8, 2n), zeros(UInt8, n, 3),
-        _word_workspace(n),
-        zeros(Int, 2n), _BitPlanes(n, 1),
-        zeros(Int, 2n), zeros(Int, n), zeros(Int, n), zeros(Int, n),
-        _storage_rank_workspace(UInt8, 2, n), _bit_rank_workspace(2, n),
-    )
+function _new_tableau(::Type{DestabilizerTableau}, ::Type{E}, d::Int, n::Int, storephase::Bool,
+                      inversemod::InverseMod, L::TableauLayout) where {E}
+    return DestabilizerTableau(d, n, 0, _new_stab_blocks(E, n)...,
+                               _new_phase(E, storephase ? n : 0), _new_destab_blocks(E, n)...,
+                               storephase, false, L, inversemod, _new_workspaces(E, n, storephase)...,
+                               zeros(Int, n), _new_rank_workspaces(E, d, n)...)
 end
 
 _layout_of(layout::Symbol) = layout === :qudit ? QuditMajor() : GeneratorMajor()
 
-# The packed tableau of type `T` in the preset state `state_norm` (normalized
-# by `_normalize_state_and_basis`), filled by `reset!`'s preset path.
-function _packed_preset_tableau(::Type{T}, n::Int, state_norm::Symbol, basis_spec,
-                                storephase::Bool, inversemod::InverseMod,
-                                layout::Symbol) where {T<:AbstractTableau}
-    tab = _zero_packed_tableau(T, n, storephase, inversemod, layout)
-    _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec, true)
-    _check_inversemod(inversemod, 2)
-    _warn_if_dimension_unsafe(2, n)
-    return tab
-end
-
-# The packed tableau of type `T` holding the generators of the generator-major
-# raw matrix `tab_in`, whose shape `shape` comes from `_infer_tableau_layout`:
-# entries reduced mod 2, phases mod 4, columns `m+1:n` zero, checked as the
-# unpacked constructors check, and for a `DestabilizerTableau` with the
-# destabilizers and `xdotz_cache` rebuilt.
-function _packed_matrix_tableau(::Type{T}, d::Int, shape, tab_in::AbstractMatrix{<:Integer},
-                                inversemod::InverseMod, check::Bool,
-                                layout::Symbol) where {T<:AbstractTableau}
-    n, m = shape.n, shape.m
+# The checks on `d` and `inversemod` both constructors make once the shape of
+# the tableau is known, and the warning for a dimension past the overflow
+# envelope.
+function _check_dimension(d::Int, n::Int, inversemod::InverseMod)
+    Primes.isprime(d) || throw(ArgumentError("Qudit dimension d must be a prime number."))
     _check_inversemod(inversemod, d)
-    (0 ≤ m ≤ n) || throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
     _warn_if_dimension_unsafe(d, n)
-    S = _generator_input(tab_in, n, m, shape.storephase)
-    tab = _zero_packed_tableau(T, n, shape.storephase, inversemod, layout)
-    tab.m = m
-    L = _layout_marker(tab)
-    _load_bit_generators!(tab, L, S, m)
-    _init_packed_generators!(tab, L, check)
+    return nothing
+end
+
+# The `(d, n)` constructors of both tableau types: the tableau of type `T` with
+# storage `E` in the preset state `state` (with `basis`), built in the layout
+# `layout`.
+function _preset_tableau(::Type{T}, ::Type{E}, d::Int, n::Int, state::Symbol, basis,
+                         storephase::Bool, inversemod::InverseMod,
+                         layout::Symbol) where {T<:AbstractTableau, E}
+    n >= 0 || throw(ArgumentError("n must be nonnegative, got $n"))
+    _check_eltype(E, d)
+    _check_layout(layout)
+    state_norm, basis_spec = _normalize_state_and_basis(state, basis, n)
+    tab = _new_tableau(T, E, d, n, storephase, inversemod, _layout_of(layout))
+    _reset_preset!(tab, _layout_marker(tab), state_norm, basis_spec, true)
+    _check_dimension(d, n, inversemod)
     return tab
 end
 
-_init_packed_generators!(tab::_BitStab, L::TableauLayout, check::Bool) =
-    check && _validate_generators!(tab, L)
-_init_packed_generators!(tab::_BitDestab, L::TableauLayout, check::Bool) =
-    _init_destabilizers!(tab, L, nothing, nothing, check)
+# The raw-matrix constructors of both tableau types: the tableau of type `T`
+# with storage `E` holding the generators of `tableau`, stacked
+# generator-major or transposed (`_infer_tableau_shape`): entries reduced mod
+# `d`, phases mod `phase_modulus(d)`, columns `m+1:n` zero, checked with
+# `check`, and for a `DestabilizerTableau` with the destabilizers and
+# `xdotz_cache` rebuilt. The input is never written.
+function _matrix_tableau(::Type{T}, ::Type{E}, d::Int, tableau::AbstractMatrix{<:Integer},
+                         m::Union{Int,Nothing}, storephase::Union{Bool,Nothing},
+                         inversemod::InverseMod, check::Bool,
+                         layout::Symbol) where {T<:AbstractTableau, E}
+    _check_eltype(E, d)
+    _check_layout(layout)
+    m !== nothing && m < 0 && throw(ArgumentError("m must satisfy 0 ≤ m ≤ n."))
+    # The input is read entry by entry with 1-based indices.
+    Base.require_one_based_indexing(tableau)
+    shape = _infer_tableau_shape(size(tableau, 1), size(tableau, 2), m, storephase)
+    shape === nothing && throw(ArgumentError(
+        "Tableau must have shape (2n + storephase) × m or m × (2n + storephase) with m ≤ n."
+    ))
+    _check_dimension(d, shape.n, inversemod)
+
+    # A transposed input is read through a lazy `transpose`, with no copy.
+    S = shape.transpose ? transpose(tableau) : tableau
+    packed = E === Bits
+    tab = _new_tableau(T, E, d, shape.n, shape.storephase, inversemod,
+                       packed ? _layout_of(layout) : GeneratorMajor())
+    tab.m = shape.m
+    L = _layout_marker(tab)
+    packed ? _load_bit_generators!(tab, L, S, shape.m) : _load_generators!(tab, S, shape.m)
+    _init_from_generators!(tab, L, check)
+    return packed ? tab : _apply_layout!(tab, layout)
+end
+
+# Generators `1:m` of the unpacked generator-major `tab`, and their phases,
+# from the stacked generator-major matrix `S`.
+function _load_generators!(tab::AbstractTableau, S::AbstractMatrix{<:Integer}, m::Int)
+    n, d = tab.n, tab.d
+    _load_generator_entries!(tab.stab_x, tab.stab_z, S, n, m, d)
+    if tab.storephase
+        d_phase = phase_modulus(d)
+        @inbounds for j in 1:m
+            tab.phase[j] = _reduced_entry(Int, S[2n + 1, j], d_phase)
+        end
+    end
+    return tab
+end
+
+# A `StabilizerTableau` built from raw generators is only validated (with
+# `check`); a `DestabilizerTableau` also rebuilds its duals.
+_init_from_generators!(tab::StabilizerTableau, L::TableauLayout, check::Bool) =
+    (check && _validate_generators!(tab, L); tab)
+
+# `copy!` for both tableau types: a raw block copy of the stabilizers, then of
+# the destabilizers of a `DestabilizerTableau`, so `dst` takes the layout of
+# `src` without a transpose.
+function _copy_tableau!(dst::AbstractTableau, src::AbstractTableau)
+    _check_copy_compatible(dst, src)
+    dst === src && return dst
+    _copy_block!(dst.stab_x, src.stab_x)
+    _copy_block!(dst.stab_z, src.stab_z)
+    copyto!(dst.phase, src.phase)
+    _copy_duals!(dst, src)
+    copyto!(dst.pivcol_of_row, src.pivcol_of_row)
+    copyto!(dst.xdotz_cache, src.xdotz_cache)
+    dst.m = src.m
+    dst.iscanonical = src.iscanonical
+    dst.layout = src.layout
+    return dst
+end
+
+_copy_duals!(::StabilizerTableau, ::StabilizerTableau) = nothing
+function _copy_duals!(dst::DestabilizerTableau, src::DestabilizerTableau)
+    _copy_block!(dst.destab_x, src.destab_x)
+    _copy_block!(dst.destab_z, src.destab_z)
+    return nothing
+end
 
 # The packed scratch of a packed tableau for `n` qudits: four columns of one
 # word per 64 qudits, and at least the `2·_WORD_BITS` words a layout switch

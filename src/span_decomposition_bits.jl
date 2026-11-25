@@ -576,7 +576,7 @@ end
     c = UInt64(0)
     @inbounds for i in 1:D
         q = op.qudits[i]
-        c ⊻= (_ws_bit(ws, q, 3) & (op.zs[i] % UInt64)) ⊻ (_ws_bit(ws, q, 4) & (op.xs[i] % UInt64))
+        c ⊻= (_wordbit(ws, q, 3) & (op.zs[i] % UInt64)) ⊻ (_wordbit(ws, q, 4) & (op.xs[i] % UInt64))
     end
     return (c & UInt64(1)) % Int
 end
@@ -674,8 +674,8 @@ function _bit_after_append!(tab::_BitDestab, L::QuditMajor, newcol::Int, op::_Bi
     wn, on = _word_index(newcol), _bit_offset(newcol)
     clr = ~(UInt64(1) << on)
     @inbounds for k in 1:n
-        vx = _ws_bit(ws, k, 3)
-        vz = _ws_bit(ws, k, 4)
+        vx = _wordbit(ws, k, 3)
+        vz = _wordbit(ws, k, 4)
         dx[wn, k] = (dx[wn, k] & clr) | (vx << on)
         dz[wn, k] = (dz[wn, k] & clr) | (vz << on)
         if (vx | vz) != 0

@@ -56,7 +56,7 @@ function _canonical_stab(tab::AbstractTableau, L::TableauLayout)
     tab.iscanonical && return b, phase
     S = _generator_major_copy(b)
     Sphase = copy(phase)
-    _canonicalize_tableau!(S, Sphase, tab.m, tab.d, tab.storephase, tab.inversemod,
+    _canonicalize_tableau!(S, Sphase, nothing, tab.m, tab.d, tab.storephase, tab.inversemod,
                            zeros(Int, 2 * tab.n), zeros(Int, tab.n))
     return S, Sphase
 end

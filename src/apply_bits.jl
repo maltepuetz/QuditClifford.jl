@@ -104,11 +104,7 @@ end
                                      C::Union{Nothing,Matrix{UInt64}}, w::Int,
                                      v::NTuple{S,UInt64}, o::NTuple{S,UInt64},
                                      l::UInt64, h::UInt64, ::Val{K}) where {S,K}
-    @inbounds if P !== nothing
-        p0 = P[w, 1]
-        P[w, 1] = p0 ⊻ l
-        P[w, 2] ⊻= h ⊻ (p0 & l)
-    end
+    P === nothing || _bit_phase_add!(P, w, l, h)
     @inbounds if C !== nothing
         C[w, 1] ⊻= _bit_xz_parity(v, Val(K)) ⊻ _bit_xz_parity(o, Val(K))
     end
@@ -210,13 +206,7 @@ end
 # a `DestabilizerTableau`. Not inlined into `_apply_columns!`: compiled into
 # the same body as `_bit_prep`, the gate loops run measurably slower.
 @noinline function _bit_apply!(tab::_BitTableau, L::TableauLayout, bp::_BitPrep)
-    stab = _stab(tab, L)
-    cache = _bit_cache(tab)
-    if tab.storephase
-        _bit_gate!(stab, tab.phase.planes, cache, tab.m, bp)
-    else
-        _bit_gate!(stab, nothing, cache, tab.m, bp)
-    end
+    _bit_gate!(_stab(tab, L), _bit_phase_planes(tab), _bit_cache(tab), tab.m, bp)
     _after_clifford!(tab, L, bp)
     tab.iscanonical = false
     return tab

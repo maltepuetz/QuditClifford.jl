@@ -37,22 +37,7 @@
 # or a dense exponent vector `[x; z]` in `res_workspace`.
 const _BitOperand = Union{NPauli, Vector{Int}}
 
-# Add `l + 2h` mod 4, one bit of each per generator, to word `w` of the phase
-# planes `P`.
-@inline function _bit_phase_add!(P::Matrix{UInt64}, w::Int, l::UInt64, h::UInt64)
-    @inbounds begin
-        p0 = P[w, 1]
-        P[w, 1] = p0 ⊻ l
-        P[w, 2] ⊻= h ⊻ (p0 & l)
-    end
-    return nothing
-end
-
 @inline _bit_phase_planes(tab::_BitTableau) = tab.storephase ? tab.phase.planes : nothing
-
-# The bit of qudit `k` in word column `c` of `ws`, as a `UInt64` 0 or 1.
-@inline _ws_bit(ws::Matrix{UInt64}, k::Int, c::Int) =
-    @inbounds (ws[_word_index(k), c] >> _bit_offset(k)) & UInt64(1)
 
 # The parity of the operand's x·z.
 @inline function _bit_operand_xz(op::NPauli{D}) where {D}
@@ -470,21 +455,21 @@ function _qm_bit_absorb!(tab::_BitTableau, b::_QMBits, pivot::Int, m::Int, div::
             pz = UInt64(0)
             for s in 1:np
                 k = sites[s]
-                _ws_bit(ws, k, 3) == 0 || (pr ⊻= z[w, k])
-                _ws_bit(ws, k, 4) == 0 || (pz ⊻= x[w, k])
+                _wordbit(ws, k, 3) == 0 || (pr ⊻= z[w, k])
+                _wordbit(ws, k, 4) == 0 || (pz ⊻= x[w, k])
             end
             P === nothing || _bit_phase_add!(P, w, M & m0, M & (m1 ⊻ pr))
             C === nothing || (C[w, 1] ⊻= M & (pr ⊻ pz ⊻ xzm))
         end
         @inbounds for s in 1:np
             k = sites[s]
-            if _ws_bit(ws, k, 3) != 0
+            if _wordbit(ws, k, 3) != 0
                 for kk in 1:nz
                     w = mw[kk]
                     x[w, k] ⊻= ws[w, 1]
                 end
             end
-            if _ws_bit(ws, k, 4) != 0
+            if _wordbit(ws, k, 4) != 0
                 for kk in 1:nz
                     w = mw[kk]
                     z[w, k] ⊻= ws[w, 1]
@@ -502,7 +487,7 @@ function _qm_bit_absorb!(tab::_BitTableau, b::_QMBits, pivot::Int, m::Int, div::
         end
         @inbounds for s in 1:np
             k = sites[s]
-            _ws_bit(ws, k, 3) == 0 && continue
+            _wordbit(ws, k, 3) == 0 && continue
             @simd ivdep for w in 1:nwm
                 ws[w, 2] ⊻= z[w, k]
             end
@@ -511,7 +496,7 @@ function _qm_bit_absorb!(tab::_BitTableau, b::_QMBits, pivot::Int, m::Int, div::
     if C !== nothing
         @inbounds for s in 1:np
             k = sites[s]
-            _ws_bit(ws, k, 4) == 0 && continue
+            _wordbit(ws, k, 4) == 0 && continue
             @simd ivdep for w in 1:nwm
                 C[w, 1] ⊻= ws[w, 1] & x[w, k]
             end
@@ -528,12 +513,12 @@ function _qm_bit_absorb!(tab::_BitTableau, b::_QMBits, pivot::Int, m::Int, div::
     end
     @inbounds for s in 1:np
         k = sites[s]
-        if _ws_bit(ws, k, 3) != 0
+        if _wordbit(ws, k, 3) != 0
             @simd ivdep for w in 1:nwm
                 x[w, k] ⊻= ws[w, 1]
             end
         end
-        if _ws_bit(ws, k, 4) != 0
+        if _wordbit(ws, k, 4) != 0
             @simd ivdep for w in 1:nwm
                 z[w, k] ⊻= ws[w, 1]
             end
@@ -606,8 +591,8 @@ function _after_bit_noncommuting_measurement!(tab::_BitDestab, L::QuditMajor, pi
     _zero_gen!(destab, pivot)
     @inbounds for s in 1:np
         k = sites[s]
-        _xflip!(destab, _ws_bit(ws, k, 3), k, pivot)
-        _zflip!(destab, _ws_bit(ws, k, 4), k, pivot)
+        _xflip!(destab, _wordbit(ws, k, 3), k, pivot)
+        _zflip!(destab, _wordbit(ws, k, 4), k, pivot)
     end
     supp = tab.support_workspace
     nsupp = _bit_operand_support!(supp, op)

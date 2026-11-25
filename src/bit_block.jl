@@ -193,9 +193,36 @@ end
 @inline _nq(b::BitBlock) = b.n
 @inline _ncap(b::BitBlock) = b.n
 
+# Bit `i` of word column `c` of a block or a word workspace, as a `UInt64` 0
+# or 1.
+@inline _wordbit(A::AbstractMatrix{UInt64}, i::Int, c::Int) =
+    @inbounds (A[_word_index(i), c] >> _bit_offset(i)) & UInt64(1)
+
+# Exchange bits `i` and `j` of every word column `c` in `cols`.
+@inline function _swap_bits!(A::AbstractMatrix{UInt64}, i::Int, j::Int, cols)
+    wi, oi = _word_index(i), _bit_offset(i)
+    wj, oj = _word_index(j), _bit_offset(j)
+    @inbounds for c in cols
+        t = ((A[wi, c] >> oi) ⊻ (A[wj, c] >> oj)) & UInt64(1)
+        A[wi, c] ⊻= t << oi
+        A[wj, c] ⊻= t << oj
+    end
+    return nothing
+end
+
+# Add `l + 2h` mod 4, one bit of each per generator, to word `w` of the phase
+# planes `P`.
+@inline function _bit_phase_add!(P::Matrix{UInt64}, w::Int, l::UInt64, h::UInt64)
+    @inbounds begin
+        p0 = P[w, 1]
+        P[w, 1] = p0 ⊻ l
+        P[w, 2] ⊻= h ⊻ (p0 & l)
+    end
+    return nothing
+end
+
 # Bit `i` of word column `c`, as `Int` 0 or 1, and its overwrite with `v`.
-@inline _getbit(A::_BlockMatrix{UInt64}, i::Int, c::Int) =
-    @inbounds ((A[_word_index(i), c] >> _bit_offset(i)) & UInt64(1)) % Int
+@inline _getbit(A::_BlockMatrix{UInt64}, i::Int, c::Int) = _wordbit(A, i, c) % Int
 @inline function _setbit!(A::_BlockMatrix{UInt64}, v::Int, i::Int, c::Int)
     w, o = _word_index(i), _bit_offset(i)
     @inbounds A[w, c] = (A[w, c] & ~(UInt64(1) << o)) | ((v & 1) % UInt64) << o
@@ -439,15 +466,8 @@ end
 
 function _swap_gens!(b::_QMBits, i::Int, j::Int)
     i == j && return b
-    wi, oi = _word_index(i), _bit_offset(i)
-    wj, oj = _word_index(j), _bit_offset(j)
-    for A in (b.x, b.z)
-        @inbounds for q in 1:b.n
-            t = ((A[wi, q] >> oi) ⊻ (A[wj, q] >> oj)) & UInt64(1)
-            A[wi, q] ⊻= t << oi
-            A[wj, q] ⊻= t << oj
-        end
-    end
+    _swap_bits!(b.x, i, j, 1:b.n)
+    _swap_bits!(b.z, i, j, 1:b.n)
     return b
 end
 

@@ -800,8 +800,9 @@ end
     prep.fast || return _apply_columns_generic!(tab, prep, L)
     d = prep.d
     if d == 2
-        (prep.bm != 0 && _lane_holds(Int16, S, d)) ||
-            return _apply_columns_generic!(tab, prep, L)
+        # X = 2S·d(d-1) = 4S at d = 2, which the `Int16` lane holds for
+        # every S below 8192, far above any tuple gate.
+        prep.bm != 0 || return _apply_columns_generic!(tab, prep, L)
         _qm_apply!(tab, prep, L, Int16, nothing, 0)
     else
         lane, M, s, wide = _clifford_lane(S, d)

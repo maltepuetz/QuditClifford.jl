@@ -442,11 +442,10 @@ end
 @testset "no raw block access outside the block and kernel files" begin
     srcdir = joinpath(pkgdir(QuditClifford), "src")
     # Explicit layout construction: the block files (bit_block.jl for its
-    # unpacked copies), the storage files and the constructors (which build
-    # generator-major and then switch). `BitBlock`s are built only in the bit
-    # block file and the storage file.
-    construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl", "layout.jl",
-                    "stabilizer_tableau.jl")
+    # unpacked copies) and the storage file (construction and the canonical
+    # copies behind `==`).
+    # `BitBlock`s are built only in the bit block file and the storage file.
+    construct_ok = ("xz_block.jl", "bit_block.jl", "tableau_storage.jl")
     # Raw `b.x` / `b.z` access, with the number of allowed matches per file:
     # the layout-specific kernels, the packed block file and its kernel files,
     # and the storage files that build tableaux from blocks. Kernel files that
@@ -465,8 +464,7 @@ end
         "apply_qudit_major.jl" => 2,
         "measure_qudit_major.jl" => 2,
         "canonicalize_qudit_major.jl" => 4,
-        "stabilizer_tableau.jl" => 2,
-        "destabilizer_tableau.jl" => 6,
+        "destabilizer_tableau.jl" => 4,
         "tableau_storage.jl" => 4,
     )
     raw = r"\bb\.x\b|\bb\.z\b|\.x\[|\.z\["

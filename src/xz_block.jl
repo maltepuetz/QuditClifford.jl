@@ -10,12 +10,12 @@
 # preconditions (reduced entries, no aliasing) are those of the primitives.
 #
 # Two kinds of methods. The leaves (`_nq`, `_ncap`, `_xget`, `_zget`, `_xset!`,
-# `_zset!`, `_xgen`, `_zgen`, `_zero_gen!`, `_swap_gens!` and the `dot_xz_*`
-# products) know the layout: each has one method for `XZBlock{GeneratorMajor}`
-# and one for `XZBlock{QuditMajor}`, and none for a bare `XZBlock`. Every other
-# operation is a single method on `XZBlock` that calls only leaves, so it works
-# in both layouts. This file touches only `b.x`, `b.z` and plain arrays, never
-# a tableau.
+# `_zset!`, `_xgen`, `_zgen`, `_swap_gens!` and the `dot_xz_*` products) know
+# the layout: each has one method for `XZBlock{GeneratorMajor}` and one for
+# `XZBlock{QuditMajor}`, and none for a bare `XZBlock`. Every other operation
+# is a single method on `XZBlock` that calls only leaves, so it works in both
+# layouts. This file touches only `b.x`, `b.z` and plain arrays, never a
+# tableau.
 #
 # The matrices hold one of the storage element types `E` (`_StorageEltype`).
 # Single entries go in and out as `Int` (`_xget`, `_xset!` and their kin), so
@@ -251,13 +251,18 @@ function _load_gen!(b::XZBlock, j::Int, v::AbstractVector{<:_StorageEltype})
     return b
 end
 
-function _zero_gen!(b::_GMBlock, j::Int)
-    fill!(_xgen(b, j), 0)
-    fill!(_zgen(b, j), 0)
+# The X exponents of the GHZ duals `D_j = X_1 ... X_{j-1}` (`j ≥ 2`) in a zero
+# qudit-major block: column `q` is one on the contiguous rows `q+1:n`. The
+# generator-major blocks take the generic method in src/destabilizer_tableau.jl.
+function _ghz_duals_x!(b::_QMBlock, n::Int)
+    E = eltype(b.x)
+    for q in 1:(n - 1)
+        fill!(view(b.x, (q + 1):n, q), one(E))
+    end
     return b
 end
 
-function _zero_gen!(b::_QMBlock, j::Int)
+function _zero_gen!(b::XZBlock, j::Int)
     fill!(_xgen(b, j), 0)
     fill!(_zgen(b, j), 0)
     return b

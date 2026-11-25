@@ -10,6 +10,14 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ### Changed
 
+- The preset constructors with `layout = :qudit` fill the tableau in its own
+  layout instead of building it generator-major and transposing it
+  (`n = 4096`, `UInt8`: `StabilizerTableau` 6.9 to 0.27 ms,
+  `DestabilizerTableau` 13.8 to 0.51 ms; with `state = :ghz` the qudit-major
+  destabilizers are written a column at a time, 14 to 0.9 ms). The first
+  raw-matrix constructor call in a session no longer compiles for 0.8–2.4 s
+  (about 45 ms now); loading the package takes as long as before. Apple
+  silicon, Julia 1.13.
 - The precompile workload covers packed storage (`eltype = Bits`) in both
   layouts, the layout switch, and `stabilizer_matrix`/`destabilizer_matrix`.
   The first calls on a packed tableau in a new session no longer compile

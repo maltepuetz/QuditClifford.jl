@@ -36,14 +36,16 @@
 # up to 6x slower on random states.
 const _QM_CANON_SPARSE_DIV = 8
 
-_canonicalize!(tab::StabilizerTableau, L::QuditMajor) =
-    _canonicalize_qm!(tab, L, _QM_CANON_SPARSE_DIV)
-_canonicalize!(tab::DestabilizerTableau, L::QuditMajor) =
+_canonicalize!(tab::AbstractTableau, L::QuditMajor) =
     _canonicalize_qm!(tab, L, _QM_CANON_SPARSE_DIV)
 
 # How the duals follow the column operations: not at all (`nothing`, a
 # `StabilizerTableau`), bit-packed at d = 2, with sums in an unsigned
 # accumulator `A`, or (when `A` would overflow even as `UInt64`) row by row.
+# The row-by-row form needs (d-1)^2 m + d - 1 > typemax(UInt64), which lies
+# outside the envelope `max(n, 2)(d-1)^2 <= typemax(Int)` that
+# `_warn_if_dimension_unsafe` warns about; it stays as a defence for a tableau
+# built past that warning, and test/layout.jl forces it.
 struct _QMDualBits
     W::Matrix{UInt64}
     nw::Int     # words per generator, cld(2n, 64)
@@ -251,13 +253,7 @@ function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
         # nonzero β in idx[1:k].
         copyto!(beta, col)
         @inbounds beta[c] = zero(E)
-        k = 0
-        @inbounds for jj in 1:m
-            if beta[jj] != 0
-                k += 1
-                idx[k] = jj
-            end
-        end
+        k = _qm_list_nonzero!(idx, beta)
         dense = k > m ÷ div
 
         if k > 0 && !dense
@@ -277,19 +273,9 @@ function _canonicalize_qm!(b::_QMBlock, phase::AbstractVector{Int}, db, dual,
             _qm_dual_accumulate!(db, dual, c, beta, idx, k, m, d, false)
             @inbounds for q in 1:n
                 xc = _xget(b, q, c)
-                if xc != 0
-                    for t in 1:k
-                        jj = idx[t]
-                        x[jj, q] = mod(Int(x[jj, q]) - Int(beta[jj]) * xc, d) % E
-                    end
-                end
+                xc == 0 || _qm_submul_rows!(x, q, idx, k, beta, xc, d)
                 zc = _zget(b, q, c)
-                if zc != 0
-                    for t in 1:k
-                        jj = idx[t]
-                        z[jj, q] = mod(Int(z[jj, q]) - Int(beta[jj]) * zc, d) % E
-                    end
-                end
+                zc == 0 || _qm_submul_rows!(z, q, idx, k, beta, zc, d)
             end
         elseif k > 0
             if storephase
