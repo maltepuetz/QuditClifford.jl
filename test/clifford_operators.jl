@@ -1163,8 +1163,8 @@ end
 end
 
 @testset "Tuple preparation of a stored operator carries its data" begin
-    for d in (2, 3), sp in (false, true), k in 1:3
-        U = random_clifford(Random.Xoshiro(7 + k), d, collect(10:-3:(13 - 3k)))
+    for d in (2, 3), sp in (false, true), k in 1:5
+        U = random_clifford(Random.Xoshiro(7 + k), d, collect(16:-3:(19 - 3k)))
         p = QC._prepare_tuple(U, sp, Val(k))
         @test p isa QC.PreparedClifford{k,2k}
         @test collect(p.targets) == U.targets
@@ -1180,7 +1180,7 @@ end
 # unreduced sums with one `mod`, and overflow-safe per-term arithmetic. At
 # d = 2 the first is the closed-form phase and the others the ordered product.
 @testset "Tuple kernel tiers agree with each other and with the oracle" begin
-    for d in (2, 3, 5, 7, 31), k in 1:3
+    for d in (2, 3, 5, 7, 31), k in 1:5
         rng = Random.Xoshiro(20261118 + 10d + k)
         S = 2k
         U = random_clifford(rng, d, collect(1:k))
@@ -1194,7 +1194,7 @@ end
                                         barrett.D, d, barrett.p, barrett.inv2,
                                         false, true)
         @test safe.bm == 0
-        vs = d^S <= 4096 ? vec([Tuple(t) for t in Iterators.product(ntuple(_ -> 0:(d - 1), S)...)]) :
+        vs = big(d)^S <= 4096 ? vec([Tuple(t) for t in Iterators.product(ntuple(_ -> 0:(d - 1), S)...)]) :
              vcat([ntuple(_ -> d - 1, S)], [ntuple(_ -> rand(rng, 0:(d - 1)), S) for _ in 1:2000])
         for v in vs
             out = QC._matvec(barrett, v)
@@ -1229,15 +1229,17 @@ end
 @testset "clifford_barrett constants are exact over their whole range" begin
     isprime_small(p) = p >= 2 && all(q -> p % q != 0, 2:isqrt(p))
     rng = Random.Xoshiro(1)
-    for S in (2, 4, 6), d in filter(isprime_small, 2:1024)
+    for S in (2, 4, 6, 8, 10), d in filter(isprime_small, 2:1024)
         @test QC.clifford_barrett(S, d) == QC._clifford_barrett(Int, S, d)
     end
     # Both word sizes, whatever the host: the derivation is checked in the
     # type itself, with the overflow bound and exactness against BigInt. Every
-    # prime up to 1024 takes the tier with 64-bit words and every prime below
-    # 47 with 32-bit words, so a guard that started rejecting everything fails.
-    for (T, accepted) in ((Int64, 1024), (Int32, 46)), S in (2, 4, 6),
-        d in filter(isprime_small, 2:1024)
+    # prime up to 1024 takes the tier with 64-bit words; with 32-bit words
+    # every prime below 47 does for S <= 6, and every prime below 41 for
+    # S = 8, 10 (41 and 47 are rejected there). So a guard that started
+    # rejecting everything fails.
+    for T in (Int64, Int32), S in (2, 4, 6, 8, 10), d in filter(isprime_small, 2:1024)
+        accepted = T === Int64 ? 1024 : S <= 6 ? 46 : 40
         M, s = QC._clifford_barrett(T, S, d)
         d <= accepted && @test M != 0
         M == 0 && continue

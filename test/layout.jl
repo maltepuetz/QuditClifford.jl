@@ -396,9 +396,10 @@ function ly_unsigned_constant_valid(::Type{U}, S, d, M, s) where {U}
 end
 
 @testset "lane selection" begin
-    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031), [4093, 11777, 13399, 16381, 23189, 32749, 65521])
+    ds = vcat(filter(ly_QC.Primes.isprime, 2:1031),
+              [4093, 10357, 10369, 10391, 11579, 11587, 11597, 11777, 13399, 16381, 23189, 32749, 65521])
     nwide = 0
-    for S in (2, 4, 6), d in ds
+    for S in (2, 4, 6, 8, 10), d in ds
         b, M, s, wide = ly_QC._clifford_lane(S, d)
         @test b == ly_QC._clifford_lane_bytes(S, d)
         @test b in (0, 2, 4, 8)
@@ -427,14 +428,21 @@ end
     @test [ly_QC._clifford_lane_bytes(6, d) for d in (47, 53, 11777, 13399)] == [2, 4, 4, 8]
     # d = 11777 at S = 6 has no signed constant of any width.
     @test !ly_has_constant(Int32, 6, 11777) && !ly_has_constant(Int64, 6, 11777)
-    for S in (2, 6), d in filter(ly_QC.Primes.isprime, 2:251)
+    # S = 8 and 10 are the supports of four- and five-qudit stored operators.
+    @test [ly_QC._clifford_lane_bytes(8, d) for d in (43, 47, 11579, 11597)] == [2, 4, 4, 8]
+    @test [ly_QC._clifford_lane_bytes(10, d) for d in (37, 41, 10357, 10369)] == [2, 4, 4, 8]
+    # No lane: beyond Int32 and without an Int64 signed constant.
+    @test ly_QC._clifford_lane_bytes(8, 11587) == 0
+    @test ly_QC._clifford_lane_bytes(10, 10391) == 0
+    for S in (2, 6, 8, 10), d in filter(ly_QC.Primes.isprime, 2:251)
         @test ly_lane_reduces_exactly(S, d)
     end
 end
 
 @testset "unsigned Barrett constant" begin
     # Exhaustive over `0:X`, in the 16-bit lane (d <= 47) and the 32-bit lane.
-    for S in (2, 4, 6), d in (3, 5, 47, 127, 251, 257, 4099)
+    for (S, d) in vcat(vec(collect(Iterators.product((2, 4, 6), (3, 5, 47, 127, 251, 257, 4099)))),
+                       vec(collect(Iterators.product((8, 10), (3, 5, 37, 41, 43, 127)))))
         T = ly_holds(Int16, S, d) ? Int16 : Int32
         M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
         @test ly_unsigned_constant_valid(unsigned(T), S, d, M, s)
@@ -442,7 +450,9 @@ end
     end
     # The largest value of each lane, and the largest d with an Int32 lane.
     for (T, S, d) in ((Int16, 2, 89), (Int16, 4, 61), (Int16, 6, 47),
-                      (Int32, 2, 23167), (Int32, 4, 16381), (Int32, 6, 13367))
+                      (Int16, 8, 43), (Int16, 10, 37),
+                      (Int32, 2, 23167), (Int32, 4, 16381), (Int32, 6, 13367),
+                      (Int32, 8, 11579), (Int32, 10, 10357))
         @test ly_holds(T, S, d)
         M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
         @test ly_unsigned_constant_valid(unsigned(T), S, d, M, s)
@@ -452,7 +462,7 @@ end
     # Every odd prime whose `X` a lane holds has a constant in it; a `d` whose
     # `X` it does not hold has none.
     nconst = 0
-    for S in (2, 4, 6), d in filter(ly_QC.Primes.isprime, 3:23203), T in (Int16, Int32)
+    for S in (2, 4, 6, 8, 10), d in filter(ly_QC.Primes.isprime, 3:23203), T in (Int16, Int32)
         M, s = ly_QC._clifford_barrett_unsigned(unsigned(T), S, d)
         if ly_holds(T, S, d)
             nconst += 1
@@ -616,8 +626,9 @@ end
 @testset "both reduction forms of a lane" begin
     # (d, K, lane) with a signed constant of the lane's own type, so the
     # selection never runs the unsigned one there.
-    cases = ((3, 1, Int16), (3, 2, Int16), (3, 3, Int16), (5, 1, Int16),
-             (101, 1, Int32), (71, 2, Int32), (61, 3, Int32))
+    cases = ((3, 1, Int16), (3, 2, Int16), (3, 3, Int16), (3, 4, Int16), (3, 5, Int16),
+             (5, 1, Int16), (101, 1, Int32), (71, 2, Int32), (61, 3, Int32),
+             (61, 4, Int32), (43, 5, Int32))
     seed = 100
     for TT in (StabilizerTableau, DestabilizerTableau), storephase in (true, false),
         (d, K, T) in cases, n in (5, 70)

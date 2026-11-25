@@ -414,11 +414,17 @@ end
                                 ::Val{K}) where {K}
     S = 2K
     d = U.d
-    targets = ntuple(i -> U.targets[i], Val(K))
-    F = ntuple(j -> ntuple(i -> U.F[i, j], Val(S)), Val(S))
-    a = ntuple(i -> U.a[i], Val(S))
+    # The closures carry `@inline` in their bodies: from K = 4 on, Julia
+    # otherwise compiles the column closure as a call returning a boxed tuple,
+    # one heap allocation per column of `F`.
+    targets = ntuple(i -> (@inline; U.targets[i]), Val(K))
+    F = ntuple(Val(S)) do j
+        @inline
+        ntuple(i -> (@inline; U.F[i, j]), Val(S))
+    end
+    a = ntuple(i -> (@inline; U.a[i]), Val(S))
     storephase && d == 2 && _check_qubit_bitmask_bound(K)
-    D = storephase && d != 2 ? ntuple(i -> U.image_xdotz[i], Val(S)) :
+    D = storephase && d != 2 ? ntuple(i -> (@inline; U.image_xdotz[i]), Val(S)) :
         ntuple(_ -> 0, Val(S))
     return PreparedClifford{K,S}(targets, F, a, D, d, phase_modulus(d), U.inv2,
                                  U.fast, storephase)

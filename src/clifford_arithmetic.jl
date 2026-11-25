@@ -69,6 +69,11 @@ end
 # product is never formed. Acceptance is NOT monotonic in `d`: a modulus whose
 # `e` happens to be small passes where a smaller one fails, so never replace
 # the test with a bound on `d`. Two divisions, once per preparation.
+# The accepted range shrinks as `S` grows, since `X` does: with `W = 64` every
+# prime up to 1024 is accepted for `S <= 10`, and the first rejection is 11777
+# at `S = 6`, 10657 at `S = 8` and 7883 at `S = 10`; with `W = 32` every prime
+# below 47 is accepted for `S <= 6`, but at `S = 8` and `S = 10` only those
+# below 41.
 @inline function _clifford_barrett(::Type{T}, S::Int, d::Int) where {T<:Signed}
     W = 8 * sizeof(T)
     (S > 0 && 2 <= d <= typemax(T) && clifford_fast_dots(4S, d, T)) ||
@@ -138,6 +143,13 @@ end
 # wider lane. An `Int64` lane reduces in `Int64` itself, under
 # `_clifford_barrett(Int64, S, d)`. The lanes are named explicitly, never
 # `Int`, so a 32-bit host chooses the same lane as a 64-bit one.
+#
+# Every boundary depends on `S` through `X`. The largest `d` the `Int16` lane
+# holds is 89, 61, 47, 43 and 37 at `S = 2, 4, 6, 8, 10`; the `Int32` lane holds
+# `d` up to 23167, 16381, 13367, 11579 and 10357. The `Int16` lane has its own
+# signed constant only at d = 3 for `S = 8, 10`. Above the `Int32` lane a `d`
+# without an `Int64` signed constant has no lane (from 11587 at `S = 8`, 10391
+# at `S = 10`) and takes the per-generator path.
 #
 # Measured per gate on one to three qudits (Stab, n = 2048, M3 Pro): where a
 # lane has both constants (d = 3, 5, 61, 71, 101), the signed one takes
