@@ -541,7 +541,7 @@ function rank_fp_cols!(
     pivot_rows::Int=size(A, 1),
 ) where {T<:_StorageEltype}
     _eltype_admissible(T, d) || throw(ArgumentError(
-        "rank_fp_cols!: element type $T cannot hold every residue mod d = $d."))
+        "rank_fp_cols!: element type $T needs d ≤ typemax($T); got d = $d."))
     nr, m = size(A)
     0 <= pivot_rows <= nr || throw(ArgumentError(
         "pivot_rows must lie in 0:$nr; got $pivot_rows."))

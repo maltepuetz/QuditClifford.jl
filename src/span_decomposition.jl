@@ -459,7 +459,7 @@ function _solve_generator_rows!(
     inversemod::InverseMod,
 ) where T<:_StorageEltype
     _eltype_admissible(T, d) || throw(ArgumentError(
-        "_solve_generator_rows!: element type $T cannot hold every residue mod d = $d."))
+        "_solve_generator_rows!: element type $T needs d ≤ typemax($T); got d = $d."))
     h = size(ws, 1) >> 1
     @inbounds for ℓ in 1:m
         lead[ℓ] = 0

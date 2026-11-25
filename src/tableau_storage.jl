@@ -52,20 +52,17 @@ Bits
 tableau_eltype(tab::AbstractTableau) = _storage_eltype(tab)
 
 # Whether `E` can store a tableau at dimension `d`: `Int` always, `UInt8` and
-# `UInt16` when they hold every residue mod `d` and mod `phase_modulus(d)`,
-# `Bits` at d = 2, any other type never, `Union{UInt8, UInt16}` and `Union{}`
-# included.
+# `UInt16` when `d <= typemax(E)`, `Bits` at d = 2, any other type never,
+# `Union{UInt8, UInt16}` and `Union{}` included.
 #
-# The narrow modular primitives need `d <= typemax(E)`, one more than the
-# residues need; the two differ only at d = 256 and 65536, which are not
-# prime, so a tableau never reaches the primitives with them. The phase
-# clause is implied by the first one for d >= 3 (`phase_modulus(d) == d`) and
-# for d = 2 (4 - 1 <= typemax(E)).
+# `d <= typemax(E)` is what the narrow modular primitives need; it also holds
+# every residue mod `d` and mod `phase_modulus(d)` (4 at d = 2, `d` otherwise).
+# The largest primes it admits are 251 for `UInt8` and 65521 for `UInt16`.
 function _eltype_admissible(E::Type, d::Int)
     E === Int && return true
     E === Bits && return d == 2
     (E === UInt8 || E === UInt16) || return false
-    return d - 1 <= typemax(E) && phase_modulus(d) - 1 <= typemax(E)
+    return d <= typemax(E)
 end
 
 # The element type constructors use at d = 2 when no `eltype` keyword is given.
@@ -85,7 +82,8 @@ end
 function _check_eltype(E::Type, d::Int)
     _eltype_admissible(E, d) && return nothing
     ok = join(map(nameof, filter(T -> _eltype_admissible(T, d), (UInt8, UInt16, Int, Bits))), ", ")
-    throw(ArgumentError("eltype = $E cannot hold entries mod d = $d; use one of $ok."))
+    need = (E === UInt8 || E === UInt16) ? " ($E needs d ≤ $(Int(typemax(E))))" : ""
+    throw(ArgumentError("eltype = $E cannot store a tableau at d = $d$need; use one of $ok."))
 end
 
 # The stabilizer and destabilizer blocks and the phase vector of a tableau,
