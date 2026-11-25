@@ -414,30 +414,54 @@ end
                                 ::Val{K}) where {K}
     S = 2K
     d = U.d
-    targets = ntuple(i -> U.targets[i], Val(K))
-    F = ntuple(j -> ntuple(i -> U.F[i, j], Val(S)), Val(S))
-    a = ntuple(i -> U.a[i], Val(S))
+    # The closures carry `@inline` in their bodies: from K = 4 on, Julia
+    # otherwise compiles the column closure as a call returning a boxed tuple,
+    # one heap allocation per column of `F`.
+    targets = ntuple(i -> (@inline; U.targets[i]), Val(K))
+    F = ntuple(Val(S)) do j
+        @inline
+        ntuple(i -> (@inline; U.F[i, j]), Val(S))
+    end
+    a = ntuple(i -> (@inline; U.a[i]), Val(S))
     storephase && d == 2 && _check_qubit_bitmask_bound(K)
-    D = storephase && d != 2 ? ntuple(i -> U.image_xdotz[i], Val(S)) :
+    D = storephase && d != 2 ? ntuple(i -> (@inline; U.image_xdotz[i]), Val(S)) :
         ntuple(_ -> 0, Val(S))
     return PreparedClifford{K,S}(targets, F, a, D, d, phase_modulus(d), U.inv2,
                                  U.fast, storephase)
 end
 
-# Supports of up to three qudits take the tuple backing; every larger support
-# uses the dense backing over `U`'s own scratch. Building the tuples costs
-# about 0.1 µs at k = 3 but about 0.6 µs at k = 4, where the faster columns
-# repay it only after several dozen generators, while the dense backing has no
-# such fixed cost. Each branch passes a literal `Val`, so every call below is
-# statically dispatched. Validation order and messages match the generic
-# `apply!`: target bounds first, then the dimension check `_prepare` makes.
-# With no active generator the column loops would not run, so the tuple path
-# skips the preparation and keeps only the effect `_apply_prepared!` has
-# there, clearing `iscanonical`.
+# The fewest active generators at which a stored operator on four or five
+# qudits takes the tuple backing. Building the tuples costs about 0.1 µs at
+# k = 4 and 0.15 µs at k = 5 whatever `m` is; the dense backing has no such
+# fixed cost but takes 40-150 ns per generator. Per gate at n = 256 (M3 Pro,
+# Julia 1.13; d = 2, 3, 31, both tableau types, `UInt8` and `Bits`), the tuple
+# backing breaks even at m = 2-4 qudit-major and at m = 2-8 generator-major;
+# at m = 8 it is 3-7× faster qudit-major and 1.1-3.4× generator-major (the
+# least at odd `d`), and below that it loses up to 2× at m = 1.
+const _TUPLE_K45_MIN_M = 8
+
+# Whether `apply!(tab, U)` runs a stored operator on `k` qudits through the
+# tuple backing: supports of up to three qudits always, four and five on at
+# least `_TUPLE_K45_MIN_M` active generators. Every other case, and every
+# larger support, takes the dense backing over `U`'s own scratch.
+@inline _stored_tuple_backing(tab::AbstractTableau, k::Int) =
+    1 <= k <= 3 || (4 <= k <= 5 && tab.m >= _TUPLE_K45_MIN_M)
+
+# Each branch passes a literal `Val`, so every call below is statically
+# dispatched. Validation order and messages match the generic `apply!`: target
+# bounds first, then the dimension check `_prepare` makes. With no active
+# generator the column loops would not run, so the tuple path skips the
+# preparation and keeps only the effect `_apply_prepared!` has there, clearing
+# `iscanonical`. All five tuple instances compile with this method: for a
+# tableau type the precompile workload does not build (`eltype = Int`, say),
+# the first stored `apply!` of any arity compiles in about 4.8 s (7.3 s for a
+# `DestabilizerTableau`) on Julia 1.13, M3 Pro; the k = 1-3 instances alone
+# take 2.0 s (3.1 s). A runtime-dispatch barrier before the k = 4, 5 instances would
+# confine that to their first use, but costs a 96-byte allocation per call.
 function apply!(tab::AbstractTableau, U::CliffordOperator)
     _validate_clifford_targets(U, tab.n)
     k = length(U.targets)
-    if 1 <= k <= 3
+    if _stored_tuple_backing(tab, k)
         U.d == tab.d || throw(ArgumentError(
             "CliffordOperator was built for d=$(U.d), but the tableau has d=$(tab.d)."))
         if tab.m == 0
@@ -447,7 +471,9 @@ function apply!(tab::AbstractTableau, U::CliffordOperator)
         sp = tab.storephase
         k == 1 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(1)))
         k == 2 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(2)))
-        return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(3)))
+        k == 3 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(3)))
+        k == 4 && return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(4)))
+        return _apply_prepared!(tab, _prepare_tuple(U, sp, Val(5)))
     end
     return _apply_prepared!(tab, _prepare(U, tab.d, tab.inversemod, tab.storephase))
 end

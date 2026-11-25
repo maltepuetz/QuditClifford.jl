@@ -433,8 +433,9 @@ function bt_rand_op(rng, ref)
         end
         return (t, r) -> apply!(t, g)
     elseif c <= 6
-        # Tuple-backed up to three qudits, dense for four.
-        C = random_clifford(rng, 2, randperm(rng, n)[1:min(n, rand(rng, 1:4))])
+        # Tuple-backed up to three qudits, and on four or five once m >= 8;
+        # dense otherwise and on six.
+        C = random_clifford(rng, 2, randperm(rng, n)[1:min(n, rand(rng, 1:6))])
         return (t, r) -> apply!(t, C)
     elseif c <= 10
         op = (m > 0 && rand(rng, 1:4) == 1) ? st_generator_pauli(ref, rand(rng, 1:m)) :
@@ -574,7 +575,8 @@ function bt_targets(rng, n, k)
 end
 
 # The next gate of the kernel comparison: a named gate, a random Clifford on
-# 1-3 qudits or a dense one on 4, or a named gate prepared off the fast tier.
+# 1-3 qudits, on 4-5 (tuple-backed once m >= 8) or on 6 (dense), or a named
+# gate prepared off the fast tier.
 # Returns a function of the tableau.
 function bt_rand_gate(rng, n)
     c = rand(rng, 1:10)
@@ -590,7 +592,7 @@ function bt_rand_gate(rng, n)
         C = random_clifford(rng, 2, bt_targets(rng, n, rand(rng, 1:min(n, 3))))
         return t -> apply!(t, C)
     elseif c == 9
-        C = random_clifford(rng, 2, bt_targets(rng, n, min(n, 4)))
+        C = random_clifford(rng, 2, bt_targets(rng, n, min(n, rand(rng, 4:6))))
         return t -> apply!(t, C)
     end
     q1, q2 = bt_targets(rng, n, 2)
@@ -627,9 +629,11 @@ end
         @test bad == 0
         L = bt_QC._layout_marker(t)
         U = random_clifford(Xoshiro(seed), 2, [1, 2, 3])
+        U5 = random_clifford(Xoshiro(seed), 2, [1, 2, 3, 4, 5])
         for prep in (bt_QC._prepare(Fourier(1), 2, t.inversemod, storephase),
                      bt_QC._prepare(SUM(1, 2), 2, t.inversemod, storephase),
-                     bt_QC._prepare_tuple(U, storephase, Val(3)))
+                     bt_QC._prepare_tuple(U, storephase, Val(3)),
+                     bt_QC._prepare_tuple(U5, storephase, Val(5)))
             m = which(bt_QC._apply_columns!, (typeof(t), typeof(prep), typeof(L)))
             @test basename(String(m.file)) == "apply_bits.jl"
         end
@@ -647,6 +651,8 @@ end
     for TT in bt_TYPES, layout in (:generator, :qudit), storephase in (true, false)
         t = TT(2, 130; state = :ghz, storephase, eltype = Bits, layout)
         for g in (Fourier(64), SUM(1, 130), random_clifford(Xoshiro(3), 2, [1, 65, 130]),
+                  random_clifford(Xoshiro(4), 2, [1, 64, 65, 130]),
+                  random_clifford(Xoshiro(5), 2, [1, 2, 64, 65, 130]),
                   CliffordOperator(CPhase(64, 65), 2), PauliGate(64, 1, 0), Phase(64))
             bt_apply_allocations(t, g)
             @test bt_apply_allocations(t, g) == 0

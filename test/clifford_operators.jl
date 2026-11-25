@@ -1162,9 +1162,58 @@ end
     end
 end
 
+# Four- and five-qudit operators take the tuple backing from
+# `_TUPLE_K45_MIN_M` active generators on. Just below and at the cutoff, in
+# both layouts, the result is that of the dense backing.
+@testset "Stored k = 4, 5 apply! on both sides of the m cutoff" begin
+    cut = QC._TUPLE_K45_MIN_M
+    n = cut + 6
+    seed = 20261125
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31),
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
+        layout in (:generator, :qudit), sp in (false, true), k in (4, 5), m in (cut - 1, cut)
+        seed += 1
+        rng = Random.Xoshiro(seed)
+        tab = TT(d, n; storephase = sp, eltype = E, layout)
+        random_state!(rng, tab; m)
+        @test tab.m == m
+        U = random_clifford(rng, d, randperm(rng, n)[1:k])
+        @test QC._stored_tuple_backing(tab, k) == (m >= cut)
+        ref = copy(tab)
+        QC._apply_prepared!(ref, QC._prepare(U, d, ref.inversemod, sp))
+        @test apply!(tab, U) === tab
+        @test stabilizer_matrix(tab) == stabilizer_matrix(ref)
+        @test !tab.iscanonical
+        if TT === DestabilizerTableau
+            @test destabilizer_matrix(tab) == destabilizer_matrix(ref)
+            @test tab.xdotz_cache == ref.xdotz_cache
+        end
+        @test_throws ArgumentError apply!(tab, random_clifford(rng, d == 2 ? 3 : 2, collect(1:k)))
+    end
+    for k in (1, 2, 3, 6)
+        @test QC._stored_tuple_backing(StabilizerTableau(3, 8), k) == (k <= 3)
+    end
+end
+
+@testset "Stored k = 4, 5 apply! on the tuple backing allocates nothing" begin
+    # Lanes at S = 8, 10: Int16 for d <= 31, Int32 for d = 61, Int32 and Int64
+    # for d = 10369, none for d = 11587 (the per-generator path).
+    for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 31, 61, 10369, 11587),
+        E in filter(E -> QC._eltype_admissible(E, d), (UInt8, UInt16, Int, Bits)),
+        layout in (:generator, :qudit), sp in (false, true)
+        tab = TT(d, 40; state = :ghz, storephase = sp, eltype = E, layout)
+        for k in (4, 5)
+            U = random_clifford(Xoshiro(d + k), d, [1, 9, 17, 33, 40][1:k])
+            @test QC._stored_tuple_backing(tab, k)
+            stored_apply_allocations(tab, U)
+            @test stored_apply_allocations(tab, U) == 0
+        end
+    end
+end
+
 @testset "Tuple preparation of a stored operator carries its data" begin
-    for d in (2, 3), sp in (false, true), k in 1:3
-        U = random_clifford(Random.Xoshiro(7 + k), d, collect(10:-3:(13 - 3k)))
+    for d in (2, 3), sp in (false, true), k in 1:5
+        U = random_clifford(Random.Xoshiro(7 + k), d, collect(16:-3:(19 - 3k)))
         p = QC._prepare_tuple(U, sp, Val(k))
         @test p isa QC.PreparedClifford{k,2k}
         @test collect(p.targets) == U.targets
@@ -1180,7 +1229,7 @@ end
 # unreduced sums with one `mod`, and overflow-safe per-term arithmetic. At
 # d = 2 the first is the closed-form phase and the others the ordered product.
 @testset "Tuple kernel tiers agree with each other and with the oracle" begin
-    for d in (2, 3, 5, 7, 31), k in 1:3
+    for d in (2, 3, 5, 7, 31), k in 1:5
         rng = Random.Xoshiro(20261118 + 10d + k)
         S = 2k
         U = random_clifford(rng, d, collect(1:k))
@@ -1194,7 +1243,7 @@ end
                                         barrett.D, d, barrett.p, barrett.inv2,
                                         false, true)
         @test safe.bm == 0
-        vs = d^S <= 4096 ? vec([Tuple(t) for t in Iterators.product(ntuple(_ -> 0:(d - 1), S)...)]) :
+        vs = big(d)^S <= 4096 ? vec([Tuple(t) for t in Iterators.product(ntuple(_ -> 0:(d - 1), S)...)]) :
              vcat([ntuple(_ -> d - 1, S)], [ntuple(_ -> rand(rng, 0:(d - 1)), S) for _ in 1:2000])
         for v in vs
             out = QC._matvec(barrett, v)
@@ -1229,15 +1278,17 @@ end
 @testset "clifford_barrett constants are exact over their whole range" begin
     isprime_small(p) = p >= 2 && all(q -> p % q != 0, 2:isqrt(p))
     rng = Random.Xoshiro(1)
-    for S in (2, 4, 6), d in filter(isprime_small, 2:1024)
+    for S in (2, 4, 6, 8, 10), d in filter(isprime_small, 2:1024)
         @test QC.clifford_barrett(S, d) == QC._clifford_barrett(Int, S, d)
     end
     # Both word sizes, whatever the host: the derivation is checked in the
     # type itself, with the overflow bound and exactness against BigInt. Every
-    # prime up to 1024 takes the tier with 64-bit words and every prime below
-    # 47 with 32-bit words, so a guard that started rejecting everything fails.
-    for (T, accepted) in ((Int64, 1024), (Int32, 46)), S in (2, 4, 6),
-        d in filter(isprime_small, 2:1024)
+    # prime up to 1024 takes the tier with 64-bit words; with 32-bit words
+    # every prime below 47 does for S <= 6, and every prime below 41 for
+    # S = 8, 10 (41 and 47 are rejected there). So a guard that started
+    # rejecting everything fails.
+    for T in (Int64, Int32), S in (2, 4, 6, 8, 10), d in filter(isprime_small, 2:1024)
+        accepted = T === Int64 ? 1024 : S <= 6 ? 46 : 40
         M, s = QC._clifford_barrett(T, S, d)
         d <= accepted && @test M != 0
         M == 0 && continue
