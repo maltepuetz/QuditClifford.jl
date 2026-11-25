@@ -152,18 +152,18 @@ function _check_symplectic(F::Matrix{Int}, k::Int, d::Int, fast::Bool)
 end
 
 # x(F[:, c]) · z(F[:, c]) mod d, for column c of a 2k × 2k matrix.
-@inline function _col_xdotz_matrix(F::Matrix{Int}, c::Int, k::Int, d::Int,
+@inline function _col_xdotz_matrix(F::Matrix{<:_StorageEltype}, c::Int, k::Int, d::Int,
                                    fast::Bool)
     if fast
         s = 0
         @inbounds for q in 1:k
-            s += F[q, c] * F[k + q, c]
+            s += Int(F[q, c]) * Int(F[k + q, c])
         end
         return mod(s, d)
     end
     s = 0
     @inbounds for q in 1:k
-        s = add_mod(s, mul_mod(F[q, c], F[k + q, c], d), d)
+        s = add_mod(s, mul_mod(Int(F[q, c]), Int(F[k + q, c]), d), d)
     end
     return s
 end

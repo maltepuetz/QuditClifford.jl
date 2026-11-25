@@ -77,12 +77,12 @@ julia> tab.m, is_pure(tab)
 (2, false)
 ```
 
-Each call with `m > 0` allocates a `2n × 2n` scratch matrix and costs
-``O(n^2 m)``. Every draw happens before the tableau changes, so an exception from
-the RNG leaves the tableau as it was. Without stored phases
-(`storephase = false`) the state is uniform over isotropic subspaces, and no
-phases are drawn. A [`DestabilizerTableau`](@ref) receives its dual basis
-directly.
+Each call with `m > 0` allocates a `2n × 2n` scratch matrix, one byte per
+entry for `d ≤ 251` (64 MiB at `n = 4096`), and costs ``O(n^2 m)``. Every
+draw happens before the tableau changes, so an exception from the RNG leaves
+the tableau as it was. Without stored phases (`storephase = false`) the state
+is uniform over isotropic subspaces, and no phases are drawn. A
+[`DestabilizerTableau`](@ref) receives its dual basis directly.
 
 ## Reproducible trajectories
 

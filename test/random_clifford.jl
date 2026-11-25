@@ -161,7 +161,7 @@ end
 const RC_D1, RC_D2 = Sys.WORD_SIZE == 64 ? (2147483647, 9223372036854775783) :
                                            (32749, 2147483647)
 
-function rc_identity!(F::Matrix{Int})
+function rc_identity!(F::Matrix)
     fill!(F, 0)
     for i in axes(F, 1)
         F[i, i] = 1
@@ -172,10 +172,10 @@ end
 # Run the pair sampler on the identity. The scratch starts as garbage, so a
 # read before a write shows up as a wrong or non-canonical frame.
 function rc_sample_pairs(src::AbstractRNG, d::Int, k::Int, steps::Int = k;
-                         fast::Bool = QC.clifford_fast_dots(2k, d))
+                         fast::Bool = QC.clifford_fast_dots(2k, d), E::Type = Int)
     S = 2k
-    F = rc_identity!(Matrix{Int}(undef, S, S))
-    QC._sample_pairs!(src, F, k, steps, d, fast, fill(-1, S), fill(-1, S),
+    F = rc_identity!(Matrix{E}(undef, S, S))
+    QC._sample_pairs!(src, F, k, steps, d, fast, fill(typemax(E), S), fill(typemax(E), S),
                       fill(-1, S), fill(-1, S))
     return F
 end
@@ -258,6 +258,17 @@ end
         F = rc_sample_pairs(Xoshiro(seed), d, k)
         @test F == rc_sample_pairs(Xoshiro(seed), d, k; fast = false)
         @test rc_is_symplectic(F, k, d)
+    end
+end
+
+@testset "Narrow sampler scratch draws the same frames as Int" begin
+    for d in (2, 3, 5, 251, 257, 65521), k in (1, 3, 6), seed in 1:4,
+        fast in unique((QC.clifford_fast_dots(2k, d), false))
+        F = rc_sample_pairs(Xoshiro(seed), d, k; fast)
+        for E in (UInt8, UInt16)
+            QC._eltype_admissible(E, d) || continue
+            @test rc_sample_pairs(Xoshiro(seed), d, k; fast, E) == F
+        end
     end
 end
 
@@ -651,6 +662,22 @@ const RC_STATE_COUNTS = [((2, 1, 1), 6, 3), ((3, 1, 1), 12, 4), ((2, 2, 1), 30, 
         @test failure === nothing
         @test length(spaces) == nspaces
         @test allequal(values(spaces))
+    end
+end
+
+@testset "random_state! draws the same state as with Int scratch ($label)" for (label, TT) in RC_TABLEAU_TYPES
+    for d in (2, 3, 251, 257, 65521, 65537), n in (1, 5), m in unique((1, n)),
+        storephase in (false, true), seed in 1:2
+        a, b = TT(d, n; storephase), TT(d, n; storephase)
+        ra, rb = Xoshiro(seed), Xoshiro(seed)
+        random_state!(ra, a; m)
+        QC._random_state!(rb, b, m, 2n, Int)
+        @test stabilizer_matrix(a) == stabilizer_matrix(b) && a.m == b.m
+        @test ra == rb
+        if TT === DestabilizerTableau
+            @test destabilizer_matrix(a) == destabilizer_matrix(b)
+            @test a.xdotz_cache == b.xdotz_cache
+        end
     end
 end
 

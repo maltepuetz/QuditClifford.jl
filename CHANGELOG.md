@@ -8,6 +8,15 @@ dependency bump — carries the `skip-changelog` label instead.
 
 ## Unreleased
 
+### Changed
+
+- `random_state!` keeps its `2n × 2n` scratch matrix in one byte per entry
+  for `d ≤ 251` and two for `d ≤ 65521` instead of `sizeof(Int)`, whatever
+  the tableau's element type: 64 MiB instead of 512 MiB at `n = 4096`. It
+  is also faster (M3 Pro, Julia 1.13): 1.4–1.9× at `d = 2` and `3`
+  (`n = 1024`, `d = 3`: 2.65 to 1.60 s) and about 4× at `d = 251` and
+  `65521`. It draws the same states from a given RNG as before.
+
 ## 0.5.1 - 2026-11-25
 
 ### Changed
