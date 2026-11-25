@@ -21,34 +21,40 @@
 @inline _basis_column(i::Int, j::Int, r::Int, k::Int) =
     j <= r ? i + j - 1 : k + i + j - r - 1
 
+# The sampler's matrix `F` and its vectors `u`, `w` share one element type `E`:
+# `Int` inside a stored operator, and in `random_state!` the narrowest type
+# that holds every residue mod d. Entries are reduced mod d, so every tier
+# below computes the same residues for every `E`.
+
 # <v, F[:, c]> mod d for a length-2k vector v, in the tier `fast` selects.
-@inline function _pair_vec_col(v::Vector{Int}, F::Matrix{Int}, c::Int, k::Int,
-                               d::Int, fast::Bool)
+@inline function _pair_vec_col(v::Vector{E}, F::Matrix{E}, c::Int, k::Int,
+                               d::Int, fast::Bool) where {E<:_StorageEltype}
     if fast
         s = 0
         @inbounds for q in 1:k
-            s += v[q] * F[k + q, c] - v[k + q] * F[q, c]
+            s += Int(v[q]) * Int(F[k + q, c]) - Int(v[k + q]) * Int(F[q, c])
         end
         return mod(s, d)
     end
     s = 0
     @inbounds for q in 1:k
-        s = add_mod(s, mul_mod(v[q], F[k + q, c], d), d)
-        s = sub_mod(s, mul_mod(v[k + q], F[q, c], d), d)
+        s = add_mod(s, mul_mod(Int(v[q]), Int(F[k + q, c]), d), d)
+        s = sub_mod(s, mul_mod(Int(v[k + q]), Int(F[q, c]), d), d)
     end
     return s
 end
 
 # v += c F[:, col] (mod d).
-@inline function _addmul_col!(v::Vector{Int}, F::Matrix{Int}, col::Int, c::Int,
-                              d::Int, fast::Bool)
+@inline function _addmul_col!(v::Vector{E}, F::Matrix{E}, col::Int, c::Int,
+                              d::Int, fast::Bool) where {E<:_StorageEltype}
     if fast
         # `v` is sampler scratch and the source a column of F, so the two
-        # cannot alias; the fast-tier guard bounds every product formed.
+        # cannot alias. The narrow methods are exact for every d <= typemax(E);
+        # for `Int` the fast-tier guard bounds every product formed.
         addmul_mod!(v, view(F, :, col), c, d)
     else
         @inbounds for q in eachindex(v)
-            v[q] = add_mod(v[q], mul_mod(c, F[q, col], d), d)
+            v[q] = add_mod(Int(v[q]), mul_mod(c, Int(F[q, col]), d), d) % E
         end
     end
     return v
@@ -57,8 +63,9 @@ end
 # F[:, col] ← x + <w, x> u − <u, x> w for x = F[:, col]. This equals
 # x − <x, w> u + <x, u> w, the projection onto the symplectic complement of
 # span(u, w), given <u, w> = 1. Both pairings read x before either update.
-@inline function _project_col!(F::Matrix{Int}, col::Int, u::Vector{Int},
-                               w::Vector{Int}, k::Int, d::Int, fast::Bool)
+@inline function _project_col!(F::Matrix{E}, col::Int, u::Vector{E},
+                               w::Vector{E}, k::Int, d::Int,
+                               fast::Bool) where {E<:_StorageEltype}
     pw = _pair_vec_col(w, F, col, k, d, fast)
     pu = _pair_vec_col(u, F, col, k, d, fast)
     if fast
@@ -68,14 +75,14 @@ end
         submul_mod!(x, w, pu, d)
     else
         @inbounds for q in 1:(2k)
-            F[q, col] = sub_mod(add_mod(F[q, col], mul_mod(pw, u[q], d), d),
-                                mul_mod(pu, w[q], d), d)
+            F[q, col] = sub_mod(add_mod(Int(F[q, col]), mul_mod(pw, Int(u[q]), d), d),
+                                mul_mod(pu, Int(w[q]), d), d) % E
         end
     end
     return F
 end
 
-@inline function _swap_columns!(F::Matrix{Int}, a::Int, b::Int)
+@inline function _swap_columns!(F::Matrix, a::Int, b::Int)
     @inbounds for q in axes(F, 1)
         F[q, a], F[q, b] = F[q, b], F[q, a]
     end
@@ -103,16 +110,16 @@ end
 # are a basis of the symplectic complement of those pairs. `u`, `w`, `α`, `β`
 # are distinct length-2k scratch vectors, written before they are read.
 # `fast` is `clifford_fast_dots(2k, d)`, or `false` to force the safe tier.
-function _sample_pairs!(rng::Random.AbstractRNG, F::Matrix{Int}, k::Int,
-                        steps::Int, d::Int, fast::Bool, u::Vector{Int},
-                        w::Vector{Int}, α::Vector{Int}, β::Vector{Int})
+function _sample_pairs!(rng::Random.AbstractRNG, F::Matrix{E}, k::Int,
+                        steps::Int, d::Int, fast::Bool, u::Vector{E},
+                        w::Vector{E}, α::Vector{Int}, β::Vector{Int}) where {E<:_StorageEltype}
     S = 2k
     for i in 1:steps
         r = k - i + 1
         R = 2r
         # u = Σ α_j B_j over the current basis B, uniform on its nonzero span.
         _draw_nonzero!(rng, α, R, d)
-        fill!(u, 0)
+        fill!(u, zero(E))
         for j in 1:R
             _addmul_col!(u, F, _basis_column(i, j, r, k), α[j], d, fast)
         end
@@ -132,7 +139,7 @@ function _sample_pairs!(rng::Random.AbstractRNG, F::Matrix{Int}, k::Int,
             acc = add_mod(acc, mul_mod(cj, β[j], d), d)
         end
         β[l] = mul_mod(Base.invmod(cl, d), sub_mod(1, acc, d), d)
-        fill!(w, 0)
+        fill!(w, zero(E))
         for j in 1:R
             _addmul_col!(w, F, _basis_column(i, j, r, k), β[j], d, fast)
         end
@@ -167,10 +174,10 @@ function _sample_pairs!(rng::Random.AbstractRNG, F::Matrix{Int}, k::Int,
     return F
 end
 
-@inline function _set_identity!(F::Matrix{Int})
-    fill!(F, 0)
+@inline function _set_identity!(F::Matrix{E}) where {E}
+    fill!(F, zero(E))
     @inbounds for i in axes(F, 1)
-        F[i, i] = 1
+        F[i, i] = one(E)
     end
     return F
 end
@@ -352,9 +359,11 @@ its dual basis and cache, with no separate reconstruction.
 - Keeps `d`, `n`, `storephase`, the inversion strategy and every array of
   `tab`, and clears `tab.iscanonical`.
 - For `m > 0`, each call allocates a `2n × 2n` scratch matrix and four
-  length-`2n` vectors, and costs `O(n²m)`. Every draw happens before `tab` is
-  modified, so an exception from the RNG leaves it unchanged, although the RNG
-  has advanced. An interrupt that arrives during the final copy is outside
+  length-`2n` vectors, and costs `O(n²m)`. The matrix has one byte per entry
+  for `d ≤ 251`, two for `d ≤ 65521` and `sizeof(Int)` above, whatever the
+  tableau's element type (64 MiB at `n = 4096`, `d ≤ 251`). Every draw
+  happens before `tab` is modified, so an exception from the RNG leaves it
+  unchanged, although the RNG has advanced. An interrupt that arrives during the final copy is outside
   this guarantee.
 - A fixed seed reproduces the state for the same RNG type, Julia version and
   package version.
@@ -386,10 +395,21 @@ function random_state!(rng::Random.AbstractRNG, tab::AbstractTableau;
     d = tab.d
     # The scratch is larger than the tableau, so check its own element and byte
     # counts: Julia 1.10's array constructor accepts sizes whose element count
-    # overflows.
+    # overflows. `_clifford_size` checks them for `Int` entries, which bounds
+    # the narrower ones too.
     S = _clifford_size(n)
-    G = _set_identity!(Matrix{Int}(undef, S, S))
-    u, w = Vector{Int}(undef, S), Vector{Int}(undef, S)
+    _eltype_admissible(UInt8, d) && return _random_state!(rng, tab, m, S, UInt8)
+    _eltype_admissible(UInt16, d) && return _random_state!(rng, tab, m, S, UInt16)
+    return _random_state!(rng, tab, m, S, Int)
+end
+
+# `random_state!` after its checks, with sampler scratch of element type `E`,
+# which must hold every residue mod `tab.d`.
+function _random_state!(rng::Random.AbstractRNG, tab::AbstractTableau, m::Int, S::Int,
+                        ::Type{E}) where {E<:_StorageEltype}
+    n, d = tab.n, tab.d
+    G = _set_identity!(Matrix{E}(undef, S, S))
+    u, w = Vector{E}(undef, S), Vector{E}(undef, S)
     α, β = Vector{Int}(undef, S), Vector{Int}(undef, S)
     fast = clifford_fast_dots(S, d)
     _sample_pairs!(rng, G, n, m, d, fast, u, w, α, β)
@@ -409,7 +429,7 @@ end
 # Write the sampled state into `tab`: stabilizer j is the Z image G[:, n + j]
 # and its dual the X image G[:, j], so <G[:, j], G[:, n + l]> = δ_jl without
 # any repair pass. `α[j]` is stabilizer j's phase and `β[j]` its x·z.
-function _commit_random_state!(tab::AbstractTableau, L::TableauLayout, G::Matrix{Int}, m::Int,
+function _commit_random_state!(tab::AbstractTableau, L::TableauLayout, G::Matrix{<:_StorageEltype}, m::Int,
                                α::Vector{Int}, β::Vector{Int})
     n = tab.n
     stab = _stab(tab, L)
@@ -418,8 +438,8 @@ function _commit_random_state!(tab::AbstractTableau, L::TableauLayout, G::Matrix
     fill!(phase, 0)
     @inbounds for j in 1:m
         for q in 1:n
-            _xset!(stab, G[q, n + j], q, j)
-            _zset!(stab, G[n + q, n + j], q, j)
+            _xset!(stab, Int(G[q, n + j]), q, j)
+            _zset!(stab, Int(G[n + q, n + j]), q, j)
         end
         tab.storephase && (phase[j] = α[j])
     end
@@ -433,11 +453,11 @@ random_state!(tab::AbstractTableau; m::Int = tab.n) =
     random_state!(Random.default_rng(), tab; m = m)
 
 # Dual-basis bookkeeping for `random_state!`: nothing for a plain tableau.
-_write_random_duals!(::AbstractTableau, ::TableauLayout, G::Matrix{Int}, m::Int, D::Vector{Int}) = nothing
+_write_random_duals!(::AbstractTableau, ::TableauLayout, G::Matrix{<:_StorageEltype}, m::Int, D::Vector{Int}) = nothing
 
 # The first m X images become the destabilizers, and D[1:m] the stabilizers'
 # x·z values; the unused columns and cache entries are zeroed.
-function _write_random_duals!(tab::DestabilizerTableau, L::TableauLayout, G::Matrix{Int}, m::Int,
+function _write_random_duals!(tab::DestabilizerTableau, L::TableauLayout, G::Matrix{<:_StorageEltype}, m::Int,
                               D::Vector{Int})
     destab = _destab(tab, L)
     cache = tab.xdotz_cache
@@ -445,8 +465,8 @@ function _write_random_duals!(tab::DestabilizerTableau, L::TableauLayout, G::Mat
     fill!(cache, 0)
     @inbounds for j in 1:m
         for q in 1:_nq(destab)
-            _xset!(destab, G[q, j], q, j)
-            _zset!(destab, G[_nq(destab) + q, j], q, j)
+            _xset!(destab, Int(G[q, j]), q, j)
+            _zset!(destab, Int(G[_nq(destab) + q, j]), q, j)
         end
         cache[j] = D[j]
     end
