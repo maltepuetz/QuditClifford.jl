@@ -139,6 +139,13 @@ jobs:
             arch: x64
             layout: qudit
             eltype: bits
+          # The kernel files on Julia 1.12, whose inference differs from 1.10
+          # and from the current release: the zero-allocation tests of
+          # test/bits.jl cover stored operators and the packed kernels.
+          - version: '1.12'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
