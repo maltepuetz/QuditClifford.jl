@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 @testset "Phase-free expectations reduce exponents before commutation" begin
     for TT in (StabilizerTableau, DestabilizerTableau), d in (2, 3, 5)

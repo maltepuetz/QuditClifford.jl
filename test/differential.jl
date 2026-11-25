@@ -2,6 +2,7 @@ using QuditClifford
 using Test
 using LinearAlgebra
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Differential tests against an independent dense reference. The density
 # matrix is built straight from the generator columns,

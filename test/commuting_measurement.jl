@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Differential tests of `measure!`'s commuting branches -- an operator that
 # commutes with every generator either lies in their span (a fixed outcome) or

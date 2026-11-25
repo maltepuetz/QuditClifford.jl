@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Disjoint random subsystems A, B and C, with A and B nonempty and C possibly
 # empty, leaving the remaining sites traced out.

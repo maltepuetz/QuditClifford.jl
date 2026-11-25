@@ -1,5 +1,6 @@
 using QuditClifford
 using Test
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 @testset "Few-qudit Pauli rendering" begin
     @test sprint(show, SinglePauli(2, 1, 0)) == "X₂"

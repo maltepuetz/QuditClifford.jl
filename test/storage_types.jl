@@ -1,4 +1,5 @@
 using QuditClifford, Test, Random, LinearAlgebra
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 isdefined(Main, :st_padding_zero) || include(joinpath(@__DIR__, "storage_helpers.jl"))
 

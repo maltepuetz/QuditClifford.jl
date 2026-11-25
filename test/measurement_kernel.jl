@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # Differential tests of `measure!` against a plain dense reference for its
 # noncommuting branch: every generator update over all 2n rows, x·z of the

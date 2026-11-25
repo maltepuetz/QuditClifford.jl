@@ -1,6 +1,7 @@
 using QuditClifford
 using Test
 using Random
+include(joinpath(@__DIR__, "env_switch.jl"))
 
 # The rank-based quantities eliminate on bit-packed words for d = 2 and, for
 # d >= 3, in a workspace of the tableau's storage element type.
