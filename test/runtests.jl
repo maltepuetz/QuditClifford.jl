@@ -78,6 +78,9 @@ const SHARD = get(ENV, "QC_TEST_SHARD", "all")
 haskey(SHARDS, SHARD) ||
     error("QC_TEST_SHARD must be one of $(join(sort!(collect(keys(SHARDS))), ", ")), got \"$SHARD\"")
 println("Testing shard ", SHARD)
+# The CPU, to compare the times below between CI runners.
+println("Testing on ", Sys.cpu_info()[1].model, " (", Sys.CPU_NAME, "), ",
+        Sys.CPU_THREADS, " threads")
 
 # Every test file is in exactly one of the five lists; the other files in
 # test/ are this runner and the helpers the test files include.
