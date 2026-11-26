@@ -16,8 +16,9 @@ println("Testing with default qubit element type ",
 # The part of the suite to run, so CI can split it over parallel jobs:
 # "all" (the default), "kernel", "functional", or one half of either,
 # "kernel-1" and "kernel-2", "functional-1" and "functional-2". The kernel
-# halves take about equal time with coverage on: layout.jl alone is nearly
-# half of the kernel files.
+# halves are balanced by their time in the CI jobs with coverage, where
+# layout.jl and the two gate-kernel files run two to three times slower,
+# relative to the other kernel files, than on Apple silicon.
 #
 # The kernel files compare storage types, layouts and packed storage with each
 # other and build most of their tableaux explicitly; a default enters only on
@@ -27,10 +28,12 @@ println("Testing with default qubit element type ",
 const KERNEL_FILES_1 = [
     "modular.jl",
     "layout.jl",
+    "gate_kernel_stabilizer.jl",
 ]
 const KERNEL_FILES_2 = [
     "tableau_storage.jl",
     "storage_types.jl",
+    "gate_kernel_destabilizer.jl",
     "bits.jl",
 ]
 const FUNCTIONAL_FILES_1 = [
@@ -76,7 +79,8 @@ println("Testing shard ", SHARD)
 # test/ are this runner and the helpers the test files include.
 @test sort!(vcat(KERNEL_FILES_1, KERNEL_FILES_2, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2)) ==
       sort!(filter(f -> endswith(f, ".jl") &&
-                        !(f in ("runtests.jl", "env_switch.jl", "storage_helpers.jl")),
+                        !(f in ("runtests.jl", "env_switch.jl", "storage_helpers.jl",
+                                "layout_helpers.jl")),
                    readdir(@__DIR__)))
 
 @testset "QuditClifford.jl" begin
