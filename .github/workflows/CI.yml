@@ -32,7 +32,7 @@ jobs:
             os: macOS-latest
             arch: aarch64
           # Shipped defaults, split by test/runtests.jl's QC_TEST_SHARD. The
-          # coverage jobs run the kernel files in two halves, because
+          # coverage jobs run the kernel files in three parts, because
           # instrumentation makes them slow.
           - version: '1'
             os: ubuntu-latest
@@ -43,6 +43,11 @@ jobs:
             os: ubuntu-latest
             arch: x64
             shard: kernel-2
+            coverage: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel-3
             coverage: true
           - version: '1'
             os: ubuntu-latest
@@ -104,14 +109,23 @@ jobs:
             shard: functional
             eltype: bits
             coverage: true
+          # With both switched the functional files run in two halves: on a
+          # slow runner they take over 40 minutes in one job.
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            shard: functional
+            shard: functional-1
             layout: qudit
             eltype: bits
             coverage: true
-          # The kernel files with both defaults switched, in two halves.
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: functional-2
+            layout: qudit
+            eltype: bits
+            coverage: true
+          # The kernel files with both defaults switched, in three parts.
           - version: '1'
             os: ubuntu-latest
             arch: x64
@@ -123,6 +137,13 @@ jobs:
             os: ubuntu-latest
             arch: x64
             shard: kernel-2
+            layout: qudit
+            eltype: bits
+            coverage: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel-3
             layout: qudit
             eltype: bits
             coverage: true
