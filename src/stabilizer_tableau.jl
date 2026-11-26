@@ -160,12 +160,13 @@ function _load_generator_entries!(x::_BlockMatrix{E}, z::_BlockMatrix{E}, S::Mat
                                   n::Int, m::Int, d::Int) where {E}
     src, _ = _stacked_views(S, n, false)
     sx, sz = src.x, src.z
-    # The `m > 0` guard (so also n > 0) is load-bearing: `@turbo` does not
-    # terminate on an empty nest of this shape. `E(r)` is exact: `0 ≤ r < d`
-    # and `E` holds every residue mod `d`.
-    m > 0 && @turbo for j in 1:m, q in 1:n
-        x[q, j] = E(mod(sx[q, j], d))
-        z[q, j] = E(mod(sz[q, j], d))
+    # `@simd`, not `@turbo`: `Int` loads with stores of the narrower `E`.
+    # `% E` is exact: `0 ≤ r < d` and `E` holds every residue mod `d`.
+    @inbounds for j in 1:m
+        @simd for q in 1:n
+            x[q, j] = mod(sx[q, j], d) % E
+            z[q, j] = mod(sz[q, j], d) % E
+        end
     end
     return nothing
 end

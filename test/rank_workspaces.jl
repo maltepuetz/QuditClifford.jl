@@ -526,6 +526,14 @@ rw_qm_allocs(ws, bit, P, qb, m, d, sites, all_sites) = (
                 @test rg == rq
             end
         end
+        # No sites, or no generators: nothing is written, in either layout.
+        for (mm, sites) in ((m, 1:0), (0, 1:(n ÷ 2)), (0, 1:0)), offset in (0, 3)
+            wg, wq, rg, rq = rw_both(E, 2n + 5, n, gb, qb) do ws, b
+                RW._copy_sites!(ws, b, mm, sites, length(sites), offset)
+            end
+            @test wg == wq == rw_sentinel(E, 2n + 5, n)
+            @test rg == rq == offset + 2 * length(sites)
+        end
         for sites in (1:n, n:-1:1, perm)
             wg, wq, _, _ = rw_both(E, 2n, n, gb, qb) do ws, b
                 RW._copy_sites_interleaved!(ws, b, m, sites)
