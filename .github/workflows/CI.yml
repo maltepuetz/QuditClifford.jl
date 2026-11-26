@@ -31,11 +31,18 @@ jobs:
           - version: '1'
             os: macOS-latest
             arch: aarch64
-          # Shipped defaults, split by test/runtests.jl's QC_TEST_SHARD.
+          # Shipped defaults, split by test/runtests.jl's QC_TEST_SHARD. The
+          # coverage jobs run the kernel files in two halves, because
+          # instrumentation makes them slow.
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            shard: kernel
+            shard: kernel-1
+            coverage: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel-2
             coverage: true
           - version: '1'
             os: ubuntu-latest
@@ -104,11 +111,18 @@ jobs:
             layout: qudit
             eltype: bits
             coverage: true
-          # The kernel files with both defaults switched.
+          # The kernel files with both defaults switched, in two halves.
           - version: '1'
             os: ubuntu-latest
             arch: x64
-            shard: kernel
+            shard: kernel-1
+            layout: qudit
+            eltype: bits
+            coverage: true
+          - version: '1'
+            os: ubuntu-latest
+            arch: x64
+            shard: kernel-2
             layout: qudit
             eltype: bits
             coverage: true
@@ -133,10 +147,18 @@ jobs:
             layout: qudit
             eltype: bits
           # The whole suite with both defaults switched on the oldest
-          # supported Julia, which splits fewer unions than later versions.
+          # supported Julia, which splits fewer unions than later versions,
+          # as the kernel and functional shards.
           - version: '1.10'
             os: ubuntu-latest
             arch: x64
+            shard: kernel
+            layout: qudit
+            eltype: bits
+          - version: '1.10'
+            os: ubuntu-latest
+            arch: x64
+            shard: functional
             layout: qudit
             eltype: bits
           # The kernel files on Julia 1.12, whose inference differs from 1.10

@@ -1,11 +1,11 @@
 codecov:
   notify:
-    # Six CI jobs upload a report (the `coverage: true` entries of the test
+    # Eight CI jobs upload a report (the `coverage: true` entries of the test
     # matrix in .github/workflows/CI.yml). Wait for all of them before
     # reporting a status.
-    after_n_builds: 6
+    after_n_builds: 8
 comment:
-  after_n_builds: 6
+  after_n_builds: 8
 coverage:
   status:
     project:
