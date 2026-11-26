@@ -14,11 +14,11 @@ println("Testing with default qubit element type ",
         Base.invokelatest(QuditClifford._default_qubit_eltype))
 
 # The part of the suite to run, so CI can split it over parallel jobs:
-# "all" (the default), "kernel", "functional", or one half of either,
-# "kernel-1" and "kernel-2", "functional-1" and "functional-2". The kernel
-# halves are balanced by their time in the CI jobs with coverage, where
-# layout.jl and the two gate-kernel files run two to three times slower,
-# relative to the other kernel files, than on Apple silicon.
+# "all" (the default), "kernel", "functional", or one part of either,
+# "kernel-1", "kernel-2" and "kernel-3", "functional-1" and "functional-2".
+# The kernel parts are for the CI jobs with coverage, where layout.jl and the
+# two gate-kernel files run two to three times slower, relative to the other
+# kernel files, than on Apple silicon; each part holds one of those three.
 #
 # The kernel files compare storage types, layouts and packed storage with each
 # other and build most of their tableaux explicitly; a default enters only on
@@ -28,14 +28,17 @@ println("Testing with default qubit element type ",
 const KERNEL_FILES_1 = [
     "modular.jl",
     "layout.jl",
-    "gate_kernel_stabilizer.jl",
+    "storage_types.jl",
 ]
 const KERNEL_FILES_2 = [
-    "tableau_storage.jl",
-    "storage_types.jl",
-    "gate_kernel_destabilizer.jl",
+    "gate_kernel_stabilizer.jl",
     "bits.jl",
 ]
+const KERNEL_FILES_3 = [
+    "tableau_storage.jl",
+    "gate_kernel_destabilizer.jl",
+]
+const KERNEL_FILES = vcat(KERNEL_FILES_1, KERNEL_FILES_2, KERNEL_FILES_3)
 const FUNCTIONAL_FILES_1 = [
     "operators.jl",
     "measurements.jl",
@@ -62,10 +65,11 @@ const FUNCTIONAL_FILES_2 = [
     "differential.jl",
 ]
 const SHARDS = Dict(
-    "all" => vcat(KERNEL_FILES_1, KERNEL_FILES_2, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
-    "kernel" => vcat(KERNEL_FILES_1, KERNEL_FILES_2),
+    "all" => vcat(KERNEL_FILES, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
+    "kernel" => KERNEL_FILES,
     "kernel-1" => KERNEL_FILES_1,
     "kernel-2" => KERNEL_FILES_2,
+    "kernel-3" => KERNEL_FILES_3,
     "functional" => vcat(FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2),
     "functional-1" => FUNCTIONAL_FILES_1,
     "functional-2" => FUNCTIONAL_FILES_2,
@@ -75,9 +79,9 @@ haskey(SHARDS, SHARD) ||
     error("QC_TEST_SHARD must be one of $(join(sort!(collect(keys(SHARDS))), ", ")), got \"$SHARD\"")
 println("Testing shard ", SHARD)
 
-# Every test file is in exactly one of the four lists; the other files in
+# Every test file is in exactly one of the five lists; the other files in
 # test/ are this runner and the helpers the test files include.
-@test sort!(vcat(KERNEL_FILES_1, KERNEL_FILES_2, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2)) ==
+@test sort!(vcat(KERNEL_FILES, FUNCTIONAL_FILES_1, FUNCTIONAL_FILES_2)) ==
       sort!(filter(f -> endswith(f, ".jl") &&
                         !(f in ("runtests.jl", "env_switch.jl", "storage_helpers.jl",
                                 "layout_helpers.jl")),
@@ -89,13 +93,17 @@ println("Testing shard ", SHARD)
     # not depend on the test configuration, so only the shards that include
     # kernel-1 run them.
     if SHARD in ("all", "kernel", "kernel-1")
-        @testset "Code quality (Aqua.jl)" begin
+        seconds = @elapsed @testset "Code quality (Aqua.jl)" begin
             Aqua.test_all(QuditClifford; piracies = VERSION < v"1.12.0")
         end
+        println("Aqua: ", round(seconds; digits = 1), " s")
     end
 
-    # Functional tests split by topic for clarity.
+    # The test files, split by topic. Each prints its time, so a CI log shows
+    # where a job's time goes.
     for file in SHARDS[SHARD]
-        include(file)
+        seconds = @elapsed include(file)
+        println(file, ": ", round(seconds; digits = 1), " s")
+        flush(stdout)
     end
 end
